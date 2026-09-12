@@ -80,6 +80,13 @@ namespace PericonAPI.Hubs
 
     public class MessagingHub : Hub
     {
+        private readonly IServiceScopeFactory _scopeFactory;
+
+        public MessagingHub(IServiceScopeFactory scopeFactory)
+        {
+            _scopeFactory = scopeFactory;
+        }
+
         private static List<GamePlayOneVsOne> games = new List<GamePlayOneVsOne>(); 
         private static List<GamePlayTwoVsTwo> games2vs2 = new List<GamePlayTwoVsTwo>(); 
 
@@ -387,7 +394,14 @@ namespace PericonAPI.Hubs
             GamePlayOneVsOne newgame = new GamePlayOneVsOne(POne, PTwo);
             GamePlayer QOne = GetPlayerData(POne);
             GamePlayer QTwo = GetPlayerData(PTwo);
-            newgame.PlayerTurn = true;
+            newgame.NamePOne = QOne.Name;
+            newgame.NamePTwo = QTwo.Name;
+
+            // Sorteo de mano inicial 50% / 50%
+            Random rng = new Random();
+            bool p1Starts = rng.Next(2) == 0;
+            newgame.PlayerTurn = p1Starts;
+
             newgame.Deck.RandomCards();
             newgame.Id = newgame.GenerateSeed(games);
             newgame.ShuffleCards_1vs1();
@@ -397,7 +411,7 @@ namespace PericonAPI.Hubs
             sentence.order = 99;
             string previewcontent = POne + " " + QOne.Name + " " + PTwo + " " + QTwo.Name + " ";
             sentence.content = previewcontent + "1";
-            Console.WriteLine($"Juego creado: {newgame.Id}, Mano inicial: {newgame.InitHand}");
+            Console.WriteLine($"Juego creado: {newgame.Id}, Mano inicial: {newgame.InitHand}, Inicia POne: {p1Starts}");
             await Clients.Client(POne).SendAsync("ReadyToGame1vs1",sentence);
             sentence.content = previewcontent + "0";
             await Clients.Client(PTwo).SendAsync("ReadyToGame1vs1",sentence);
@@ -548,10 +562,13 @@ namespace PericonAPI.Hubs
             int numg = FindGame1vs1(id);
             int p1 = (numg >= 0 && numg < games.Count) ? games[numg].PointsOne : 0;
             int p2 = (numg >= 0 && numg < games.Count) ? games[numg].PointsTwo : 0;
+            bool isMyTurn = (numg >= 0 && numg < games.Count)
+                ? (flag == games[numg].PlayerTurn)
+                : flag;
             GameMessage sentence = new GameMessage();
             sentence.game = id;
             sentence.order = 81;
-            sentence.content = PZero + "-" + (flag == true ? "1" : "0") + $"-{p1}-{p2}";
+            sentence.content = PZero + "-" + (isMyTurn ? "1" : "0") + $"-{p1}-{p2}";
             await Clients.Client(Context.ConnectionId).SendAsync("SetInitHand", sentence);
         }
 
@@ -947,87 +964,111 @@ namespace PericonAPI.Hubs
             int houseCommission = (int)Math.Round(totalPot * 0.20); // 20% retenido por la plataforma
             int winnerPrize = totalPot - houseCommission;           // 80% que se lleva el ganador
 
+            int winnerNewCoins = 0;
+            int loserNewCoins = 0;
+
             try
             {
-                var db = Context.GetHttpContext()?.RequestServices.GetService<AppDbContext>();
-                if (db != null)
+                using (var scope = _scopeFactory.CreateScope())
                 {
+                    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
                     var winnerPlayer = SearchPlayer(winnerConnectionId);
                     var loserPlayer = SearchPlayer(loserConnectionId);
 
-                    var dbWinner = db.Users.FirstOrDefault(u => u.Username == winnerPlayer.Name);
-                    var dbLoser = db.Users.FirstOrDefault(u => u.Username == loserPlayer.Name);
+                    string winnerName = !string.IsNullOrEmpty(winnerPlayer.Name) && winnerPlayer.Name != "nulo"
+                        ? winnerPlayer.Name
+                        : ((winnerConnectionId == game.IdPOne) ? game.NamePOne : game.NamePTwo);
 
-                    int winnerNewCoins = 0;
-                    int loserNewCoins = 0;
+                    string loserName = !string.IsNullOrEmpty(loserPlayer.Name) && loserPlayer.Name != "nulo"
+                        ? loserPlayer.Name
+                        : ((loserConnectionId == game.IdPOne) ? game.NamePOne : game.NamePTwo);
 
-                    if (dbLoser != null && dbWinner != null)
+                    string winnerEmail = winnerPlayer.Email ?? "";
+                    string loserEmail = loserPlayer.Email ?? "";
+
+                    var dbWinner = db.Users.FirstOrDefault(u => 
+                        u.Username.ToLower() == winnerName.ToLower() || 
+                        (!string.IsNullOrEmpty(winnerEmail) && u.Email.ToLower() == winnerEmail.ToLower()));
+
+                    var dbLoser = db.Users.FirstOrDefault(u => 
+                        u.Username.ToLower() == loserName.ToLower() || 
+                        (!string.IsNullOrEmpty(loserEmail) && u.Email.ToLower() == loserEmail.ToLower()));
+
+                    if (dbLoser != null)
                     {
-                        // Descuento al perdedor (su apuesta completa)
                         int loserDeduction = Math.Min(dbLoser.Coins, bet);
                         dbLoser.Coins -= loserDeduction;
                         dbLoser.Losses += 1;
+                        loserNewCoins = dbLoser.Coins;
+                    }
 
-                        // Ganancia neta del ganador (80% del pozo - su propia apuesta previa)
+                    if (dbWinner != null)
+                    {
                         int netWinnerGain = Math.Max(0, winnerPrize - bet);
                         dbWinner.Coins += netWinnerGain;
                         dbWinner.Wins += 1;
-
                         winnerNewCoins = dbWinner.Coins;
-                        loserNewCoins = dbLoser.Coins;
+                    }
 
-                        // Registro formal de la apuesta y comisión para el panel de administración
+                    if (dbWinner != null || dbLoser != null)
+                    {
                         var betRecord = new MatchBetRecord
                         {
                             GameId = game.Id,
-                            PlayerOneName = SearchPlayer(game.IdPOne).Name,
-                            PlayerTwoName = SearchPlayer(game.IdPTwo).Name,
+                            PlayerOneName = !string.IsNullOrEmpty(game.NamePOne) ? game.NamePOne : SearchPlayer(game.IdPOne).Name,
+                            PlayerTwoName = !string.IsNullOrEmpty(game.NamePTwo) ? game.NamePTwo : SearchPlayer(game.IdPTwo).Name,
                             BetPerPlayer = bet,
                             TotalPot = totalPot,
                             HouseCommission = houseCommission,
                             WinnerPrize = winnerPrize,
-                            WinnerUsername = dbWinner.Username,
-                            LoserUsername = dbLoser.Username,
+                            WinnerUsername = dbWinner?.Username ?? winnerName,
+                            LoserUsername = dbLoser?.Username ?? loserName,
                             EndReason = reason,
                             CreatedAt = DateTime.UtcNow
                         };
                         db.MatchBetRecords.Add(betRecord);
-
                         await db.SaveChangesAsync();
 
-                        GameLogger.Log(game.Id, "ProcessMatchPayout", $"Ganador={dbWinner.Username} (+{netWinnerGain} netas, premio={winnerPrize}), Perdedor={dbLoser.Username} (-{loserDeduction}), Casa (+{houseCommission}), Razon={reason}");
+                        GameLogger.Log(game.Id, "ProcessMatchPayout", $"Ganador={dbWinner?.Username ?? winnerName} (Saldo={winnerNewCoins}), Perdedor={dbLoser?.Username ?? loserName} (Saldo={loserNewCoins}), Premio={winnerPrize}, Casa={houseCommission}, Razon={reason}");
                     }
-
-                    // Notificar al ganador con el desglose contable
-                    await Clients.Client(winnerConnectionId).SendAsync("MatchFinishedPayout", new
-                    {
-                        isWinner = true,
-                        bet = bet,
-                        totalPot = totalPot,
-                        houseCommission = houseCommission,
-                        winnerPrize = winnerPrize,
-                        netGain = winnerPrize - bet,
-                        newBalance = winnerNewCoins,
-                        message = $"🏆 ¡Ganaste la partida! Te llevas {winnerPrize} monedas (80% del pozo de {totalPot}). Comisión de sala (20%): {houseCommission} monedas."
-                    });
-
-                    // Notificar al perdedor
-                    await Clients.Client(loserConnectionId).SendAsync("MatchFinishedPayout", new
-                    {
-                        isWinner = false,
-                        bet = bet,
-                        totalPot = totalPot,
-                        houseCommission = houseCommission,
-                        winnerPrize = winnerPrize,
-                        netGain = -bet,
-                        newBalance = loserNewCoins,
-                        message = $"Partida finalizada. Se descontaron {bet} monedas de tu monedero."
-                    });
                 }
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[ProcessMatchPayout Error] {ex.Message}");
+            }
+
+            // Notificar SIEMPRE a ambos jugadores para que vean su pantalla final y monedas
+            try
+            {
+                await Clients.Client(winnerConnectionId).SendAsync("MatchFinishedPayout", new
+                {
+                    isWinner = true,
+                    bet = bet,
+                    totalPot = totalPot,
+                    houseCommission = houseCommission,
+                    winnerPrize = winnerPrize,
+                    netGain = winnerPrize - bet,
+                    newBalance = winnerNewCoins,
+                    message = $"🏆 ¡Ganaste la partida! Te llevas {winnerPrize} monedas (80% del pozo de {totalPot}). Comisión de sala (20%): {houseCommission} monedas."
+                });
+
+                await Clients.Client(loserConnectionId).SendAsync("MatchFinishedPayout", new
+                {
+                    isWinner = false,
+                    bet = bet,
+                    totalPot = totalPot,
+                    houseCommission = houseCommission,
+                    winnerPrize = winnerPrize,
+                    netGain = -bet,
+                    newBalance = loserNewCoins,
+                    message = $"Partida finalizada. Se descontaron {bet} monedas de tu monedero."
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ProcessMatchPayout Send Error] {ex.Message}");
             }
         }
 
@@ -1365,8 +1406,13 @@ namespace PericonAPI.Hubs
                 newGame.Coins = matchedPlayer.Bet;
                 GamePlayer q1 = GetPlayerData(p1);
                 GamePlayer q2 = GetPlayerData(p2);
+                newGame.NamePOne = q1.Name;
+                newGame.NamePTwo = q2.Name;
 
-                newGame.PlayerTurn = true;
+                // Sorteo de mano inicial 50% / 50%
+                Random rng = new Random();
+                newGame.PlayerTurn = (rng.Next(2) == 0);
+
                 newGame.Deck.RandomCards();
                 newGame.Id = newGame.GenerateSeed(games);
                 newGame.ShuffleCards_1vs1();
