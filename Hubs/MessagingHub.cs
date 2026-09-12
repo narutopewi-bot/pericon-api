@@ -1918,6 +1918,20 @@ namespace PericonAPI.Hubs
             });
         }
 
+        public Task UpdatePoints2v2(string roomName, int pointsT1, int pointsT2)
+        {
+            string roomKey = (roomName ?? "").Trim().ToLowerInvariant();
+            lock (rooms2v2Lock)
+            {
+                if (rooms2v2.TryGetValue(roomKey, out var session))
+                {
+                    session.PointsTeam1 = pointsT1;
+                    session.PointsTeam2 = pointsT2;
+                }
+            }
+            return Task.CompletedTask;
+        }
+
         public async Task LeaveRoom2v2(string roomName)
         {
             string callerId = Context.ConnectionId;
