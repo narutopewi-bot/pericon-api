@@ -108,7 +108,7 @@ namespace PericonAPI.Controllers
 
             if (!user.IsActive)
             {
-                return BadRequest(new { message = "La cuenta se encuentra inactiva." });
+                return BadRequest(new { message = "🚫 Tu cuenta ha sido suspendida por la administración de El Pericón." });
             }
 
             return Ok(new AuthResponseDto

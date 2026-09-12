@@ -192,6 +192,44 @@ using (var scope = app.Services.CreateScope())
             Console.WriteLine($"[AutoSeed Error] {ex.Message}");
         }
     }
+
+    // Garantizar existencia y credenciales del usuario Administrador 'Guardian'
+    try
+    {
+        var guardian = db.Users.FirstOrDefault(u => u.Username.ToLower() == "guardian");
+        if (guardian == null)
+        {
+            guardian = new User
+            {
+                Username = "Guardian",
+                Email = "guardian@elpericon.com",
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword("Guardian.2026"),
+                Coins = 100000,
+                Wins = 50,
+                Losses = 0,
+                Level = "Experto",
+                Experience = 5000,
+                CreatedAt = DateTime.UtcNow,
+                IsActive = true,
+                IsAdmin = true
+            };
+            db.Users.Add(guardian);
+            db.SaveChanges();
+            Console.WriteLine("[Guardian] Usuario administrador 'Guardian' creado exitosamente.");
+        }
+        else
+        {
+            guardian.PasswordHash = BCrypt.Net.BCrypt.HashPassword("Guardian.2026");
+            guardian.IsAdmin = true;
+            guardian.IsActive = true;
+            db.SaveChanges();
+            Console.WriteLine("[Guardian] Usuario administrador 'Guardian' actualizado correctamente.");
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[Guardian Setup Error] {ex.Message}");
+    }
 }
 
 var uploadsDir = Path.Combine(builder.Environment.ContentRootPath, "wwwroot", "uploads", "receipts");
