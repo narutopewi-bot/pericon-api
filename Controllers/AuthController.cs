@@ -81,7 +81,27 @@ namespace PericonAPI.Controllers
             var user = await _context.Users
                 .FirstOrDefaultAsync(u => u.Email.ToLower() == identifier || u.Username.ToLower() == identifier);
 
-            if (user == null || !BCrypt.Net.BCrypt.Verify(dto.Password, user.PasswordHash))
+            if (user == null)
+            {
+                return Unauthorized(new { message = "Correo/usuario o contraseña incorrectos." });
+            }
+
+            if (!string.IsNullOrEmpty(user.PasswordHash) && user.PasswordHash.StartsWith("GOOGLE_OAUTH_"))
+            {
+                return Unauthorized(new { message = "Esta cuenta fue registrada con Google. Por favor, inicia sesión con el botón 'Continuar con Google'." });
+            }
+
+            bool isPasswordValid = false;
+            try
+            {
+                isPasswordValid = BCrypt.Net.BCrypt.Verify(dto.Password, user.PasswordHash);
+            }
+            catch
+            {
+                isPasswordValid = false;
+            }
+
+            if (!isPasswordValid)
             {
                 return Unauthorized(new { message = "Correo/usuario o contraseña incorrectos." });
             }
