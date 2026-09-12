@@ -1,0 +1,6 @@
+@PericonAPI_HostAddress = http://localhost:5206
+
+GET {{PericonAPI_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
