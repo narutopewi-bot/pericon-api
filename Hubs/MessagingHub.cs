@@ -283,6 +283,8 @@ namespace PericonAPI.Hubs
                     break;
                 case 3: // Rechaza 3 -> Quien pidió 3 (sentto) gana 1 punto
                     games[numg].Ask369 = -1;
+                    games[numg].RoundOne = 0;
+                    games[numg].RoundTwo = 0;
                     if (sentto == games[numg].IdPOne) games[numg].PointsOne += 1;
                     else games[numg].PointsTwo += 1;
                     games[numg].UpdateTumbaStatus(oldP1, oldP2);
@@ -305,6 +307,8 @@ namespace PericonAPI.Hubs
                     break;
                 case 6: // Rechaza 6 -> Quien propuso 6 (sentto) gana las 3 piedras ya pactadas
                     games[numg].Ask369 = -1;
+                    games[numg].RoundOne = 0;
+                    games[numg].RoundTwo = 0;
                     if (sentto == games[numg].IdPOne) games[numg].PointsOne += 3;
                     else games[numg].PointsTwo += 3;
                     games[numg].UpdateTumbaStatus(oldP1, oldP2);
@@ -327,6 +331,8 @@ namespace PericonAPI.Hubs
                     break;
                 case 9: // Rechaza 9 -> Quien propuso 9 (sentto) gana las 6 piedras ya pactadas
                     games[numg].Ask369 = -1;
+                    games[numg].RoundOne = 0;
+                    games[numg].RoundTwo = 0;
                     if (sentto == games[numg].IdPOne) games[numg].PointsOne += 6;
                     else games[numg].PointsTwo += 6;
                     games[numg].UpdateTumbaStatus(oldP1, oldP2);
@@ -418,6 +424,8 @@ namespace PericonAPI.Hubs
             games[numg].PlayerTurn = !games[numg].PlayerTurn;
             games[numg].CurrentStake = 1;
             games[numg].Ask369 = 0;
+            games[numg].RoundOne = 0;
+            games[numg].RoundTwo = 0;
             string POne = games[numg].IdPOne;
             string PTwo = games[numg].IdPTwo;
             string PThree = games[numg].InitHand;
@@ -484,6 +492,8 @@ namespace PericonAPI.Hubs
             games[numg].PlayerTurn = !games[numg].PlayerTurn;
             games[numg].CurrentStake = 1;
             games[numg].Ask369 = 0;
+            games[numg].RoundOne = 0;
+            games[numg].RoundTwo = 0;
 
             string POne = games[numg].IdPOne;
             string PTwo = games[numg].IdPTwo;
