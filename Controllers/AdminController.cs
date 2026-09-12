@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using PericonAPI.Data;
+using PericonAPI.Hubs;
 using PericonAPI.Models;
 
 namespace PericonAPI.Controllers
@@ -10,10 +12,12 @@ namespace PericonAPI.Controllers
     public class AdminController : ControllerBase
     {
         private readonly AppDbContext _context;
+        private readonly IHubContext<MessagingHub> _hubContext;
 
-        public AdminController(AppDbContext context)
+        public AdminController(AppDbContext context, IHubContext<MessagingHub> hubContext)
         {
             _context = context;
+            _hubContext = hubContext;
         }
 
         [HttpGet("stats")]
@@ -480,6 +484,117 @@ namespace PericonAPI.Controllers
                 }
             });
         }
+
+        [HttpGet("promos")]
+        public async Task<IActionResult> GetPromoCodes()
+        {
+            var promos = await _context.PromoCodes
+                .OrderByDescending(p => p.CreatedAt)
+                .Select(p => new
+                {
+                    id = p.Id,
+                    code = p.Code,
+                    coinsReward = p.CoinsReward,
+                    maxUses = p.MaxUses,
+                    timesUsed = p.TimesUsed,
+                    isActive = p.IsActive,
+                    createdAt = p.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
+                    expiresAt = p.ExpiresAt.HasValue ? p.ExpiresAt.Value.ToString("yyyy-MM-dd") : null
+                })
+                .ToListAsync();
+
+            return Ok(promos);
+        }
+
+        [HttpPost("promos")]
+        public async Task<IActionResult> CreatePromoCode([FromBody] CreatePromoDto dto)
+        {
+            if (string.IsNullOrWhiteSpace(dto.Code) || dto.CoinsReward <= 0)
+            {
+                return BadRequest(new { message = "El código y el monto de monedas deben ser válidos." });
+            }
+
+            var cleanCode = dto.Code.Trim().ToUpperInvariant();
+            if (await _context.PromoCodes.AnyAsync(p => p.Code == cleanCode))
+            {
+                return BadRequest(new { message = $"El código promocional '{cleanCode}' ya existe." });
+            }
+
+            var promo = new PromoCode
+            {
+                Code = cleanCode,
+                CoinsReward = dto.CoinsReward,
+                MaxUses = dto.MaxUses > 0 ? dto.MaxUses : 1000,
+                TimesUsed = 0,
+                IsActive = true,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            _context.PromoCodes.Add(promo);
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                message = $"Código promocional '{promo.Code}' (+{promo.CoinsReward} monedas) creado con éxito.",
+                promo
+            });
+        }
+
+        [HttpPost("promos/{id}/toggle")]
+        public async Task<IActionResult> TogglePromoCode(int id)
+        {
+            var promo = await _context.PromoCodes.FindAsync(id);
+            if (promo == null)
+            {
+                return NotFound(new { message = "Código promocional no encontrado." });
+            }
+
+            promo.IsActive = !promo.IsActive;
+            await _context.SaveChangesAsync();
+
+            var status = promo.IsActive ? "activado" : "desactivado";
+            return Ok(new
+            {
+                message = $"Código '{promo.Code}' {status} con éxito.",
+                isActive = promo.IsActive
+            });
+        }
+
+        [HttpPost("broadcast-announcement")]
+        public async Task<IActionResult> BroadcastAnnouncement([FromBody] BroadcastDto dto)
+        {
+            if (string.IsNullOrWhiteSpace(dto.Message))
+            {
+                return BadRequest(new { message = "El mensaje no puede estar vacío." });
+            }
+
+            var title = !string.IsNullOrWhiteSpace(dto.Title) ? dto.Title : "📢 COMUNICADO OFICIAL";
+            var type = !string.IsNullOrWhiteSpace(dto.Type) ? dto.Type : "info";
+
+            await _hubContext.Clients.All.SendAsync("GlobalAnnouncement", new
+            {
+                title,
+                message = dto.Message.Trim(),
+                type,
+                timestamp = DateTime.UtcNow.ToString("HH:mm")
+            });
+
+            return Ok(new { message = "Anuncio transmitido en vivo a todos los jugadores conectados." });
+        }
+    }
+
+    public class CreatePromoDto
+    {
+        public string Code { get; set; } = string.Empty;
+        public int CoinsReward { get; set; } = 200;
+        public int MaxUses { get; set; } = 1000;
+    }
+
+    public class BroadcastDto
+    {
+        public string Title { get; set; } = string.Empty;
+        public string Message { get; set; } = string.Empty;
+        public string Type { get; set; } = "info";
     }
 
     public class AdminLoginDto

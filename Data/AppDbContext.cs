@@ -13,6 +13,8 @@ namespace PericonAPI.Data
         public DbSet<PaymentRecharge> PaymentRecharges { get; set; }
         public DbSet<PaymentWithdrawal> PaymentWithdrawals { get; set; }
         public DbSet<MatchBetRecord> MatchBetRecords { get; set; }
+        public DbSet<PromoCode> PromoCodes { get; set; }
+        public DbSet<PromoCodeRedemption> PromoCodeRedemptions { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

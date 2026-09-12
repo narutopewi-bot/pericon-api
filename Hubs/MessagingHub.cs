@@ -384,6 +384,19 @@ namespace PericonAPI.Hubs
             }
         }
 
+        public async Task SendQuickPhrase(string roomName, string playerName, string phrase, int seatIndex)
+        {
+            if (string.IsNullOrWhiteSpace(roomName) || string.IsNullOrWhiteSpace(phrase)) return;
+            Console.WriteLine($"[SendQuickPhrase] Sala: {roomName}, Jugador: {playerName}, Frase: {phrase}");
+            await Clients.Group(roomName).SendAsync("ReceiveQuickPhrase", new
+            {
+                playerName,
+                phrase,
+                seatIndex,
+                senderConnectionId = Context.ConnectionId
+            });
+        }
+
         // Métodos de desarrollo de los juegos a modo 1 vs 1
 
         public GamePlayer GetPlayerData(string _id)

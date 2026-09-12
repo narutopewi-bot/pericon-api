@@ -230,6 +230,29 @@ using (var scope = app.Services.CreateScope())
     {
         Console.WriteLine($"[Guardian Setup Error] {ex.Message}");
     }
+
+    // Garantizar código promocional inicial de bienvenida
+    try
+    {
+        if (!db.PromoCodes.Any(p => p.Code == "PERICON2026"))
+        {
+            db.PromoCodes.Add(new PromoCode
+            {
+                Code = "PERICON2026",
+                CoinsReward = 200,
+                MaxUses = 5000,
+                TimesUsed = 0,
+                IsActive = true,
+                CreatedAt = DateTime.UtcNow
+            });
+            db.SaveChanges();
+            Console.WriteLine("[PromoCode] Código promocional 'PERICON2026' activado.");
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[PromoCode Error] {ex.Message}");
+    }
 }
 
 var uploadsDir = Path.Combine(builder.Environment.ContentRootPath, "wwwroot", "uploads", "receipts");
