@@ -396,8 +396,11 @@ namespace PericonAPI.Models
                     return 25;
             }
 
-            // 3 del palo de la vida
+            // 3 del palo de la vida (El Gollero)
             if (suitCard == cardLife && faceValue == 3) return 28;
+
+            // 3 de Oro (cuando la vida no es oro): triunfo especial Gollero de Oro
+            if (_numCard == 2 && suitCard != cardLife) return 23;
 
             // 2 del palo de la vida
             if (suitCard == cardLife && faceValue == 2) return 24;
