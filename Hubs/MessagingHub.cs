@@ -22,7 +22,7 @@ namespace PericonAPI.Hubs
 
         public GamePlayer(string Id, string Name, string Email)
         {
-            this.Id = Id; this.Name = Name; this.Email = Email; this.Coins = 100; Active = true;
+            this.Id = Id; this.Name = Name; this.Email = Email; this.Coins = 0; Active = true;
         }
 
         public override string ToString()
@@ -202,7 +202,7 @@ namespace PericonAPI.Hubs
                 {
                     if (!string.IsNullOrWhiteSpace(playerName)) user.Name = playerName;
                     if (!string.IsNullOrWhiteSpace(email)) user.Email = email;
-                    if (coins > 0) user.Coins = coins;
+                    user.Coins = Math.Max(0, coins);
                     await Clients.Client(user.Id).SendAsync("GetPlayer", user);
                     return;
                 }

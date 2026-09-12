@@ -1,11 +1,59 @@
 using Microsoft.EntityFrameworkCore;
 using PericonAPI.Data;
 using PericonAPI.Hubs;
+using PericonAPI.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Configuración de base de datos persistente: PostgreSQL (Render, Neon, Supabase) o SQLite local
+var connectionString = Environment.GetEnvironmentVariable("DATABASE_URL")
+    ?? Environment.GetEnvironmentVariable("POSTGRES_CONNECTION_STRING")
+    ?? builder.Configuration.GetConnectionString("DefaultConnection");
+
+bool isPostgres = !string.IsNullOrWhiteSpace(connectionString) &&
+    (connectionString.StartsWith("postgres://", StringComparison.OrdinalIgnoreCase) ||
+     connectionString.StartsWith("postgresql://", StringComparison.OrdinalIgnoreCase) ||
+     connectionString.Contains("Host=", StringComparison.OrdinalIgnoreCase) ||
+     connectionString.Contains("Server=", StringComparison.OrdinalIgnoreCase));
+
+static string ConvertPostgresUrlToConnectionString(string databaseUrl)
+{
+    if (string.IsNullOrWhiteSpace(databaseUrl)) return databaseUrl;
+    if (databaseUrl.Contains("Host=", StringComparison.OrdinalIgnoreCase) ||
+        databaseUrl.Contains("Server=", StringComparison.OrdinalIgnoreCase))
+    {
+        return databaseUrl;
+    }
+
+    if (databaseUrl.StartsWith("postgres://", StringComparison.OrdinalIgnoreCase) ||
+        databaseUrl.StartsWith("postgresql://", StringComparison.OrdinalIgnoreCase))
+    {
+        var uri = new Uri(databaseUrl);
+        var userInfo = uri.UserInfo.Split(':', 2);
+        var username = userInfo.Length > 0 ? Uri.UnescapeDataString(userInfo[0]) : "";
+        var password = userInfo.Length > 1 ? Uri.UnescapeDataString(userInfo[1]) : "";
+        var host = uri.Host;
+        var port = uri.Port > 0 ? uri.Port : 5432;
+        var database = uri.AbsolutePath.TrimStart('/');
+
+        return $"Host={host};Port={port};Database={database};Username={username};Password={password};SSL Mode=Require;Trust Server Certificate=true;";
+    }
+
+    return databaseUrl;
+}
+
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=pericon.db"));
+{
+    if (isPostgres)
+    {
+        var npgsqlConn = ConvertPostgresUrlToConnectionString(connectionString!);
+        options.UseNpgsql(npgsqlConn);
+    }
+    else
+    {
+        options.UseSqlite(connectionString ?? "Data Source=pericon.db");
+    }
+});
 
 builder.Services.AddSignalR();
 builder.Services.AddCors(options =>
@@ -29,86 +77,120 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.EnsureCreated();
-    try
+
+    if (db.Database.IsSqlite())
     {
-        db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN Wins INTEGER NOT NULL DEFAULT 0;");
+        try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN Wins INTEGER NOT NULL DEFAULT 0;"); } catch { }
+        try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN Losses INTEGER NOT NULL DEFAULT 0;"); } catch { }
+        try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN IsAdmin INTEGER NOT NULL DEFAULT 0;"); } catch { }
+        try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN LastDailyClaim TEXT NULL;"); } catch { }
+        try
+        {
+            db.Database.ExecuteSqlRaw(@"
+                CREATE TABLE IF NOT EXISTS PaymentRecharges (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    UserId INTEGER NOT NULL,
+                    AmountBs DECIMAL(18,2) NOT NULL,
+                    CoinsAmount INTEGER NOT NULL,
+                    Reference TEXT NOT NULL,
+                    ReceiptImageUrl TEXT NOT NULL,
+                    Status TEXT NOT NULL DEFAULT 'PENDIENTE',
+                    AdminNotes TEXT NULL,
+                    CreatedAt TEXT NOT NULL,
+                    ProcessedAt TEXT NULL,
+                    FOREIGN KEY (UserId) REFERENCES Users(Id) ON DELETE CASCADE
+                );
+            ");
+        }
+        catch { }
+        try
+        {
+            db.Database.ExecuteSqlRaw(@"
+                CREATE TABLE IF NOT EXISTS PaymentWithdrawals (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    UserId INTEGER NOT NULL,
+                    CoinsAmount INTEGER NOT NULL,
+                    AmountBs DECIMAL(18,2) NOT NULL,
+                    BankName TEXT NOT NULL,
+                    PhoneNumber TEXT NOT NULL,
+                    IdCard TEXT NOT NULL,
+                    Status TEXT NOT NULL DEFAULT 'PENDIENTE',
+                    AdminReference TEXT NULL,
+                    AdminNotes TEXT NULL,
+                    CreatedAt TEXT NOT NULL,
+                    ProcessedAt TEXT NULL,
+                    FOREIGN KEY (UserId) REFERENCES Users(Id) ON DELETE CASCADE
+                );
+            ");
+        }
+        catch { }
+        try
+        {
+            db.Database.ExecuteSqlRaw(@"
+                CREATE TABLE IF NOT EXISTS MatchBetRecords (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    GameId INTEGER NOT NULL,
+                    PlayerOneName TEXT NOT NULL,
+                    PlayerTwoName TEXT NOT NULL,
+                    BetPerPlayer INTEGER NOT NULL,
+                    TotalPot INTEGER NOT NULL,
+                    HouseCommission INTEGER NOT NULL,
+                    WinnerPrize INTEGER NOT NULL,
+                    WinnerUsername TEXT NOT NULL,
+                    LoserUsername TEXT NOT NULL,
+                    EndReason TEXT NOT NULL,
+                    CreatedAt TEXT NOT NULL
+                );
+            ");
+        }
+        catch { }
     }
-    catch { }
-    try
+
+    // Auto-seed inicial si la base de datos está vacía (por ejemplo al conectar PostgreSQL en Render)
+    if (!db.Users.Any())
     {
-        db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN Losses INTEGER NOT NULL DEFAULT 0;");
+        try
+        {
+            var sqlitePath = Path.Combine(builder.Environment.ContentRootPath, "pericon.db");
+            if (File.Exists(sqlitePath))
+            {
+                var sqliteOptions = new DbContextOptionsBuilder<AppDbContext>()
+                    .UseSqlite($"Data Source={sqlitePath}")
+                    .Options;
+                using var sqliteDb = new AppDbContext(sqliteOptions);
+                if (sqliteDb.Users.Any())
+                {
+                    var existingUsers = sqliteDb.Users.AsNoTracking().ToList();
+                    foreach (var u in existingUsers)
+                    {
+                        db.Users.Add(new User
+                        {
+                            Username = u.Username,
+                            Email = u.Email,
+                            PasswordHash = u.PasswordHash,
+                            Coins = u.Coins,
+                            Wins = u.Wins,
+                            Losses = u.Losses,
+                            Level = u.Level,
+                            Experience = u.Experience,
+                            CreatedAt = u.CreatedAt,
+                            GoogleId = u.GoogleId,
+                            AvatarUrl = u.AvatarUrl,
+                            IsActive = u.IsActive,
+                            IsAdmin = u.IsAdmin,
+                            LastDailyClaim = u.LastDailyClaim
+                        });
+                    }
+                    db.SaveChanges();
+                    Console.WriteLine($"[AutoSeed] Se migraron exitosamente {existingUsers.Count} usuarios desde pericon.db a la base de datos.");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[AutoSeed Error] {ex.Message}");
+        }
     }
-    catch { }
-    try
-    {
-        db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN IsAdmin INTEGER NOT NULL DEFAULT 0;");
-    }
-    catch { }
-    try
-    {
-        db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN LastDailyClaim TEXT NULL;");
-    }
-    catch { }
-    try
-    {
-        db.Database.ExecuteSqlRaw(@"
-            CREATE TABLE IF NOT EXISTS PaymentRecharges (
-                Id INTEGER PRIMARY KEY AUTOINCREMENT,
-                UserId INTEGER NOT NULL,
-                AmountBs DECIMAL(18,2) NOT NULL,
-                CoinsAmount INTEGER NOT NULL,
-                Reference TEXT NOT NULL,
-                ReceiptImageUrl TEXT NOT NULL,
-                Status TEXT NOT NULL DEFAULT 'PENDIENTE',
-                AdminNotes TEXT NULL,
-                CreatedAt TEXT NOT NULL,
-                ProcessedAt TEXT NULL,
-                FOREIGN KEY (UserId) REFERENCES Users(Id) ON DELETE CASCADE
-            );
-        ");
-    }
-    catch { }
-    try
-    {
-        db.Database.ExecuteSqlRaw(@"
-            CREATE TABLE IF NOT EXISTS PaymentWithdrawals (
-                Id INTEGER PRIMARY KEY AUTOINCREMENT,
-                UserId INTEGER NOT NULL,
-                CoinsAmount INTEGER NOT NULL,
-                AmountBs DECIMAL(18,2) NOT NULL,
-                BankName TEXT NOT NULL,
-                PhoneNumber TEXT NOT NULL,
-                IdCard TEXT NOT NULL,
-                Status TEXT NOT NULL DEFAULT 'PENDIENTE',
-                AdminReference TEXT NULL,
-                AdminNotes TEXT NULL,
-                CreatedAt TEXT NOT NULL,
-                ProcessedAt TEXT NULL,
-                FOREIGN KEY (UserId) REFERENCES Users(Id) ON DELETE CASCADE
-            );
-        ");
-    }
-    catch { }
-    try
-    {
-        db.Database.ExecuteSqlRaw(@"
-            CREATE TABLE IF NOT EXISTS MatchBetRecords (
-                Id INTEGER PRIMARY KEY AUTOINCREMENT,
-                GameId INTEGER NOT NULL,
-                PlayerOneName TEXT NOT NULL,
-                PlayerTwoName TEXT NOT NULL,
-                BetPerPlayer INTEGER NOT NULL,
-                TotalPot INTEGER NOT NULL,
-                HouseCommission INTEGER NOT NULL,
-                WinnerPrize INTEGER NOT NULL,
-                WinnerUsername TEXT NOT NULL,
-                LoserUsername TEXT NOT NULL,
-                EndReason TEXT NOT NULL,
-                CreatedAt TEXT NOT NULL
-            );
-        ");
-    }
-    catch { }
 }
 
 var uploadsDir = Path.Combine(builder.Environment.ContentRootPath, "wwwroot", "uploads", "receipts");
