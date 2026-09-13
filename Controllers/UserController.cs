@@ -197,12 +197,18 @@ namespace PericonAPI.Controllers
         [HttpGet("leaderboard")]
         public async Task<IActionResult> GetLeaderboard()
         {
-            var topPlayers = await _context.Users
+            var topPlayersList = await _context.Users
                 .Where(u => u.IsActive && u.Username != "Guardian")
                 .OrderByDescending(u => u.Wins)
                 .ThenByDescending(u => u.Coins)
                 .Take(10)
-                .Select(u => new
+                .ToListAsync();
+
+            var topPlayers = topPlayersList.Select(u =>
+            {
+                var total = u.Wins + u.Losses;
+                var rate = total > 0 ? Math.Round((double)u.Wins / total * 100, 1) : 0;
+                return new
                 {
                     id = u.Id,
                     username = u.Username,
@@ -211,9 +217,9 @@ namespace PericonAPI.Controllers
                     coins = u.Coins,
                     level = u.GetCalculatedLevel(),
                     avatarUrl = u.AvatarUrl,
-                    winRate = (u.Wins + u.Losses) > 0 ? Math.Round((double)u.Wins / (u.Wins + u.Losses) * 100, 1) : 0
-                })
-                .ToListAsync();
+                    winRate = rate
+                };
+            }).ToList();
 
             return Ok(topPlayers);
         }

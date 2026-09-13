@@ -194,9 +194,15 @@ namespace PericonAPI.Controllers
         [HttpGet("users")]
         public async Task<IActionResult> GetAllUsers()
         {
-            var users = await _context.Users
+            var userList = await _context.Users
                 .OrderByDescending(u => u.CreatedAt)
-                .Select(u => new
+                .ToListAsync();
+
+            var users = userList.Select(u =>
+            {
+                var total = u.Wins + u.Losses;
+                var rate = total > 0 ? Math.Round((double)u.Wins / total * 100, 1) : 0;
+                return new
                 {
                     id = u.Id,
                     username = u.Username,
@@ -204,15 +210,15 @@ namespace PericonAPI.Controllers
                     coins = u.Coins,
                     wins = u.Wins,
                     losses = u.Losses,
-                    totalMatches = u.Wins + u.Losses,
-                    winRate = (u.Wins + u.Losses) > 0 ? Math.Round((double)u.Wins / (u.Wins + u.Losses) * 100, 1) : 0,
+                    totalMatches = total,
+                    winRate = rate,
                     level = u.GetCalculatedLevel(),
                     createdAt = u.CreatedAt,
                     avatarUrl = u.AvatarUrl,
                     isActive = u.IsActive,
                     isAdmin = u.IsAdmin
-                })
-                .ToListAsync();
+                };
+            }).ToList();
 
             return Ok(users);
         }
