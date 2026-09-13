@@ -1,14 +1,18 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using PericonAPI.Data;
 using PericonAPI.Hubs;
 using PericonAPI.Models;
 
+AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
+
 var builder = WebApplication.CreateBuilder(args);
 
-// Configuración de base de datos persistente: PostgreSQL (Render, Neon, Supabase) o SQLite local
+// Configuración de base de datos persistente: PostgreSQL (Supabase / Render) o SQLite local
 var connectionString = Environment.GetEnvironmentVariable("DATABASE_URL")
     ?? Environment.GetEnvironmentVariable("POSTGRES_CONNECTION_STRING")
-    ?? builder.Configuration.GetConnectionString("DefaultConnection");
+    ?? builder.Configuration.GetConnectionString("DefaultConnection")
+    ?? "Host=aws-0-us-west-2.pooler.supabase.com;Port=5432;Database=postgres;Username=postgres.nmbyauelfhhyvfctxwpr;Password=@Guardian.2026;SSL Mode=Require;Trust Server Certificate=true;";
 
 bool isPostgres = !string.IsNullOrWhiteSpace(connectionString) &&
     (connectionString.StartsWith("postgres://", StringComparison.OrdinalIgnoreCase) ||
@@ -76,7 +80,19 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    db.Database.EnsureCreated();
+    
+    try
+    {
+        var databaseCreator = (Microsoft.EntityFrameworkCore.Storage.RelationalDatabaseCreator)db.Database.GetService<Microsoft.EntityFrameworkCore.Storage.IDatabaseCreator>();
+        databaseCreator.CreateTables();
+        Console.WriteLine("[Database] Tablas creadas exitosamente en PostgreSQL / Supabase.");
+    }
+    catch
+    {
+        // Las tablas ya existen o EnsureCreated es suficiente
+    }
+
+    try { db.Database.EnsureCreated(); } catch { }
 
     if (db.Database.IsSqlite())
     {
