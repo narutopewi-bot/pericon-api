@@ -29,6 +29,8 @@ namespace PericonAPI.Models
         public bool IsTumbaDeParaAtrasOne { get; set; }
         public bool IsTumbaDeParaAtrasTwo { get; set; }
         public bool PlayerTurn {  get; set; }
+        public int HandStarter { get; set; } = 1; // 1 = POne, 2 = PTwo
+        public int HandCount { get; set; } = 1;
         private Card CardPlayed { get; set; }
         public string InitHand {  get; set; }
         public bool ChoiceTurn { get; set; }
@@ -38,6 +40,7 @@ namespace PericonAPI.Models
         {
             Id = 0; Deck = new SpanishCards(); PlayerOne = 0; PlayerTwo = 0; IsSolitaire = true; 
             IdPOne = ""; IdPTwo = ""; CardsOne = []; CardsTwo = []; PlayerTurn = true;
+            HandStarter = 1; HandCount = 1;
             Life = new Card(); CardPlayed = new Card(); ChoiceTurn = true; IsActive = true;
             InitHand = ""; Ask369 = 0; CurrentStake = 1;
             IsTumbaOne = false; IsTumbaTwo = false;
@@ -405,7 +408,10 @@ namespace PericonAPI.Models
             // Resto de cartas del palo de la vida
             if (suitCard == cardLife)
             {
-                return 11 + faceValue; // entre 12 y 23
+                // El As de la vida (1 de la vida) vale "5 y medio" según la tradición del Pericón:
+                // No puede matar al 4 de la vida (15) ni al 5 de la vida (16).
+                if (faceValue == 1) return 14;
+                return 11 + faceValue; // 4=15, 5=16, 6=17, 7=18, 10=21, 11=22, 12=23
             }
 
             // Cartas comunes (no triunfo)

@@ -147,6 +147,9 @@ namespace PericonAPI.Hubs
         private static List<MatchQueueItem> matchmakingQueue = new List<MatchQueueItem>();
         private static readonly object queueLock = new object();
 
+        private static Dictionary<int, DateTime> _lastHandChangeTime1vs1 = new Dictionary<int, DateTime>();
+        private static readonly object _handChangeLock1vs1 = new object();
+
         private GameOrder sentence = new GameOrder();
 
         private static int counter = 0;
@@ -426,8 +429,10 @@ namespace PericonAPI.Hubs
 
             // Sorteo de mano inicial 50% / 50%
             Random rng = new Random();
-            bool p1Starts = rng.Next(2) == 0;
-            newgame.PlayerTurn = p1Starts;
+            int startingPlayer = rng.Next(2) == 0 ? 1 : 2;
+            newgame.HandStarter = startingPlayer;
+            newgame.PlayerTurn = (startingPlayer == 1);
+            newgame.HandCount = 1;
 
             newgame.Deck.RandomCards();
             newgame.Id = newgame.GenerateSeed(games);
@@ -438,7 +443,7 @@ namespace PericonAPI.Hubs
             sentence.order = 99;
             string previewcontent = POne + " " + QOne.Name + " " + PTwo + " " + QTwo.Name + " ";
             sentence.content = previewcontent + "1";
-            Console.WriteLine($"Juego creado: {newgame.Id}, Mano inicial: {newgame.InitHand}, Inicia POne: {p1Starts}");
+            Console.WriteLine($"Juego creado: {newgame.Id}, Mano inicial: {newgame.InitHand}, Inicia P{startingPlayer}");
             await Clients.Client(POne).SendAsync("ReadyToGame1vs1",sentence);
             sentence.content = previewcontent + "0";
             await Clients.Client(PTwo).SendAsync("ReadyToGame1vs1",sentence);
@@ -460,9 +465,26 @@ namespace PericonAPI.Hubs
                 GameLogger.Log(move.game, "ChangeGame1vs1", $"WARNING: Juego {move.game} no encontrado o inactivo.");
                 return;
             }
+
+            // Debounce para evitar ejecuciones dobles si ambos clientes llaman ChangeGame1vs1 simultáneamente
+            lock (_handChangeLock1vs1)
+            {
+                if (_lastHandChangeTime1vs1.TryGetValue(move.game, out DateTime lastChange) &&
+                    (DateTime.UtcNow - lastChange).TotalMilliseconds < 1500)
+                {
+                    GameLogger.Log(move.game, "ChangeGame1vs1", "Ignorando llamada duplicada a ChangeGame1vs1 por debounce.");
+                    return;
+                }
+                _lastHandChangeTime1vs1[move.game] = DateTime.UtcNow;
+            }
+
+            // Alternancia estricta de la salida ("una y una")
+            games[numg].HandStarter = (games[numg].HandStarter == 1) ? 2 : 1;
+            games[numg].PlayerTurn = (games[numg].HandStarter == 1);
+            games[numg].HandCount++;
+
             games[numg].Deck.RandomCards();
             games[numg].ShuffleCards_1vs1();
-            games[numg].PlayerTurn = !games[numg].PlayerTurn;
             games[numg].CurrentStake = 1;
             games[numg].Ask369 = 0;
             games[numg].RoundOne = 0;
@@ -474,13 +496,14 @@ namespace PericonAPI.Hubs
             sentence.game = move.game;
             sentence.order = 87;
             string previewcontent = PThree + "-";
-            string PFour = (games[numg].PlayerTurn == true ? "1" : "0");
-            string PFive = (games[numg].PlayerTurn == true ? "0" : "1");
+            string PFour = (games[numg].HandStarter == 1 ? "1" : "0");
+            string PFive = (games[numg].HandStarter == 2 ? "1" : "0");
             string PScore = $"-{games[numg].PointsOne}-{games[numg].PointsTwo}";
             sentence.content = previewcontent + PFour + PScore;
-            Console.WriteLine($"Enviando: {sentence}");
+            Console.WriteLine($"[ChangeGame1vs1] Mano {games[numg].HandCount}: Salida corresponde a P{games[numg].HandStarter}. Enviando a POne ({POne})");
             await Clients.Client(POne).SendAsync("setChangeHand", sentence);
             sentence.content = previewcontent + PFive + PScore;
+            Console.WriteLine($"[ChangeGame1vs1] Mano {games[numg].HandCount}: Salida corresponde a P{games[numg].HandStarter}. Enviando a PTwo ({PTwo})");
             await Clients.Client(PTwo).SendAsync("setChangeHand", sentence);
         }
 
@@ -530,7 +553,9 @@ namespace PericonAPI.Hubs
             // Repartir la nueva mano
             games[numg].Deck.RandomCards();
             games[numg].ShuffleCards_1vs1();
-            games[numg].PlayerTurn = !games[numg].PlayerTurn;
+            games[numg].HandStarter = (games[numg].HandStarter == 1) ? 2 : 1;
+            games[numg].PlayerTurn = (games[numg].HandStarter == 1);
+            games[numg].HandCount++;
             games[numg].CurrentStake = 1;
             games[numg].Ask369 = 0;
             games[numg].RoundOne = 0;
@@ -543,8 +568,8 @@ namespace PericonAPI.Hubs
             sentence.game = move.game;
             sentence.order = 87;
             string previewcontent = PThree + "-";
-            string PFour = (games[numg].PlayerTurn == true ? "1" : "0");
-            string PFive = (games[numg].PlayerTurn == true ? "0" : "1");
+            string PFour = (games[numg].HandStarter == 1 ? "1" : "0");
+            string PFive = (games[numg].HandStarter == 2 ? "1" : "0");
             string PScore = $"-{games[numg].PointsOne}-{games[numg].PointsTwo}";
 
             sentence.content = previewcontent + PFour + PScore;
@@ -561,11 +586,11 @@ namespace PericonAPI.Hubs
 
             string caller = Context.ConnectionId;
             bool callerIsP1 = (caller == games[numg].IdPOne);
-            string rivalId = callerIsP1 ? games[numg].IdPTwo : games[numg].IdPOne;
+            string otherPlayer = callerIsP1 ? games[numg].IdPTwo : games[numg].IdPOne;
 
-            await Clients.Client(rivalId).SendAsync("TumbaAcceptedNotice", new
+            await Clients.Client(otherPlayer).SendAsync("TumbaAcceptedNotice", new
             {
-                message = "¡El rival aceptó jugar la ronda en Tumba!"
+                message = "El rival aceptó jugar la mano de Tumba."
             });
         }
 
@@ -584,13 +609,20 @@ namespace PericonAPI.Hubs
 
         public async Task GetInitHand(int id, bool flag)
         {
-            Console.WriteLine($"GetInitHandGame1vs1. Cliente: {Context.ConnectionId}, Juego: {id}");
+            Console.WriteLine($"GetInitHandGame1vs1. Cliente: {Context.ConnectionId}, Juego: {id}, Flag: {flag}");
             string PZero = FindInitHand(id);
             int numg = FindGame1vs1(id);
+            if (numg >= 0 && numg < games.Count)
+            {
+                // Actualizar ConnectionId activo del cliente en la partida
+                if (flag) games[numg].IdPOne = Context.ConnectionId;
+                else games[numg].IdPTwo = Context.ConnectionId;
+            }
+
             int p1 = (numg >= 0 && numg < games.Count) ? games[numg].PointsOne : 0;
             int p2 = (numg >= 0 && numg < games.Count) ? games[numg].PointsTwo : 0;
             bool isMyTurn = (numg >= 0 && numg < games.Count)
-                ? (flag == games[numg].PlayerTurn)
+                ? (flag ? (games[numg].HandStarter == 1) : (games[numg].HandStarter == 2))
                 : flag;
             GameMessage sentence = new GameMessage();
             sentence.game = id;
@@ -1438,7 +1470,10 @@ namespace PericonAPI.Hubs
 
                 // Sorteo de mano inicial 50% / 50%
                 Random rng = new Random();
-                newGame.PlayerTurn = (rng.Next(2) == 0);
+                int startP = rng.Next(2) == 0 ? 1 : 2;
+                newGame.HandStarter = startP;
+                newGame.PlayerTurn = (startP == 1);
+                newGame.HandCount = 1;
 
                 newGame.Deck.RandomCards();
                 newGame.Id = newGame.GenerateSeed(games);
