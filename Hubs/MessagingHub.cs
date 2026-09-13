@@ -1966,6 +1966,50 @@ namespace PericonAPI.Hubs
             });
         }
 
+        public async Task PassTumba2v2(string roomName, int seatIndex)
+        {
+            string roomKey = (roomName ?? "").Trim().ToLowerInvariant();
+            Room2v2Session? session;
+            int passingTeam = (seatIndex == 0 || seatIndex == 2) ? 1 : 2;
+
+            lock (rooms2v2Lock)
+            {
+                if (!rooms2v2.TryGetValue(roomKey, out session)) return;
+                if (passingTeam == 1)
+                {
+                    session.PointsTeam1 = Math.Max(0, session.PointsTeam1 - 1);
+                    session.PointsTeam2 += 1;
+                }
+                else
+                {
+                    session.PointsTeam2 = Math.Max(0, session.PointsTeam2 - 1);
+                    session.PointsTeam1 += 1;
+                }
+            }
+
+            await Clients.Group(roomKey).SendAsync("TumbaPassedNotice2v2", new
+            {
+                seatIndex,
+                passingTeam,
+                pointsTeam1 = session.PointsTeam1,
+                pointsTeam2 = session.PointsTeam2,
+                message = $"El Equipo {(passingTeam == 1 ? "Azul" : "Rojo")} pasó en Tumba (-1 piedra para ellos, +1 para el rival)."
+            });
+        }
+
+        public async Task AcceptTumba2v2(string roomName, int seatIndex)
+        {
+            string roomKey = (roomName ?? "").Trim().ToLowerInvariant();
+            int acceptingTeam = (seatIndex == 0 || seatIndex == 2) ? 1 : 2;
+
+            await Clients.Group(roomKey).SendAsync("TumbaAcceptedNotice2v2", new
+            {
+                seatIndex,
+                acceptingTeam,
+                message = $"El Equipo {(acceptingTeam == 1 ? "Azul" : "Rojo")} aceptó jugar la mano en Tumba."
+            });
+        }
+
         public Task UpdatePoints2v2(string roomName, int pointsT1, int pointsT2)
         {
             string roomKey = (roomName ?? "").Trim().ToLowerInvariant();
