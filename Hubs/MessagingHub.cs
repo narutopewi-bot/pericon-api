@@ -132,6 +132,10 @@ namespace PericonAPI.Hubs
             public int TricksTeam1 { get; set; } = 0;
             public int TricksTeam2 { get; set; } = 0;
             public int CurrentStake { get; set; } = 1;
+            public int PendingStake { get; set; } = 0;
+            public int StakeAskerSeat { get; set; } = -1;
+            public int StakeAskerTeam { get; set; } = 0;
+            public int LastStakeTeam { get; set; } = 0;
             public int CurrentTurn { get; set; } = 0;
             public int LeadPlayer { get; set; } = 0;
             public List<PlayedCard2v2Dto> CurrentTrick { get; set; } = new List<PlayedCard2v2Dto>();
@@ -1832,6 +1836,10 @@ namespace PericonAPI.Hubs
                 session.TricksTeam1 = 0;
                 session.TricksTeam2 = 0;
                 session.CurrentStake = 1;
+                session.PendingStake = 0;
+                session.StakeAskerSeat = -1;
+                session.StakeAskerTeam = 0;
+                session.LastStakeTeam = 0;
                 session.LeadPlayer = starterPlayer;
                 session.CurrentTurn = starterPlayer;
                 session.CurrentTrick.Clear();
@@ -1879,6 +1887,8 @@ namespace PericonAPI.Hubs
             lock (rooms2v2Lock)
             {
                 if (!rooms2v2.TryGetValue(roomKey, out session)) return;
+                // Bloquear jugar cartas mientras hay un cante pendiente de respuesta o la partida terminó
+                if (session.PendingStake > 0 || session.PointsTeam1 >= 10 || session.PointsTeam2 >= 10) return;
                 session.CurrentTrick.Add(new PlayedCard2v2Dto { SeatIndex = seatIndex, CardId = cardId });
                 session.CurrentTurn = (seatIndex + 1) % 4;
             }
@@ -1942,13 +1952,24 @@ namespace PericonAPI.Hubs
         public async Task PedirStake2v2(string roomName, int seatIndex, int nextStake)
         {
             string roomKey = (roomName ?? "").Trim().ToLowerInvariant();
+            Room2v2Session? session;
+            int askerTeam = (seatIndex == 0 || seatIndex == 2) ? 1 : 2;
+
             lock (rooms2v2Lock)
             {
-                if (rooms2v2.TryGetValue(roomKey, out var session))
-                {
-                    session.CurrentStake = nextStake;
-                }
+                if (!rooms2v2.TryGetValue(roomKey, out session)) return;
+                // Si ya hay un cante pendiente de respuesta, ignorar para evitar solapamientos
+                if (session.PendingStake > 0) return;
+                // No se puede pedir más allá de 9
+                if (session.CurrentStake >= 9) return;
+                // El equipo que cantó el último aumento no puede auto-aumentar
+                if (session.LastStakeTeam == askerTeam && session.CurrentStake > 1) return;
+
+                session.PendingStake = nextStake;
+                session.StakeAskerSeat = seatIndex;
+                session.StakeAskerTeam = askerTeam;
             }
+
             await Clients.Group(roomKey).SendAsync("StakeAsked2v2", new
             {
                 seatIndex,
@@ -1959,10 +1980,81 @@ namespace PericonAPI.Hubs
         public async Task AnswerStake2v2(string roomName, int seatIndex, bool accepted)
         {
             string roomKey = (roomName ?? "").Trim().ToLowerInvariant();
+            Room2v2Session? session;
+            int askerTeam = 0;
+            int reward = 0;
+            int finalStake = 1;
+            bool wasPending = false;
+            bool isGameOver = false;
+            int winningTeamOfMatch = 0;
+
+            lock (rooms2v2Lock)
+            {
+                if (!rooms2v2.TryGetValue(roomKey, out session)) return;
+                // Si ya no está pendiente (porque el compañero ya respondió), ignorar
+                if (session.PendingStake == 0) return;
+
+                int responderTeam = (seatIndex == 0 || seatIndex == 2) ? 1 : 2;
+                // Solo el equipo rival al que pidió puede responder
+                if (responderTeam == session.StakeAskerTeam) return;
+
+                wasPending = true;
+                askerTeam = session.StakeAskerTeam;
+
+                if (accepted)
+                {
+                    session.CurrentStake = session.PendingStake;
+                    session.LastStakeTeam = askerTeam;
+                    finalStake = session.CurrentStake;
+                    session.PendingStake = 0;
+                    session.StakeAskerSeat = -1;
+                }
+                else
+                {
+                    // "NO QUIERO": El equipo retador gana la mano inmediatamente
+                    // El valor ganado es la apuesta previa que ya estaba aceptada
+                    reward = session.CurrentStake == 1 ? 1 : (session.CurrentStake == 3 ? 3 : 6);
+                    if (askerTeam == 1)
+                    {
+                        session.PointsTeam1 = Math.Min(10, session.PointsTeam1 + reward);
+                    }
+                    else
+                    {
+                        session.PointsTeam2 = Math.Min(10, session.PointsTeam2 + reward);
+                    }
+
+                    finalStake = session.CurrentStake;
+                    session.PendingStake = 0;
+                    session.StakeAskerSeat = -1;
+                    session.LastStakeTeam = 0;
+
+                    if (session.PointsTeam1 >= 10 || session.PointsTeam2 >= 10)
+                    {
+                        isGameOver = true;
+                        winningTeamOfMatch = session.PointsTeam1 >= 10 ? 1 : 2;
+                    }
+
+                    // Limpiar bazas de la mano actual en el servidor
+                    session.CurrentTrick.Clear();
+                    session.TricksTeam1 = 0;
+                    session.TricksTeam2 = 0;
+                    session.CurrentStake = 1;
+                }
+            }
+
+            if (!wasPending) return;
+
             await Clients.Group(roomKey).SendAsync("StakeAnswered2v2", new
             {
                 seatIndex,
-                accepted
+                accepted,
+                currentStake = finalStake,
+                challengerTeam = askerTeam,
+                reward,
+                pointsTeam1 = session.PointsTeam1,
+                pointsTeam2 = session.PointsTeam2,
+                isGameOver,
+                winningTeamOfMatch
             });
         }
 
