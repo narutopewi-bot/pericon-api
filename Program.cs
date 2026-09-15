@@ -100,6 +100,7 @@ using (var scope = app.Services.CreateScope())
         try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN Losses INTEGER NOT NULL DEFAULT 0;"); } catch { }
         try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN IsAdmin INTEGER NOT NULL DEFAULT 0;"); } catch { }
         try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN LastDailyClaim TEXT NULL;"); } catch { }
+        try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN AvatarUrl TEXT NULL;"); } catch { }
         try { db.Database.ExecuteSqlRaw("UPDATE Users SET Coins = 1000 WHERE Coins < 1000;"); } catch { }
         try
         {
@@ -202,6 +203,12 @@ using (var scope = app.Services.CreateScope())
                     ""ResolvedAt"" TIMESTAMP WITH TIME ZONE NULL
                 );
             ");
+        }
+        catch { }
+
+        try
+        {
+            db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""AvatarUrl"" TEXT NULL;");
         }
         catch { }
     }

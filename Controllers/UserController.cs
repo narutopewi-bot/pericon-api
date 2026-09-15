@@ -223,6 +223,73 @@ namespace PericonAPI.Controllers
 
             return Ok(topPlayers);
         }
+
+        [HttpPut("update-profile")]
+        public async Task<IActionResult> UpdateProfile([FromBody] UpdateProfileDto dto)
+        {
+            if (dto == null || dto.UserId <= 0)
+            {
+                return BadRequest(new { message = "ID de usuario inválido." });
+            }
+
+            var user = await _context.Users.FindAsync(dto.UserId);
+            if (user == null)
+            {
+                return NotFound(new { message = "Usuario no encontrado." });
+            }
+
+            // 1. Validar y actualizar Nombre de Usuario
+            if (!string.IsNullOrWhiteSpace(dto.NewUsername))
+            {
+                var cleanUsername = dto.NewUsername.Trim();
+                if (cleanUsername.Length < 3 || cleanUsername.Length > 25)
+                {
+                    return BadRequest(new { message = "El nombre de usuario debe tener entre 3 y 25 caracteres." });
+                }
+
+                if (!string.Equals(user.Username, cleanUsername, StringComparison.OrdinalIgnoreCase))
+                {
+                    var exists = await _context.Users
+                        .AnyAsync(u => u.Id != user.Id && u.Username.ToLower() == cleanUsername.ToLower());
+                    if (exists)
+                    {
+                        return BadRequest(new { message = $"El nombre '{cleanUsername}' ya pertenece a otro jugador. Por favor elige otro." });
+                    }
+                    user.Username = cleanUsername;
+                }
+            }
+
+            // 2. Validar y actualizar Logotipo / Avatar
+            if (dto.NewAvatarUrl != null)
+            {
+                user.AvatarUrl = dto.NewAvatarUrl.Trim();
+            }
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                message = "¡Perfil actualizado con éxito!",
+                user = new
+                {
+                    id = user.Id,
+                    username = user.Username,
+                    email = user.Email,
+                    coins = user.Coins,
+                    wins = user.Wins,
+                    losses = user.Losses,
+                    level = user.GetCalculatedLevel(),
+                    avatarUrl = user.AvatarUrl
+                }
+            });
+        }
+    }
+
+    public class UpdateProfileDto
+    {
+        public int UserId { get; set; }
+        public string? NewUsername { get; set; }
+        public string? NewAvatarUrl { get; set; }
     }
 
     public class RedeemPromoDto
