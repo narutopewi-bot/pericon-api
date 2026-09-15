@@ -161,6 +161,49 @@ using (var scope = app.Services.CreateScope())
             ");
         }
         catch { }
+        try
+        {
+            db.Database.ExecuteSqlRaw(@"
+                CREATE TABLE IF NOT EXISTS AppErrorLogs (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    Source TEXT NOT NULL,
+                    RoomName TEXT NULL,
+                    Username TEXT NULL,
+                    UserId INTEGER NULL,
+                    ErrorMessage TEXT NOT NULL,
+                    StackTrace TEXT NULL,
+                    ExtraData TEXT NULL,
+                    Status TEXT NOT NULL DEFAULT 'NUEVO',
+                    AdminNotes TEXT NULL,
+                    CreatedAt TEXT NOT NULL,
+                    ResolvedAt TEXT NULL
+                );
+            ");
+        }
+        catch { }
+    }
+    else
+    {
+        try
+        {
+            db.Database.ExecuteSqlRaw(@"
+                CREATE TABLE IF NOT EXISTS ""AppErrorLogs"" (
+                    ""Id"" SERIAL PRIMARY KEY,
+                    ""Source"" VARCHAR(50) NOT NULL,
+                    ""RoomName"" VARCHAR(100) NULL,
+                    ""Username"" VARCHAR(100) NULL,
+                    ""UserId"" INT NULL,
+                    ""ErrorMessage"" TEXT NOT NULL,
+                    ""StackTrace"" TEXT NULL,
+                    ""ExtraData"" TEXT NULL,
+                    ""Status"" VARCHAR(50) NOT NULL DEFAULT 'NUEVO',
+                    ""AdminNotes"" TEXT NULL,
+                    ""CreatedAt"" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                    ""ResolvedAt"" TIMESTAMP WITH TIME ZONE NULL
+                );
+            ");
+        }
+        catch { }
     }
 
     // Auto-seed inicial si la base de datos está vacía (por ejemplo al conectar PostgreSQL en Render)

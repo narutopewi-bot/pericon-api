@@ -15,6 +15,7 @@ namespace PericonAPI.Data
         public DbSet<MatchBetRecord> MatchBetRecords { get; set; }
         public DbSet<PromoCode> PromoCodes { get; set; }
         public DbSet<PromoCodeRedemption> PromoCodeRedemptions { get; set; }
+        public DbSet<AppErrorLog> AppErrorLogs { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

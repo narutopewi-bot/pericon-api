@@ -587,6 +587,150 @@ namespace PericonAPI.Controllers
 
             return Ok(new { message = "Anuncio transmitido en vivo a todos los jugadores conectados." });
         }
+
+        // ==========================================
+        // MÓDULO DE ERRORES E INCIDENCIAS (TELEMETRÍA)
+        // ==========================================
+
+        [HttpPost("errors/report")]
+        public async Task<IActionResult> ReportError([FromBody] CreateErrorLogDto dto)
+        {
+            if (string.IsNullOrWhiteSpace(dto.ErrorMessage))
+            {
+                return BadRequest(new { message = "El mensaje de error es requerido." });
+            }
+
+            var log = new AppErrorLog
+            {
+                Source = !string.IsNullOrWhiteSpace(dto.Source) ? dto.Source : "Client",
+                RoomName = dto.RoomName,
+                Username = dto.Username,
+                UserId = dto.UserId,
+                ErrorMessage = dto.ErrorMessage,
+                StackTrace = dto.StackTrace,
+                ExtraData = dto.ExtraData,
+                Status = "NUEVO",
+                CreatedAt = DateTime.UtcNow
+            };
+
+            _context.AppErrorLogs.Add(log);
+            await _context.SaveChangesAsync();
+
+            Console.WriteLine($"[ErrorLog #{log.Id}] [{log.Source}] Sala: {log.RoomName} | User: {log.Username} | {log.ErrorMessage}");
+
+            return Ok(new
+            {
+                message = "Error registrado correctamente.",
+                errorId = log.Id
+            });
+        }
+
+        [HttpGet("errors")]
+        public async Task<IActionResult> GetErrors([FromQuery] string? status = "ALL", [FromQuery] string? source = null, [FromQuery] int limit = 200)
+        {
+            var query = _context.AppErrorLogs.AsQueryable();
+
+            if (!string.IsNullOrWhiteSpace(status) && status.ToUpperInvariant() != "ALL")
+            {
+                var upper = status.ToUpperInvariant();
+                query = query.Where(e => e.Status == upper);
+            }
+
+            if (!string.IsNullOrWhiteSpace(source) && source.ToUpperInvariant() != "ALL")
+            {
+                query = query.Where(e => e.Source.ToLower() == source.ToLower());
+            }
+
+            var totalErrors = await _context.AppErrorLogs.CountAsync();
+            var newErrors = await _context.AppErrorLogs.CountAsync(e => e.Status == "NUEVO");
+            var resolvedErrors = await _context.AppErrorLogs.CountAsync(e => e.Status == "RESUELTO");
+
+            var items = await query
+                .OrderByDescending(e => e.CreatedAt)
+                .Take(Math.Min(limit, 500))
+                .Select(e => new
+                {
+                    id = e.Id,
+                    source = e.Source,
+                    roomName = e.RoomName,
+                    username = e.Username,
+                    userId = e.UserId,
+                    errorMessage = e.ErrorMessage,
+                    stackTrace = e.StackTrace,
+                    extraData = e.ExtraData,
+                    status = e.Status,
+                    adminNotes = e.AdminNotes,
+                    createdAt = e.CreatedAt,
+                    resolvedAt = e.ResolvedAt
+                })
+                .ToListAsync();
+
+            return Ok(new
+            {
+                totalErrors,
+                newErrors,
+                resolvedErrors,
+                items
+            });
+        }
+
+        [HttpPut("errors/{id}/status")]
+        public async Task<IActionResult> UpdateErrorStatus(int id, [FromBody] UpdateErrorStatusDto dto)
+        {
+            var log = await _context.AppErrorLogs.FindAsync(id);
+            if (log == null)
+            {
+                return NotFound(new { message = "Registro de error no encontrado." });
+            }
+
+            log.Status = !string.IsNullOrWhiteSpace(dto.Status) ? dto.Status.ToUpperInvariant() : "REVISADO";
+            if (dto.AdminNotes != null)
+            {
+                log.AdminNotes = dto.AdminNotes;
+            }
+
+            if (log.Status == "RESUELTO")
+            {
+                log.ResolvedAt = DateTime.UtcNow;
+            }
+            else
+            {
+                log.ResolvedAt = null;
+            }
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                message = $"Estado de incidencia #{id} actualizado a {log.Status}.",
+                log
+            });
+        }
+
+        [HttpDelete("errors/{id}")]
+        public async Task<IActionResult> DeleteError(int id)
+        {
+            var log = await _context.AppErrorLogs.FindAsync(id);
+            if (log == null)
+            {
+                return NotFound(new { message = "Registro de error no encontrado." });
+            }
+
+            _context.AppErrorLogs.Remove(log);
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = $"Incidencia #{id} eliminada correctamente." });
+        }
+
+        [HttpPost("errors/clear-resolved")]
+        public async Task<IActionResult> ClearResolvedErrors()
+        {
+            var resolved = await _context.AppErrorLogs.Where(e => e.Status == "RESUELTO").ToListAsync();
+            _context.AppErrorLogs.RemoveRange(resolved);
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = $"Se eliminaron {resolved.Count} incidencias resueltas." });
+        }
     }
 
     public class CreatePromoDto

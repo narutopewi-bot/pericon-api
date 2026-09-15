@@ -139,6 +139,8 @@ namespace PericonAPI.Hubs
             public int CurrentTurn { get; set; } = 0;
             public int LeadPlayer { get; set; } = 0;
             public List<PlayedCard2v2Dto> CurrentTrick { get; set; } = new List<PlayedCard2v2Dto>();
+            public List<PlayedCard2v2Dto> HandHistoryCards { get; set; } = new List<PlayedCard2v2Dto>();
+            public int HandCount { get; set; } = 0;
             public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
         }
 
@@ -1604,12 +1606,38 @@ namespace PericonAPI.Hubs
                     rooms2v2[roomKey] = session;
                 }
 
-                // Verificar si ya está en algún asiento por ConnectionId o por nombre
-                var existingSeat = session.Seats.FirstOrDefault(s => s.ConnectionId == callerId || s.Name.ToLower() == playerName.ToLower());
+                // 1. Buscar si ya existe por ConnectionId
+                Seat2v2? existingSeat = session.Seats.FirstOrDefault(s => s.ConnectionId == callerId);
+
+                // 2. Si no, buscar por nombre (si no es genérico)
+                if (existingSeat == null && !string.IsNullOrEmpty(playerName) && playerName != "Jugador" && !playerName.StartsWith("Jugador-"))
+                {
+                    existingSeat = session.Seats.FirstOrDefault(s => s.Name.Equals(playerName, StringComparison.OrdinalIgnoreCase));
+                }
+
+                // 3. Si sigue sin encontrar y hay preferredSlot, verificar si ese asiento está desconectado
+                if (existingSeat == null && preferredSlot >= 0 && preferredSlot <= 3)
+                {
+                    var slotSeat = session.Seats.FirstOrDefault(s => s.SeatIndex == preferredSlot);
+                    if (slotSeat != null && (!slotSeat.IsConnected || slotSeat.ConnectionId == callerId || session.GameStarted))
+                    {
+                        existingSeat = slotSeat;
+                    }
+                }
+
+                // 4. Si la partida ya inició y hay un asiento desconectado, reasignar para recuperar la partida
+                if (existingSeat == null && session.GameStarted)
+                {
+                    existingSeat = session.Seats.FirstOrDefault(s => !s.IsConnected);
+                }
+
                 if (existingSeat != null)
                 {
                     existingSeat.ConnectionId = callerId;
-                    existingSeat.Name = playerName;
+                    if (!string.IsNullOrEmpty(playerName) && playerName != "Jugador" && !playerName.StartsWith("Jugador-"))
+                    {
+                        existingSeat.Name = playerName;
+                    }
                     existingSeat.IsConnected = true;
                     existingSeat.DisconnectedAt = null;
                     assignedSeat = existingSeat;
@@ -1690,6 +1718,9 @@ namespace PericonAPI.Hubs
                 var reconnectState = new
                 {
                     roomName = session.RoomName,
+                    mySeatIndex = assignedSeat.SeatIndex,
+                    myRole = assignedSeat.Role,
+                    myTeam = assignedSeat.Team,
                     initHand = session.CurrentInitHand,
                     bet = session.Bet,
                     starterPlayer = session.LeadPlayer,
@@ -1699,8 +1730,13 @@ namespace PericonAPI.Hubs
                     tricksTeam1 = session.TricksTeam1,
                     tricksTeam2 = session.TricksTeam2,
                     currentStake = session.CurrentStake,
+                    pendingStake = session.PendingStake,
+                    stakeAskerSeat = session.StakeAskerSeat,
+                    stakeAskerTeam = session.StakeAskerTeam,
+                    lastStakeTeam = session.LastStakeTeam,
                     currentTurn = session.CurrentTurn,
-                    currentTrick = session.CurrentTrick
+                    currentTrick = session.CurrentTrick,
+                    handPlayedCards = session.HandHistoryCards
                 };
                 await Clients.Caller.SendAsync("GameReconnectedState2v2", reconnectState);
                 return;
@@ -1786,6 +1822,8 @@ namespace PericonAPI.Hubs
                 session.CurrentTurn = 0;
                 session.LeadPlayer = 0;
                 session.CurrentTrick.Clear();
+                session.HandHistoryCards.Clear();
+                session.HandCount = 1;
             }
 
             // Barajar 12 cartas para los 4 jugadores + 1 Vida
@@ -1843,6 +1881,8 @@ namespace PericonAPI.Hubs
                 session.LeadPlayer = starterPlayer;
                 session.CurrentTurn = starterPlayer;
                 session.CurrentTrick.Clear();
+                session.HandHistoryCards.Clear();
+                session.HandCount++;
             }
 
             SpanishCards deck = new SpanishCards();
@@ -1889,7 +1929,9 @@ namespace PericonAPI.Hubs
                 if (!rooms2v2.TryGetValue(roomKey, out session)) return;
                 // Bloquear jugar cartas mientras hay un cante pendiente de respuesta o la partida terminó
                 if (session.PendingStake > 0 || session.PointsTeam1 >= 10 || session.PointsTeam2 >= 10) return;
-                session.CurrentTrick.Add(new PlayedCard2v2Dto { SeatIndex = seatIndex, CardId = cardId });
+                var playedDto = new PlayedCard2v2Dto { SeatIndex = seatIndex, CardId = cardId };
+                session.CurrentTrick.Add(playedDto);
+                session.HandHistoryCards.Add(playedDto);
                 session.CurrentTurn = (seatIndex + 1) % 4;
             }
 
