@@ -198,15 +198,28 @@ namespace PericonAPI.Controllers
                 .OrderByDescending(u => u.CreatedAt)
                 .ToListAsync();
 
+            // Respaldo de teléfonos desde retiros para usuarios antiguos sin PhoneNumber explícito
+            var withdrawalPhones = await _context.PaymentWithdrawals
+                .Where(w => !string.IsNullOrEmpty(w.PhoneNumber))
+                .OrderByDescending(w => w.Id)
+                .GroupBy(w => w.UserId)
+                .Select(g => new { UserId = g.Key, Phone = g.First().PhoneNumber })
+                .ToDictionaryAsync(x => x.UserId, x => x.Phone);
+
             var users = userList.Select(u =>
             {
                 var total = u.Wins + u.Losses;
                 var rate = total > 0 ? Math.Round((double)u.Wins / total * 100, 1) : 0;
+                string phone = !string.IsNullOrWhiteSpace(u.PhoneNumber)
+                    ? u.PhoneNumber
+                    : (withdrawalPhones.TryGetValue(u.Id, out var wp) ? wp : "");
+
                 return new
                 {
                     id = u.Id,
                     username = u.Username,
                     email = u.Email,
+                    phoneNumber = phone,
                     coins = u.Coins,
                     wins = u.Wins,
                     losses = u.Losses,
@@ -574,18 +587,117 @@ namespace PericonAPI.Controllers
                 return BadRequest(new { message = "El mensaje no puede estar vacío." });
             }
 
-            var title = !string.IsNullOrWhiteSpace(dto.Title) ? dto.Title : "📢 COMUNICADO OFICIAL";
-            var type = !string.IsNullOrWhiteSpace(dto.Type) ? dto.Type : "info";
+            var title = !string.IsNullOrWhiteSpace(dto.Title) ? dto.Title.Trim() : "📢 COMUNICADO OFICIAL";
+            var type = !string.IsNullOrWhiteSpace(dto.Type) ? dto.Type.Trim() : "info";
 
+            // Desactivar anuncios anteriores para que este sea el principal activo
+            var activeAnnouncements = await _context.SystemAnnouncements.Where(a => a.IsActive).ToListAsync();
+            foreach (var a in activeAnnouncements)
+            {
+                a.IsActive = false;
+            }
+
+            var announcement = new SystemAnnouncement
+            {
+                Title = title,
+                Message = dto.Message.Trim(),
+                Type = type,
+                IsActive = true,
+                CreatedAt = DateTime.UtcNow,
+                CreatedBy = "Guardian"
+            };
+
+            _context.SystemAnnouncements.Add(announcement);
+            await _context.SaveChangesAsync();
+
+            // Emitir en vivo por SignalR a todos los jugadores conectados en cualquier mesa o lobby
             await _hubContext.Clients.All.SendAsync("GlobalAnnouncement", new
             {
-                title,
-                message = dto.Message.Trim(),
-                type,
+                id = announcement.Id,
+                title = announcement.Title,
+                message = announcement.Message,
+                type = announcement.Type,
+                createdAt = announcement.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
                 timestamp = DateTime.UtcNow.ToString("HH:mm")
             });
 
-            return Ok(new { message = "Anuncio transmitido en vivo a todos los jugadores conectados." });
+            return Ok(new
+            {
+                message = "Anuncio transmitido en vivo y publicado con éxito para todos los usuarios.",
+                announcement = new
+                {
+                    id = announcement.Id,
+                    title = announcement.Title,
+                    message = announcement.Message,
+                    type = announcement.Type,
+                    isActive = announcement.IsActive,
+                    createdAt = announcement.CreatedAt.ToString("yyyy-MM-dd HH:mm")
+                }
+            });
+        }
+
+        [HttpGet("announcements")]
+        public async Task<IActionResult> GetAnnouncements()
+        {
+            var list = await _context.SystemAnnouncements
+                .OrderByDescending(a => a.CreatedAt)
+                .Take(50)
+                .Select(a => new
+                {
+                    id = a.Id,
+                    title = a.Title,
+                    message = a.Message,
+                    type = a.Type,
+                    isActive = a.IsActive,
+                    createdAt = a.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
+                    createdBy = a.CreatedBy
+                })
+                .ToListAsync();
+
+            return Ok(list);
+        }
+
+        [HttpPost("announcements/{id}/toggle")]
+        public async Task<IActionResult> ToggleAnnouncement(int id)
+        {
+            var item = await _context.SystemAnnouncements.FindAsync(id);
+            if (item == null) return NotFound(new { message = "Anuncio no encontrado." });
+
+            item.IsActive = !item.IsActive;
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = item.IsActive ? "Anuncio activado con éxito." : "Anuncio desactivado con éxito.", isActive = item.IsActive });
+        }
+
+        [HttpDelete("announcements/{id}")]
+        public async Task<IActionResult> DeleteAnnouncement(int id)
+        {
+            var item = await _context.SystemAnnouncements.FindAsync(id);
+            if (item == null) return NotFound(new { message = "Anuncio no encontrado." });
+
+            _context.SystemAnnouncements.Remove(item);
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = "Anuncio eliminado exitosamente." });
+        }
+
+        [HttpGet("announcement/active")]
+        public async Task<IActionResult> GetActiveAnnouncement()
+        {
+            var item = await _context.SystemAnnouncements
+                .Where(a => a.IsActive)
+                .OrderByDescending(a => a.CreatedAt)
+                .Select(a => new
+                {
+                    id = a.Id,
+                    title = a.Title,
+                    message = a.Message,
+                    type = a.Type,
+                    createdAt = a.CreatedAt.ToString("yyyy-MM-dd HH:mm")
+                })
+                .FirstOrDefaultAsync();
+
+            return Ok(item);
         }
 
         // ==========================================

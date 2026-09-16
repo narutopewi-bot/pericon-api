@@ -39,11 +39,13 @@ namespace PericonAPI.Controllers
             }
 
             var passwordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password);
+            string? rawPhone = !string.IsNullOrWhiteSpace(dto.PhoneNumber) ? dto.PhoneNumber.Trim() : (!string.IsNullOrWhiteSpace(dto.Phone) ? dto.Phone.Trim() : null);
 
             var user = new User
             {
                 Username = cleanUsername,
                 Email = cleanEmail,
+                PhoneNumber = rawPhone,
                 PasswordHash = passwordHash,
                 Coins = 1000,
                 Level = "Aprendiz",
@@ -60,6 +62,7 @@ namespace PericonAPI.Controllers
                 Id = user.Id,
                 Username = user.Username,
                 Email = user.Email,
+                PhoneNumber = user.PhoneNumber,
                 Coins = user.Coins,
                 Level = user.Level,
                 Experience = user.Experience,
@@ -116,6 +119,7 @@ namespace PericonAPI.Controllers
                 Id = user.Id,
                 Username = user.Username,
                 Email = user.Email,
+                PhoneNumber = user.PhoneNumber,
                 Coins = user.Coins,
                 Level = user.Level,
                 Experience = user.Experience,
@@ -217,6 +221,7 @@ namespace PericonAPI.Controllers
                 Id = user.Id,
                 Username = user.Username,
                 Email = user.Email,
+                PhoneNumber = user.PhoneNumber,
                 Coins = user.Coins,
                 Level = user.Level,
                 Experience = user.Experience,
@@ -239,6 +244,7 @@ namespace PericonAPI.Controllers
                 Id = user.Id,
                 Username = user.Username,
                 Email = user.Email,
+                PhoneNumber = user.PhoneNumber,
                 Coins = user.Coins,
                 Level = user.Level,
                 Experience = user.Experience,

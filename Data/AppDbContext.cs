@@ -16,6 +16,7 @@ namespace PericonAPI.Data
         public DbSet<PromoCode> PromoCodes { get; set; }
         public DbSet<PromoCodeRedemption> PromoCodeRedemptions { get; set; }
         public DbSet<AppErrorLog> AppErrorLogs { get; set; }
+        public DbSet<SystemAnnouncement> SystemAnnouncements { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

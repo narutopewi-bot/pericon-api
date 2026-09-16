@@ -15,6 +15,10 @@ namespace PericonAPI.Models
         [Required(ErrorMessage = "La contraseña es requerida")]
         [StringLength(100, MinimumLength = 6, ErrorMessage = "La contraseña debe tener al menos 6 caracteres")]
         public string Password { get; set; } = string.Empty;
+
+        [MaxLength(30)]
+        public string? PhoneNumber { get; set; }
+        public string? Phone { get; set; }
     }
 
     public class LoginDto
@@ -46,6 +50,7 @@ namespace PericonAPI.Models
         public string Level { get; set; } = string.Empty;
         public int Experience { get; set; }
         public string? AvatarUrl { get; set; }
+        public string? PhoneNumber { get; set; }
         public string Message { get; set; } = string.Empty;
     }
 }

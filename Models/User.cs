@@ -35,6 +35,9 @@ namespace PericonAPI.Models
 
         public string? AvatarUrl { get; set; }
 
+        [MaxLength(30)]
+        public string? PhoneNumber { get; set; }
+
         public bool IsActive { get; set; } = true;
 
         public bool IsAdmin { get; set; } = false;

@@ -189,6 +189,23 @@ using (var scope = app.Services.CreateScope())
             ");
         }
         catch { }
+
+        try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN PhoneNumber TEXT NULL;"); } catch { }
+        try
+        {
+            db.Database.ExecuteSqlRaw(@"
+                CREATE TABLE IF NOT EXISTS SystemAnnouncements (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    Title TEXT NOT NULL,
+                    Message TEXT NOT NULL,
+                    Type TEXT NOT NULL DEFAULT 'info',
+                    IsActive INTEGER NOT NULL DEFAULT 1,
+                    CreatedAt TEXT NOT NULL,
+                    CreatedBy TEXT NULL
+                );
+            ");
+        }
+        catch { }
     }
     else
     {
@@ -216,6 +233,28 @@ using (var scope = app.Services.CreateScope())
         try
         {
             db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""AvatarUrl"" TEXT NULL;");
+        }
+        catch { }
+
+        try
+        {
+            db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""PhoneNumber"" TEXT NULL;");
+        }
+        catch { }
+
+        try
+        {
+            db.Database.ExecuteSqlRaw(@"
+                CREATE TABLE IF NOT EXISTS ""SystemAnnouncements"" (
+                    ""Id"" SERIAL PRIMARY KEY,
+                    ""Title"" VARCHAR(150) NOT NULL,
+                    ""Message"" TEXT NOT NULL,
+                    ""Type"" VARCHAR(50) NOT NULL DEFAULT 'info',
+                    ""IsActive"" BOOLEAN NOT NULL DEFAULT TRUE,
+                    ""CreatedAt"" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                    ""CreatedBy"" VARCHAR(100) NULL
+                );
+            ");
         }
         catch { }
     }
