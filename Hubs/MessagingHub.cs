@@ -108,6 +108,7 @@ namespace PericonAPI.Hubs
             public string ConnectionId { get; set; } = string.Empty;
             public string UserId { get; set; } = string.Empty;
             public string Name { get; set; } = string.Empty;
+            public string AvatarUrl { get; set; } = string.Empty;
             public int Team { get; set; } // 1 or 2
             public string Role { get; set; } = string.Empty;
             public bool IsReady { get; set; } = true;
@@ -1584,7 +1585,7 @@ namespace PericonAPI.Hubs
         // SALAS MULTIJUGADOR 2 VS 2 (USUARIO VS USUARIO)
         // ==========================================
 
-        public async Task JoinRoom2v2(string roomName, string playerName, int bet, int preferredSlot = -1, string userId = "")
+        public async Task JoinRoom2v2(string roomName, string playerName, int bet, int preferredSlot = -1, string userId = "", string avatarUrl = "")
         {
             string callerId = Context.ConnectionId;
             string roomKey = (roomName ?? "sala-pericon").Trim().ToLowerInvariant();
@@ -1655,6 +1656,10 @@ namespace PericonAPI.Hubs
                     {
                         existingSeat.Name = playerName;
                     }
+                    if (!string.IsNullOrEmpty(avatarUrl))
+                    {
+                        existingSeat.AvatarUrl = avatarUrl;
+                    }
                     existingSeat.IsConnected = true;
                     existingSeat.DisconnectedAt = null;
                     assignedSeat = existingSeat;
@@ -1700,6 +1705,7 @@ namespace PericonAPI.Hubs
                             ConnectionId = callerId,
                             UserId = userId ?? "",
                             Name = playerName,
+                            AvatarUrl = avatarUrl ?? "",
                             Team = team,
                             Role = role,
                             IsReady = true,
@@ -1837,7 +1843,7 @@ namespace PericonAPI.Hubs
             string initHand = "";
             lock (rooms2v2Lock)
             {
-                if (!rooms2v2.TryGetValue(roomKey, out session)) return;
+                if (!rooms2v2.TryGetValue(roomKey, out session) || session.Seats.Count < 4) return;
                 session.GameStarted = true;
                 session.IsStarting = false;
                 session.PointsTeam1 = 0;
@@ -1954,7 +1960,9 @@ namespace PericonAPI.Hubs
             {
                 roomName = session.RoomName,
                 initHand = initHand,
-                starterPlayer = starterPlayer
+                starterPlayer = starterPlayer,
+                pointsTeam1 = session.PointsTeam1,
+                pointsTeam2 = session.PointsTeam2
             };
 
             await Clients.Group(roomKey).SendAsync("NewHandDealt2v2", payload);
@@ -1976,8 +1984,16 @@ namespace PericonAPI.Hubs
             lock (rooms2v2Lock)
             {
                 if (!rooms2v2.TryGetValue(roomKey, out session)) return;
+                if (!session.GameStarted) return;
+                if (seatIndex < 0 || seatIndex > 3) return;
                 // Bloquear jugar cartas mientras hay un cante pendiente de respuesta o la partida terminó
                 if (session.PendingStake > 0 || session.PointsTeam1 >= 10 || session.PointsTeam2 >= 10) return;
+                // Validar que sea el turno de este asiento
+                if (session.CurrentTurn != seatIndex) return;
+                // Evitar que el mismo jugador juegue dos cartas en la misma baza
+                if (session.CurrentTrick.Any(p => p.SeatIndex == seatIndex)) return;
+                // Evitar que se juegue una carta ya utilizada en esta mano
+                if (session.HandHistoryCards.Any(p => p.CardId == cardId)) return;
 
                 var playedDto = new PlayedCard2v2Dto { SeatIndex = seatIndex, CardId = cardId };
                 session.CurrentTrick.Add(playedDto);
@@ -2058,12 +2074,19 @@ namespace PericonAPI.Hubs
             lock (rooms2v2Lock)
             {
                 if (!rooms2v2.TryGetValue(roomKey, out session)) return;
+                if (!session.GameStarted) return;
                 // Si ya hay un cante pendiente de respuesta, ignorar para evitar solapamientos
                 if (session.PendingStake > 0) return;
+                // En Tumba no se permite pedir (si algún equipo tiene 9 o más piedras o la partida terminó)
+                if (session.PointsTeam1 >= 9 || session.PointsTeam2 >= 9) return;
                 // No se puede pedir más allá de 9
                 if (session.CurrentStake >= 9) return;
                 // El equipo que cantó el último aumento no puede auto-aumentar
                 if (session.LastStakeTeam == askerTeam && session.CurrentStake > 1) return;
+
+                // Validar secuencia obligatoria de apuestas de Pericón: 1 -> 3 -> 6 -> 9
+                int expectedNextStake = session.CurrentStake == 1 ? 3 : (session.CurrentStake == 3 ? 6 : 9);
+                if (nextStake != expectedNextStake) return;
 
                 session.PendingStake = nextStake;
                 session.StakeAskerSeat = seatIndex;
@@ -2116,23 +2139,18 @@ namespace PericonAPI.Hubs
                     reward = session.CurrentStake == 1 ? 1 : (session.CurrentStake == 3 ? 3 : 6);
                     if (askerTeam == 1)
                     {
-                        session.PointsTeam1 = Math.Min(10, session.PointsTeam1 + reward);
+                        // En Pericón, a 9 se entra en Tumba; el punto 10 solo se puede conseguir ganando en Tumba
+                        session.PointsTeam1 = Math.Min(9, session.PointsTeam1 + reward);
                     }
                     else
                     {
-                        session.PointsTeam2 = Math.Min(10, session.PointsTeam2 + reward);
+                        session.PointsTeam2 = Math.Min(9, session.PointsTeam2 + reward);
                     }
 
                     finalStake = session.CurrentStake;
                     session.PendingStake = 0;
                     session.StakeAskerSeat = -1;
                     session.LastStakeTeam = 0;
-
-                    if (session.PointsTeam1 >= 10 || session.PointsTeam2 >= 10)
-                    {
-                        isGameOver = true;
-                        winningTeamOfMatch = session.PointsTeam1 >= 10 ? 1 : 2;
-                    }
 
                     // Limpiar bazas de la mano actual en el servidor
                     session.CurrentTrick.Clear();
