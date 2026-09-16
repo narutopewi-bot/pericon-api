@@ -191,12 +191,14 @@ namespace PericonAPI.Controllers
             return Ok(list);
         }
 
+        public const int MIN_WITHDRAWAL_COINS = 1500;
+
         [HttpPost("withdraw")]
         public async Task<IActionResult> RequestWithdrawal([FromBody] PaymentWithdrawDto dto)
         {
-            if (dto.CoinsAmount <= 0)
+            if (dto.CoinsAmount < MIN_WITHDRAWAL_COINS)
             {
-                return BadRequest(new { message = "La cantidad de monedas a retirar debe ser mayor a 0." });
+                return BadRequest(new { message = $"El monto mínimo de retiro es de {MIN_WITHDRAWAL_COINS:N0} monedas." });
             }
 
             if (string.IsNullOrWhiteSpace(dto.BankName))
