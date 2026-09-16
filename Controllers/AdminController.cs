@@ -464,6 +464,33 @@ namespace PericonAPI.Controllers
             });
         }
 
+        [HttpPost("user/{id}/reset-password")]
+        public async Task<IActionResult> AdminResetPassword(int id, [FromBody] AdminResetPasswordDto dto)
+        {
+            var user = await _context.Users.FindAsync(id);
+            if (user == null)
+            {
+                return NotFound(new { message = "Usuario no encontrado." });
+            }
+
+            if (string.IsNullOrWhiteSpace(dto?.NewPassword) || dto.NewPassword.Length < 6)
+            {
+                return BadRequest(new { message = "La nueva contraseña debe tener al menos 6 caracteres." });
+            }
+
+            user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.NewPassword);
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                success = true,
+                message = $"Contraseña para '{user.Username}' restablecida con éxito.",
+                userId = user.Id,
+                username = user.Username,
+                newPassword = dto.NewPassword
+            });
+        }
+
         [HttpGet("reports")]
         public async Task<IActionResult> GetReports()
         {

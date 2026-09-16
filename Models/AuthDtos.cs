@@ -53,4 +53,24 @@ namespace PericonAPI.Models
         public string? PhoneNumber { get; set; }
         public string Message { get; set; } = string.Empty;
     }
+
+    public class ResetPasswordDto
+    {
+        [Required(ErrorMessage = "El correo o usuario es requerido")]
+        public string Identifier { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "El número de WhatsApp es requerido")]
+        public string PhoneNumber { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "La nueva contraseña es requerida")]
+        [StringLength(100, MinimumLength = 6, ErrorMessage = "La contraseña debe tener al menos 6 caracteres")]
+        public string NewPassword { get; set; } = string.Empty;
+    }
+
+    public class AdminResetPasswordDto
+    {
+        [Required(ErrorMessage = "La nueva contraseña es requerida")]
+        [StringLength(100, MinimumLength = 6, ErrorMessage = "La contraseña debe tener al menos 6 caracteres")]
+        public string NewPassword { get; set; } = string.Empty;
+    }
 }

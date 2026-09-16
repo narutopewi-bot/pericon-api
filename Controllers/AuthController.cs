@@ -252,5 +252,55 @@ namespace PericonAPI.Controllers
                 Message = "Perfil obtenido."
             });
         }
+
+        [HttpPost("reset-password")]
+        public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordDto dto)
+        {
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(ModelState);
+            }
+
+            var identifier = dto.Identifier.Trim().ToLowerInvariant();
+            var user = await _context.Users
+                .FirstOrDefaultAsync(u => u.Email.ToLower() == identifier || u.Username.ToLower() == identifier);
+
+            if (user == null)
+            {
+                return NotFound(new { message = "No se encontró ningún usuario con ese correo o nombre de usuario." });
+            }
+
+            if (!string.IsNullOrEmpty(user.PasswordHash) && user.PasswordHash.StartsWith("GOOGLE_OAUTH_"))
+            {
+                return BadRequest(new { message = "Esta cuenta utiliza inicio de sesión con Google. Inicia sesión con el botón 'Continuar con Google'." });
+            }
+
+            static string CleanDigits(string? phone)
+            {
+                if (string.IsNullOrWhiteSpace(phone)) return string.Empty;
+                var digits = new string(phone.Where(char.IsDigit).ToArray());
+                if (digits.StartsWith("58") && digits.Length > 10) digits = digits.Substring(2);
+                if (digits.StartsWith("0") && digits.Length > 10) digits = digits.Substring(1);
+                return digits;
+            }
+
+            var userPhoneClean = CleanDigits(user.PhoneNumber);
+            var inputPhoneClean = CleanDigits(dto.PhoneNumber);
+
+            if (string.IsNullOrEmpty(userPhoneClean) || string.IsNullOrEmpty(inputPhoneClean) || userPhoneClean != inputPhoneClean)
+            {
+                return BadRequest(new { message = "El número de WhatsApp no coincide con el registrado en esta cuenta." });
+            }
+
+            if (string.IsNullOrWhiteSpace(dto.NewPassword) || dto.NewPassword.Length < 6)
+            {
+                return BadRequest(new { message = "La nueva contraseña debe tener al menos 6 caracteres." });
+            }
+
+            user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.NewPassword);
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = "¡Contraseña restablecida exitosamente! Ya puedes iniciar sesión con tu nueva clave." });
+        }
     }
 }
