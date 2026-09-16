@@ -19,7 +19,7 @@ namespace PericonAPI.Models
         [Required]
         public string PasswordHash { get; set; } = string.Empty;
 
-        public int Coins { get; set; } = 1000;
+        public int Coins { get; set; } = 300;
 
         public int Wins { get; set; } = 0;
 
