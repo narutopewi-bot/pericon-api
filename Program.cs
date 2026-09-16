@@ -15,11 +15,11 @@ if (!string.IsNullOrEmpty(envPort))
     builder.WebHost.UseUrls($"http://*:{envPort}");
 }
 
-// Configuración de base de datos persistente: PostgreSQL (Railway / Supabase / Render) o SQLite local
+// Configuración de base de datos persistente: PostgreSQL (Railway / Docker) o SQLite local
 var connectionString = Environment.GetEnvironmentVariable("DATABASE_URL")
     ?? Environment.GetEnvironmentVariable("POSTGRES_CONNECTION_STRING")
     ?? builder.Configuration.GetConnectionString("DefaultConnection")
-    ?? "Host=aws-0-us-west-2.pooler.supabase.com;Port=5432;Database=postgres;Username=postgres.nmbyauelfhhyvfctxwpr;Password=@Guardian.2026;SSL Mode=Require;Trust Server Certificate=true;";
+    ?? "Data Source=pericon.db";
 
 bool isPostgres = !string.IsNullOrWhiteSpace(connectionString) &&
     (connectionString.StartsWith("postgres://", StringComparison.OrdinalIgnoreCase) ||
