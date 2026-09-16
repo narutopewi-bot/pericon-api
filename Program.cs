@@ -8,7 +8,14 @@ AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Configuración de base de datos persistente: PostgreSQL (Supabase / Render) o SQLite local
+// Soporte para puerto dinámico asignado por Railway / Render
+var envPort = Environment.GetEnvironmentVariable("PORT");
+if (!string.IsNullOrEmpty(envPort))
+{
+    builder.WebHost.UseUrls($"http://*:{envPort}");
+}
+
+// Configuración de base de datos persistente: PostgreSQL (Railway / Supabase / Render) o SQLite local
 var connectionString = Environment.GetEnvironmentVariable("DATABASE_URL")
     ?? Environment.GetEnvironmentVariable("POSTGRES_CONNECTION_STRING")
     ?? builder.Configuration.GetConnectionString("DefaultConnection")
@@ -40,7 +47,7 @@ static string ConvertPostgresUrlToConnectionString(string databaseUrl)
         var port = uri.Port > 0 ? uri.Port : 5432;
         var database = uri.AbsolutePath.TrimStart('/');
 
-        return $"Host={host};Port={port};Database={database};Username={username};Password={password};SSL Mode=Require;Trust Server Certificate=true;";
+        return $"Host={host};Port={port};Database={database};Username={username};Password={password};SSL Mode=Prefer;Trust Server Certificate=true;";
     }
 
     return databaseUrl;
