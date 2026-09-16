@@ -59,7 +59,14 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     }
 });
 
-builder.Services.AddSignalR();
+builder.Services.AddSignalR(options =>
+{
+    options.EnableDetailedErrors = true;
+    options.KeepAliveInterval = TimeSpan.FromSeconds(10);
+    options.ClientTimeoutInterval = TimeSpan.FromSeconds(60);
+    options.HandshakeTimeout = TimeSpan.FromSeconds(30);
+    options.MaximumReceiveMessageSize = 1024 * 1024;
+});
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("CorsPolicy", policy =>

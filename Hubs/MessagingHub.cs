@@ -106,6 +106,7 @@ namespace PericonAPI.Hubs
         {
             public int SeatIndex { get; set; } // 0 = P1 (Azul), 1 = P2 (Rojo), 2 = P3 (Azul), 3 = P4 (Rojo)
             public string ConnectionId { get; set; } = string.Empty;
+            public string UserId { get; set; } = string.Empty;
             public string Name { get; set; } = string.Empty;
             public int Team { get; set; } // 1 or 2
             public string Role { get; set; } = string.Empty;
@@ -126,6 +127,8 @@ namespace PericonAPI.Hubs
             public int Bet { get; set; } = 100;
             public List<Seat2v2> Seats { get; set; } = new List<Seat2v2>();
             public bool GameStarted { get; set; } = false;
+            public bool IsStarting { get; set; } = false;
+            public DateTime LastHandDealtAt { get; set; } = DateTime.MinValue;
             public string CurrentInitHand { get; set; } = string.Empty;
             public int PointsTeam1 { get; set; } = 0;
             public int PointsTeam2 { get; set; } = 0;
@@ -1581,7 +1584,7 @@ namespace PericonAPI.Hubs
         // SALAS MULTIJUGADOR 2 VS 2 (USUARIO VS USUARIO)
         // ==========================================
 
-        public async Task JoinRoom2v2(string roomName, string playerName, int bet, int preferredSlot = -1)
+        public async Task JoinRoom2v2(string roomName, string playerName, int bet, int preferredSlot = -1, string userId = "")
         {
             string callerId = Context.ConnectionId;
             string roomKey = (roomName ?? "sala-pericon").Trim().ToLowerInvariant();
@@ -1593,6 +1596,7 @@ namespace PericonAPI.Hubs
             Room2v2Session session;
             bool isReconnecting = false;
             Seat2v2? assignedSeat = null;
+            bool shouldStartGame = false;
 
             lock (rooms2v2Lock)
             {
@@ -1606,16 +1610,28 @@ namespace PericonAPI.Hubs
                     rooms2v2[roomKey] = session;
                 }
 
+                // Limpiar asientos abandonados en el lobby (más de 120s desconectados si la partida no ha iniciado)
+                if (!session.GameStarted)
+                {
+                    session.Seats.RemoveAll(s => !s.IsConnected && s.DisconnectedAt.HasValue && (DateTime.UtcNow - s.DisconnectedAt.Value).TotalSeconds > 120);
+                }
+
                 // 1. Buscar si ya existe por ConnectionId
                 Seat2v2? existingSeat = session.Seats.FirstOrDefault(s => s.ConnectionId == callerId);
 
-                // 2. Si no, buscar por nombre (si no es genérico)
+                // 2. Si no, buscar por UserId si viene provisto
+                if (existingSeat == null && !string.IsNullOrEmpty(userId))
+                {
+                    existingSeat = session.Seats.FirstOrDefault(s => !string.IsNullOrEmpty(s.UserId) && s.UserId == userId);
+                }
+
+                // 3. Si no, buscar por nombre (si no es genérico)
                 if (existingSeat == null && !string.IsNullOrEmpty(playerName) && playerName != "Jugador" && !playerName.StartsWith("Jugador-"))
                 {
                     existingSeat = session.Seats.FirstOrDefault(s => s.Name.Equals(playerName, StringComparison.OrdinalIgnoreCase));
                 }
 
-                // 3. Si sigue sin encontrar y hay preferredSlot, verificar si ese asiento está desconectado
+                // 4. Si sigue sin encontrar y hay preferredSlot, verificar si ese asiento está libre o desconectado
                 if (existingSeat == null && preferredSlot >= 0 && preferredSlot <= 3)
                 {
                     var slotSeat = session.Seats.FirstOrDefault(s => s.SeatIndex == preferredSlot);
@@ -1625,7 +1641,7 @@ namespace PericonAPI.Hubs
                     }
                 }
 
-                // 4. Si la partida ya inició y hay un asiento desconectado, reasignar para recuperar la partida
+                // 5. Si la partida ya inició y hay un asiento desconectado, reasignar para recuperar la partida
                 if (existingSeat == null && session.GameStarted)
                 {
                     existingSeat = session.Seats.FirstOrDefault(s => !s.IsConnected);
@@ -1634,6 +1650,7 @@ namespace PericonAPI.Hubs
                 if (existingSeat != null)
                 {
                     existingSeat.ConnectionId = callerId;
+                    if (!string.IsNullOrEmpty(userId)) existingSeat.UserId = userId;
                     if (!string.IsNullOrEmpty(playerName) && playerName != "Jugador" && !playerName.StartsWith("Jugador-"))
                     {
                         existingSeat.Name = playerName;
@@ -1681,6 +1698,7 @@ namespace PericonAPI.Hubs
                         {
                             SeatIndex = freeSeat,
                             ConnectionId = callerId,
+                            UserId = userId ?? "",
                             Name = playerName,
                             Team = team,
                             Role = role,
@@ -1689,6 +1707,13 @@ namespace PericonAPI.Hubs
                         };
                         session.Seats.Add(assignedSeat);
                     }
+                }
+
+                // Verificar si se completaron los 4 jugadores conectados para iniciar la partida
+                if (session.Seats.Count >= 4 && !session.GameStarted && !session.IsStarting && session.Seats.All(s => s.IsConnected))
+                {
+                    session.IsStarting = true;
+                    shouldStartGame = true;
                 }
             }
 
@@ -1742,21 +1767,20 @@ namespace PericonAPI.Hubs
                 return;
             }
 
-            // Si la partida ya fue iniciada previamente
+            // Si la partida ya fue iniciada previamente y no es reconexión
             if (session.GameStarted && !string.IsNullOrEmpty(session.CurrentInitHand))
             {
                 var startedPayload = new
                 {
                     roomName = session.RoomName,
                     initHand = session.CurrentInitHand,
-                    starterPlayer = 0,
+                    starterPlayer = session.LeadPlayer,
                     bet = session.Bet,
                     seats = session.Seats.OrderBy(s => s.SeatIndex).ToList()
                 };
                 await Clients.Caller.SendAsync("GameStarted2v2", startedPayload);
             }
-            // Si se completaron los 4 jugadores y la partida aún no ha iniciado, iniciar automáticamente
-            else if (session.Seats.Count >= 4 && !session.GameStarted)
+            else if (shouldStartGame)
             {
                 await StartGame2v2Internal(roomKey);
             }
@@ -1810,47 +1834,54 @@ namespace PericonAPI.Hubs
         private async Task StartGame2v2Internal(string roomKey)
         {
             Room2v2Session? session;
+            string initHand = "";
             lock (rooms2v2Lock)
             {
                 if (!rooms2v2.TryGetValue(roomKey, out session)) return;
                 session.GameStarted = true;
+                session.IsStarting = false;
                 session.PointsTeam1 = 0;
                 session.PointsTeam2 = 0;
                 session.TricksTeam1 = 0;
                 session.TricksTeam2 = 0;
                 session.CurrentStake = 1;
+                session.PendingStake = 0;
+                session.StakeAskerSeat = -1;
+                session.StakeAskerTeam = 0;
+                session.LastStakeTeam = 0;
                 session.CurrentTurn = 0;
                 session.LeadPlayer = 0;
                 session.CurrentTrick.Clear();
                 session.HandHistoryCards.Clear();
                 session.HandCount = 1;
+                session.LastHandDealtAt = DateTime.UtcNow;
+
+                // Barajar 12 cartas para los 4 jugadores + 1 Vida
+                SpanishCards deck = new SpanishCards();
+                deck.RandomCards();
+                List<Card> c0 = new List<Card>();
+                List<Card> c1 = new List<Card>();
+                List<Card> c2 = new List<Card>();
+                List<Card> c3 = new List<Card>();
+                for (int r = 0; r < 3; r++)
+                {
+                    c0.Add(deck.OutCard());
+                    c1.Add(deck.OutCard());
+                    c2.Add(deck.OutCard());
+                    c3.Add(deck.OutCard());
+                }
+                Card life = deck.OutCard();
+
+                List<string> parts = new List<string>();
+                foreach (var c in c0) parts.Add(c.Id.ToString("D2"));
+                foreach (var c in c1) parts.Add(c.Id.ToString("D2"));
+                foreach (var c in c2) parts.Add(c.Id.ToString("D2"));
+                foreach (var c in c3) parts.Add(c.Id.ToString("D2"));
+                parts.Add(life.Id.ToString("D2"));
+
+                initHand = string.Join("-", parts);
+                session.CurrentInitHand = initHand;
             }
-
-            // Barajar 12 cartas para los 4 jugadores + 1 Vida
-            SpanishCards deck = new SpanishCards();
-            deck.RandomCards();
-            List<Card> c0 = new List<Card>();
-            List<Card> c1 = new List<Card>();
-            List<Card> c2 = new List<Card>();
-            List<Card> c3 = new List<Card>();
-            for (int r = 0; r < 3; r++)
-            {
-                c0.Add(deck.OutCard());
-                c1.Add(deck.OutCard());
-                c2.Add(deck.OutCard());
-                c3.Add(deck.OutCard());
-            }
-            Card life = deck.OutCard();
-
-            List<string> parts = new List<string>();
-            foreach (var c in c0) parts.Add(c.Id.ToString("D2"));
-            foreach (var c in c1) parts.Add(c.Id.ToString("D2"));
-            foreach (var c in c2) parts.Add(c.Id.ToString("D2"));
-            foreach (var c in c3) parts.Add(c.Id.ToString("D2"));
-            parts.Add(life.Id.ToString("D2"));
-
-            string initHand = string.Join("-", parts);
-            session.CurrentInitHand = initHand;
 
             var payload = new
             {
@@ -1868,9 +1899,18 @@ namespace PericonAPI.Hubs
         {
             string roomKey = (roomName ?? "").Trim().ToLowerInvariant();
             Room2v2Session? session;
+            string initHand = "";
+
             lock (rooms2v2Lock)
             {
                 if (!rooms2v2.TryGetValue(roomKey, out session)) return;
+                // Evitar repartir duplicado si múltiples clientes llaman casi a la vez
+                if ((DateTime.UtcNow - session.LastHandDealtAt).TotalMilliseconds < 2500)
+                {
+                    return;
+                }
+                session.LastHandDealtAt = DateTime.UtcNow;
+
                 session.TricksTeam1 = 0;
                 session.TricksTeam2 = 0;
                 session.CurrentStake = 1;
@@ -1883,32 +1923,32 @@ namespace PericonAPI.Hubs
                 session.CurrentTrick.Clear();
                 session.HandHistoryCards.Clear();
                 session.HandCount++;
+
+                SpanishCards deck = new SpanishCards();
+                deck.RandomCards();
+                List<Card> c0 = new List<Card>();
+                List<Card> c1 = new List<Card>();
+                List<Card> c2 = new List<Card>();
+                List<Card> c3 = new List<Card>();
+                for (int r = 0; r < 3; r++)
+                {
+                    c0.Add(deck.OutCard());
+                    c1.Add(deck.OutCard());
+                    c2.Add(deck.OutCard());
+                    c3.Add(deck.OutCard());
+                }
+                Card life = deck.OutCard();
+
+                List<string> parts = new List<string>();
+                foreach (var c in c0) parts.Add(c.Id.ToString("D2"));
+                foreach (var c in c1) parts.Add(c.Id.ToString("D2"));
+                foreach (var c in c2) parts.Add(c.Id.ToString("D2"));
+                foreach (var c in c3) parts.Add(c.Id.ToString("D2"));
+                parts.Add(life.Id.ToString("D2"));
+
+                initHand = string.Join("-", parts);
+                session.CurrentInitHand = initHand;
             }
-
-            SpanishCards deck = new SpanishCards();
-            deck.RandomCards();
-            List<Card> c0 = new List<Card>();
-            List<Card> c1 = new List<Card>();
-            List<Card> c2 = new List<Card>();
-            List<Card> c3 = new List<Card>();
-            for (int r = 0; r < 3; r++)
-            {
-                c0.Add(deck.OutCard());
-                c1.Add(deck.OutCard());
-                c2.Add(deck.OutCard());
-                c3.Add(deck.OutCard());
-            }
-            Card life = deck.OutCard();
-
-            List<string> parts = new List<string>();
-            foreach (var c in c0) parts.Add(c.Id.ToString("D2"));
-            foreach (var c in c1) parts.Add(c.Id.ToString("D2"));
-            foreach (var c in c2) parts.Add(c.Id.ToString("D2"));
-            foreach (var c in c3) parts.Add(c.Id.ToString("D2"));
-            parts.Add(life.Id.ToString("D2"));
-
-            string initHand = string.Join("-", parts);
-            session.CurrentInitHand = initHand;
 
             var payload = new
             {
@@ -1924,15 +1964,67 @@ namespace PericonAPI.Hubs
         {
             string roomKey = (roomName ?? "").Trim().ToLowerInvariant();
             Room2v2Session? session;
+            bool trickCompleted = false;
+            int bestCardId = 0;
+            int bestSeat = 0;
+            int winningTeam = 0;
+            int t1Tricks = 0;
+            int t2Tricks = 0;
+            int pT1 = 0;
+            int pT2 = 0;
+
             lock (rooms2v2Lock)
             {
                 if (!rooms2v2.TryGetValue(roomKey, out session)) return;
                 // Bloquear jugar cartas mientras hay un cante pendiente de respuesta o la partida terminó
                 if (session.PendingStake > 0 || session.PointsTeam1 >= 10 || session.PointsTeam2 >= 10) return;
+
                 var playedDto = new PlayedCard2v2Dto { SeatIndex = seatIndex, CardId = cardId };
                 session.CurrentTrick.Add(playedDto);
                 session.HandHistoryCards.Add(playedDto);
                 session.CurrentTurn = (seatIndex + 1) % 4;
+
+                // Si se completaron las 4 cartas de la baza: resolución oficial de la baza en el servidor
+                if (session.CurrentTrick.Count == 4)
+                {
+                    trickCompleted = true;
+                    int leadCardId = session.CurrentTrick[0].CardId;
+                    bestCardId = session.CurrentTrick[0].CardId;
+                    bestSeat = session.CurrentTrick[0].SeatIndex;
+
+                    // Extraer la carta de La Vida (último token de CurrentInitHand)
+                    int lifeCardId = 0;
+                    var tokens = session.CurrentInitHand.Split('-');
+                    if (tokens.Length > 0)
+                    {
+                        int.TryParse(tokens[tokens.Length - 1], out lifeCardId);
+                    }
+
+                    for (int i = 1; i < session.CurrentTrick.Count; i++)
+                    {
+                        int candCardId = session.CurrentTrick[i].CardId;
+                        int candSeat = session.CurrentTrick[i].SeatIndex;
+
+                        if (GamePlayTwoVsTwo.DoesCandidateBeatBest(bestCardId, candCardId, leadCardId, lifeCardId))
+                        {
+                            bestCardId = candCardId;
+                            bestSeat = candSeat;
+                        }
+                    }
+
+                    winningTeam = (bestSeat == 0 || bestSeat == 2) ? 1 : 2;
+                    if (winningTeam == 1) session.TricksTeam1++;
+                    else session.TricksTeam2++;
+
+                    t1Tricks = session.TricksTeam1;
+                    t2Tricks = session.TricksTeam2;
+                    pT1 = session.PointsTeam1;
+                    pT2 = session.PointsTeam2;
+
+                    session.LeadPlayer = bestSeat;
+                    session.CurrentTurn = bestSeat;
+                    session.CurrentTrick.Clear();
+                }
             }
 
             // Notificar a todos que se jugó la carta
@@ -1942,52 +2034,18 @@ namespace PericonAPI.Hubs
                 cardId
             });
 
-            // Si se completaron las 4 cartas de la baza: resolución oficial de la baza en el servidor
-            if (session.CurrentTrick.Count == 4)
+            if (trickCompleted)
             {
-                int leadCardId = session.CurrentTrick[0].CardId;
-                int bestCardId = session.CurrentTrick[0].CardId;
-                int bestSeat = session.CurrentTrick[0].SeatIndex;
-
-                // Extraer la carta de La Vida (último token de CurrentInitHand)
-                int lifeCardId = 0;
-                var tokens = session.CurrentInitHand.Split('-');
-                if (tokens.Length > 0)
-                {
-                    int.TryParse(tokens[tokens.Length - 1], out lifeCardId);
-                }
-
-                for (int i = 1; i < session.CurrentTrick.Count; i++)
-                {
-                    int candCardId = session.CurrentTrick[i].CardId;
-                    int candSeat = session.CurrentTrick[i].SeatIndex;
-
-                    if (GamePlayTwoVsTwo.DoesCandidateBeatBest(bestCardId, candCardId, leadCardId, lifeCardId))
-                    {
-                        bestCardId = candCardId;
-                        bestSeat = candSeat;
-                    }
-                }
-
-                int winningTeam = (bestSeat == 0 || bestSeat == 2) ? 1 : 2;
-                if (winningTeam == 1) session.TricksTeam1++;
-                else session.TricksTeam2++;
-
-                session.LeadPlayer = bestSeat;
-                session.CurrentTurn = bestSeat;
-
                 await Clients.Group(roomKey).SendAsync("TrickFinished2v2", new
                 {
                     winningSeat = bestSeat,
                     winningTeam = winningTeam,
                     winningCardId = bestCardId,
-                    tricksTeam1 = session.TricksTeam1,
-                    tricksTeam2 = session.TricksTeam2,
-                    pointsTeam1 = session.PointsTeam1,
-                    pointsTeam2 = session.PointsTeam2
+                    tricksTeam1 = t1Tricks,
+                    tricksTeam2 = t2Tricks,
+                    pointsTeam1 = pT1,
+                    pointsTeam2 = pT2
                 });
-
-                session.CurrentTrick.Clear();
             }
         }
 
@@ -2214,19 +2272,12 @@ namespace PericonAPI.Hubs
                     var seat = kvp.Value.Seats.FirstOrDefault(s => s.ConnectionId == callerId);
                     if (seat != null)
                     {
-                        if (kvp.Value.GameStarted)
-                        {
-                            // En partida activa: NO borrar el asiento, marcar como desconectado
-                            seat.IsConnected = false;
-                            seat.DisconnectedAt = DateTime.UtcNow;
-                            affectedRooms.Add((kvp.Key, kvp.Value, seat));
-                        }
-                        else
-                        {
-                            // En el lobby previo: remover para liberar el asiento
-                            kvp.Value.Seats.Remove(seat);
-                            affectedRooms.Add((kvp.Key, kvp.Value, null));
-                        }
+                        // NO remover inmediatamente el asiento, ni en partida ni en lobby!
+                        // Los teléfonos móviles desconectan el websocket brevemente al cambiar de app (WhatsApp, compartir enlace) o bloquear pantalla.
+                        // Mantener el asiento reservado y marcarlo como desconectado para permitir reconexión transparente.
+                        seat.IsConnected = false;
+                        seat.DisconnectedAt = DateTime.UtcNow;
+                        affectedRooms.Add((kvp.Key, kvp.Value, seat));
                     }
                 }
             }
