@@ -97,6 +97,9 @@ namespace PericonAPI.Hubs
         public class MatchQueueItem
         {
             public string ConnectionId { get; set; } = string.Empty;
+            public string UserId { get; set; } = string.Empty;
+            public string PlayerName { get; set; } = string.Empty;
+            public string AvatarUrl { get; set; } = string.Empty;
             public string Mode { get; set; } = "1 vs 1";
             public int Bet { get; set; } = 10;
             public DateTime EnqueuedAt { get; set; } = DateTime.UtcNow;
@@ -1312,10 +1315,10 @@ namespace PericonAPI.Hubs
         // MATCHMAKING AUTOMÁTICO 1 VS 1
         // ==========================================
 
-        public async Task JoinMatchmaking(string mode, int bet)
+        public async Task JoinMatchmaking(string mode, int bet, string playerName = "", string userId = "", string avatarUrl = "")
         {
             string callerId = Context.ConnectionId;
-            Console.WriteLine($"JoinMatchmaking recibido. Cliente: {callerId}, Modo: {mode}, Apuesta: {bet}");
+            Console.WriteLine($"JoinMatchmaking recibido. Cliente: {callerId}, Modo: {mode}, Apuesta: {bet}, User: {playerName} ({userId})");
 
             // GESTIÓN DE MATCHMAKING ALEATORIO PARA 2 CONTRA 2 (4 JUGADORES)
             if (mode == "2 vs 2")
@@ -1327,6 +1330,9 @@ namespace PericonAPI.Hubs
                     matchmakingQueue.Add(new MatchQueueItem
                     {
                         ConnectionId = callerId,
+                        UserId = userId ?? "",
+                        PlayerName = !string.IsNullOrEmpty(playerName) ? playerName : (GetPlayerData(callerId)?.Name ?? "Jugador"),
+                        AvatarUrl = avatarUrl ?? "",
                         Mode = mode,
                         Bet = bet,
                         EnqueuedAt = DateTime.UtcNow
@@ -1378,17 +1384,17 @@ namespace PericonAPI.Hubs
                     string p3 = shuffled[2].ConnectionId;
                     string p4 = shuffled[3].ConnectionId;
 
-                    GamePlayer q1 = GetPlayerData(p1);
-                    GamePlayer q2 = GetPlayerData(p2);
-                    GamePlayer q3 = GetPlayerData(p3);
-                    GamePlayer q4 = GetPlayerData(p4);
+                    string n1 = !string.IsNullOrEmpty(shuffled[0].PlayerName) ? shuffled[0].PlayerName : (GetPlayerData(p1)?.Name ?? "Jugador");
+                    string n2 = !string.IsNullOrEmpty(shuffled[1].PlayerName) ? shuffled[1].PlayerName : (GetPlayerData(p2)?.Name ?? "Jugador");
+                    string n3 = !string.IsNullOrEmpty(shuffled[2].PlayerName) ? shuffled[2].PlayerName : (GetPlayerData(p3)?.Name ?? "Jugador");
+                    string n4 = !string.IsNullOrEmpty(shuffled[3].PlayerName) ? shuffled[3].PlayerName : (GetPlayerData(p4)?.Name ?? "Jugador");
 
                     GamePlayTwoVsTwo newGame2v2 = new GamePlayTwoVsTwo(p1, p2, p3, p4);
                     newGame2v2.Coins = bet;
-                    newGame2v2.Name1 = q1.Name;
-                    newGame2v2.Name2 = q2.Name;
-                    newGame2v2.Name3 = q3.Name;
-                    newGame2v2.Name4 = q4.Name;
+                    newGame2v2.Name1 = n1;
+                    newGame2v2.Name2 = n2;
+                    newGame2v2.Name3 = n3;
+                    newGame2v2.Name4 = n4;
 
                     newGame2v2.Id = newGame2v2.GenerateSeed(games2vs2);
                     newGame2v2.ShuffleCards_2vs2();
@@ -1402,10 +1408,10 @@ namespace PericonAPI.Hubs
                         GameStarted = true,
                         CurrentInitHand = newGame2v2.InitHand
                     };
-                    matchSession.Seats.Add(new Seat2v2 { SeatIndex = 0, ConnectionId = p1, Name = q1.Name, Team = 1, Role = "Anfitrión" });
-                    matchSession.Seats.Add(new Seat2v2 { SeatIndex = 1, ConnectionId = p2, Name = q2.Name, Team = 2, Role = "Rival 1" });
-                    matchSession.Seats.Add(new Seat2v2 { SeatIndex = 2, ConnectionId = p3, Name = q3.Name, Team = 1, Role = "Compañero" });
-                    matchSession.Seats.Add(new Seat2v2 { SeatIndex = 3, ConnectionId = p4, Name = q4.Name, Team = 2, Role = "Rival 2" });
+                    matchSession.Seats.Add(new Seat2v2 { SeatIndex = 0, ConnectionId = p1, UserId = shuffled[0].UserId, Name = n1, AvatarUrl = shuffled[0].AvatarUrl, Team = 1, Role = "Anfitrión" });
+                    matchSession.Seats.Add(new Seat2v2 { SeatIndex = 1, ConnectionId = p2, UserId = shuffled[1].UserId, Name = n2, AvatarUrl = shuffled[1].AvatarUrl, Team = 2, Role = "Rival 1" });
+                    matchSession.Seats.Add(new Seat2v2 { SeatIndex = 2, ConnectionId = p3, UserId = shuffled[2].UserId, Name = n3, AvatarUrl = shuffled[2].AvatarUrl, Team = 1, Role = "Compañero" });
+                    matchSession.Seats.Add(new Seat2v2 { SeatIndex = 3, ConnectionId = p4, UserId = shuffled[3].UserId, Name = n4, AvatarUrl = shuffled[3].AvatarUrl, Team = 2, Role = "Rival 2" });
 
                     lock (rooms2v2Lock)
                     {
@@ -1417,7 +1423,7 @@ namespace PericonAPI.Hubs
                         await Groups.AddToGroupAsync(shuffled[i].ConnectionId, matchRoomKey);
                     }
 
-                    Console.WriteLine($"[Matchmaking 2vs2] 4 Jugadores emparejados: {q1.Name} & {q3.Name} vs {q2.Name} & {q4.Name}. Sala: {matchRoomKey}");
+                    Console.WriteLine($"[Matchmaking 2vs2] 4 Jugadores emparejados: {n1} & {n3} vs {n2} & {n4}. Sala: {matchRoomKey}");
 
                     for (int i = 0; i < 4; i++)
                     {
@@ -1426,7 +1432,7 @@ namespace PericonAPI.Hubs
                         {
                             game = newGame2v2.Id,
                             order = 220, // MatchFound2v2
-                            content = $"{newGame2v2.Id} {bet} {p1} {q1.Name} {p2} {q2.Name} {p3} {q3.Name} {p4} {q4.Name} {i} {newGame2v2.InitHand} {matchRoomKey}"
+                            content = $"{newGame2v2.Id} {bet} {p1} {n1} {p2} {n2} {p3} {n3} {p4} {n4} {i} {newGame2v2.InitHand} {matchRoomKey}"
                         };
                         await Clients.Client(targetConn).SendAsync("MatchFound2v2", msg);
                     }
@@ -1453,6 +1459,9 @@ namespace PericonAPI.Hubs
                     matchmakingQueue.Add(new MatchQueueItem
                     {
                         ConnectionId = callerId,
+                        UserId = userId ?? "",
+                        PlayerName = !string.IsNullOrEmpty(playerName) ? playerName : (GetPlayerData(callerId)?.Name ?? "Jugador"),
+                        AvatarUrl = avatarUrl ?? "",
                         Mode = mode,
                         Bet = bet,
                         EnqueuedAt = DateTime.UtcNow
@@ -1598,6 +1607,7 @@ namespace PericonAPI.Hubs
             bool isReconnecting = false;
             Seat2v2? assignedSeat = null;
             bool shouldStartGame = false;
+            bool isRoomFull = false;
 
             lock (rooms2v2Lock)
             {
@@ -1636,16 +1646,28 @@ namespace PericonAPI.Hubs
                 if (existingSeat == null && preferredSlot >= 0 && preferredSlot <= 3)
                 {
                     var slotSeat = session.Seats.FirstOrDefault(s => s.SeatIndex == preferredSlot);
-                    if (slotSeat != null && (!slotSeat.IsConnected || slotSeat.ConnectionId == callerId || session.GameStarted))
+                    if (slotSeat != null && (!slotSeat.IsConnected || slotSeat.ConnectionId == callerId))
                     {
-                        existingSeat = slotSeat;
+                        // Solo reclamar si no pertenece a otro usuario registrado diferente
+                        if (string.IsNullOrEmpty(slotSeat.UserId) || slotSeat.UserId == userId)
+                        {
+                            existingSeat = slotSeat;
+                        }
                     }
                 }
 
-                // 5. Si la partida ya inició y hay un asiento desconectado, reasignar para recuperar la partida
+                // 5. Si la partida ya inició y hay un asiento desconectado, verificar si coincide con el usuario
                 if (existingSeat == null && session.GameStarted)
                 {
-                    existingSeat = session.Seats.FirstOrDefault(s => !s.IsConnected);
+                    existingSeat = session.Seats.FirstOrDefault(s => !s.IsConnected &&
+                        ((!string.IsNullOrEmpty(userId) && s.UserId == userId) ||
+                         (!string.IsNullOrEmpty(playerName) && playerName != "Jugador" && !playerName.StartsWith("Jugador-") && s.Name.Equals(playerName, StringComparison.OrdinalIgnoreCase))));
+
+                    // Si no hubo coincidencia exacta, ocupar un asiento desconectado anónimo si no tiene dueño registrado
+                    if (existingSeat == null)
+                    {
+                        existingSeat = session.Seats.FirstOrDefault(s => !s.IsConnected && (string.IsNullOrEmpty(s.UserId) || s.UserId == userId));
+                    }
                 }
 
                 if (existingSeat != null)
@@ -1715,12 +1737,26 @@ namespace PericonAPI.Hubs
                     }
                 }
 
+                // Si la sala ya tiene 4 jugadores y el cliente no pudo ser asignado a ningún asiento
+                if (assignedSeat == null && session.Seats.Count >= 4)
+                {
+                    isRoomFull = true;
+                    return;
+                }
+
                 // Verificar si se completaron los 4 jugadores conectados para iniciar la partida
                 if (session.Seats.Count >= 4 && !session.GameStarted && !session.IsStarting && session.Seats.All(s => s.IsConnected))
                 {
                     session.IsStarting = true;
+                    session.GameStarted = true;
                     shouldStartGame = true;
                 }
+            }
+
+            if (isRoomFull)
+            {
+                await Clients.Caller.SendAsync("RoomFull2v2", new { message = "La sala ya está completa con 4 jugadores." });
+                return;
             }
 
             await Groups.AddToGroupAsync(callerId, roomKey);
@@ -2244,10 +2280,22 @@ namespace PericonAPI.Hubs
             {
                 if (rooms2v2.TryGetValue(roomKey, out session))
                 {
-                    session.Seats.RemoveAll(s => s.ConnectionId == callerId);
-                    if (session.Seats.Count == 0)
+                    if (session.GameStarted)
                     {
-                        rooms2v2.Remove(roomKey);
+                        var seat = session.Seats.FirstOrDefault(s => s.ConnectionId == callerId);
+                        if (seat != null)
+                        {
+                            seat.IsConnected = false;
+                            seat.DisconnectedAt = DateTime.UtcNow;
+                        }
+                    }
+                    else
+                    {
+                        session.Seats.RemoveAll(s => s.ConnectionId == callerId);
+                        if (session.Seats.Count == 0)
+                        {
+                            rooms2v2.Remove(roomKey);
+                        }
                     }
                 }
             }
