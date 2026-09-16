@@ -227,6 +227,19 @@ namespace PericonAPI.Controllers
                 return BadRequest(new { message = $"Saldo insuficiente. Tienes {user.Coins} monedas y deseas retirar {dto.CoinsAmount}." });
             }
 
+            // REGLA FINANCIERA: Cero retiros de moneda regalada.
+            // Para poder solicitar un retiro, el usuario debe haber realizado al menos una recarga real de saldo que haya sido APROBADA.
+            bool hasApprovedDeposit = await _context.PaymentRecharges
+                .AnyAsync(r => r.UserId == dto.UserId && r.Status == "APROBADO");
+
+            if (!hasApprovedDeposit && !user.IsAdmin && user.Username.ToLower() != "guardian")
+            {
+                return BadRequest(new
+                {
+                    message = "Por política de seguridad y protección financiera, para solicitar un retiro debes haber realizado al menos una recarga de saldo aprobada en la plataforma. Las monedas de bienvenida, bonos o cupones son exclusivas para jugar y no son retirables directamente sin un depósito previo."
+                });
+            }
+
             // Descontar monedas de inmediato para evitar doble gasto
             user.Coins -= dto.CoinsAmount;
 
