@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using PericonAPI.Classes;
 using PericonAPI.Data;
 using PericonAPI.Hubs;
 using PericonAPI.Models;
@@ -9,6 +10,7 @@ namespace PericonAPI.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
+    [AdminAuthorize]
     public class AdminController : ControllerBase
     {
         private readonly AppDbContext _context;
@@ -430,7 +432,7 @@ namespace PericonAPI.Controllers
                 username = admin.Username,
                 email = admin.Email,
                 coins = admin.Coins,
-                token = "guardian_session_" + Guid.NewGuid().ToString("N"),
+                token = AdminSecurity.GenerateAdminToken(),
                 message = "Bienvenido, Administrador Guardian."
             });
         }
