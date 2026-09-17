@@ -511,8 +511,11 @@ namespace PericonAPI.Models
             }
 
             // Detección de La Cogía en Solitario: Si salieron con 10 de Oro (7) y el que respondió tiró 1 de Oro (0)
+            // En tumba la cogía NO vale (innecesario adquirir 3 puntos)
             int isCogiaBonus = 0; // 1 = playerOne gana cogia, 2 = playerTwo gana cogia
-            if (leadCard == 7 && respCard == 0)
+            bool isTumba = IsTumbaOne || IsTumbaTwo || PointsOne >= 9 || PointsTwo >= 9 ||
+                           (IsTumbaDeParaAtrasOne && PointsOne == 8) || (IsTumbaDeParaAtrasTwo && PointsTwo == 8);
+            if (!isTumba && leadCard == 7 && respCard == 0)
             {
                 isCogiaBonus = turn ? 2 : 1;
             }

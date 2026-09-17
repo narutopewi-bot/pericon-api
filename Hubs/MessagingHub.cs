@@ -763,9 +763,15 @@ namespace PericonAPI.Hubs
                 bool leadIsPlayerOne = (sentto == games[numg].IdPOne);
 
                 // Verificación de "La Cogía": Si se juega el 10 de Oro (7) y el rival responde con el 1 de Oro (0)
+                // En tumba la cogía NO vale (innecesario adquirir 3 puntos)
+                bool isTumbaMulti = games[numg].IsTumbaOne || games[numg].IsTumbaTwo ||
+                                   games[numg].PointsOne >= 9 || games[numg].PointsTwo >= 9 ||
+                                   (games[numg].IsTumbaDeParaAtrasOne && games[numg].PointsOne == 8) ||
+                                   (games[numg].IsTumbaDeParaAtrasTwo && games[numg].PointsTwo == 8);
+
                 bool isCogida = false;
                 int cogidaWinner = 0; // 1 = playerOne, 2 = playerTwo
-                if (leadCard == 7 && respCard == 0)
+                if (!isTumbaMulti && leadCard == 7 && respCard == 0)
                 {
                     isCogida = true;
                     cogidaWinner = leadIsPlayerOne ? 2 : 1; // El que responde coge al que salió
@@ -2122,9 +2128,15 @@ namespace PericonAPI.Hubs
                     t2Tricks = session.TricksTeam2;
 
                     // Verificación de La Cogía (10 de Oro matado con 1 de Oro de equipo rival)
+                    // En tumba la cogía NO vale (innecesario adquirir 3 puntos)
+                    bool isTumba2v2 = session.IsTumbaTeam1 || session.IsTumbaTeam2 ||
+                                      session.PointsTeam1 >= 9 || session.PointsTeam2 >= 9 ||
+                                      (session.IsTumbaDeParaAtrasTeam1 && session.PointsTeam1 == 8) ||
+                                      (session.IsTumbaDeParaAtrasTeam2 && session.PointsTeam2 == 8);
+
                     int tenGoldIdx = session.CurrentTrick.FindIndex(p => p.CardId == 7);
                     int oneGoldIdx = session.CurrentTrick.FindIndex(p => p.CardId == 0);
-                    if (tenGoldIdx != -1 && oneGoldIdx != -1 && oneGoldIdx > tenGoldIdx)
+                    if (!isTumba2v2 && tenGoldIdx != -1 && oneGoldIdx != -1 && oneGoldIdx > tenGoldIdx)
                     {
                         int tenSeat = session.CurrentTrick[tenGoldIdx].SeatIndex;
                         int oneSeat = session.CurrentTrick[oneGoldIdx].SeatIndex;
