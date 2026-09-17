@@ -2577,8 +2577,19 @@ namespace PericonAPI.Hubs
                     isFull = session.Seats.Count >= 4,
                     gameStarted = session.GameStarted
                 };
-                await Clients.Group(roomKey).SendAsync("RoomUpdate2v2", roomState);
             }
+        }
+
+        public async Task SendVoiceSignal2v2(string roomName, int fromSeat, int toSeat, string signalData)
+        {
+            string roomKey = (roomName ?? "").Trim().ToLowerInvariant();
+            await Clients.OthersInGroup(roomKey).SendAsync("VoiceSignalReceived2v2", fromSeat, toSeat, signalData);
+        }
+
+        public async Task BroadcastVoiceState2v2(string roomName, int seatIndex, bool isSpeaking, bool isMuted)
+        {
+            string roomKey = (roomName ?? "").Trim().ToLowerInvariant();
+            await Clients.OthersInGroup(roomKey).SendAsync("VoiceStateUpdated2v2", seatIndex, isSpeaking, isMuted);
         }
 
         public override async Task OnDisconnectedAsync(Exception? exception)
