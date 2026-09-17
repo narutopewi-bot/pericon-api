@@ -763,15 +763,9 @@ namespace PericonAPI.Hubs
                 bool leadIsPlayerOne = (sentto == games[numg].IdPOne);
 
                 // Verificación de "La Cogía": Si se juega el 10 de Oro (7) y el rival responde con el 1 de Oro (0)
-                // No aplica si se está en Tumba
-                bool isTumbaMulti = games[numg].IsTumbaOne || games[numg].IsTumbaTwo ||
-                                   games[numg].PointsOne >= 9 || games[numg].PointsTwo >= 9 ||
-                                   (games[numg].IsTumbaDeParaAtrasOne && games[numg].PointsOne == 8) ||
-                                   (games[numg].IsTumbaDeParaAtrasTwo && games[numg].PointsTwo == 8);
-
                 bool isCogida = false;
                 int cogidaWinner = 0; // 1 = playerOne, 2 = playerTwo
-                if (!isTumbaMulti && leadCard == 7 && respCard == 0)
+                if (leadCard == 7 && respCard == 0)
                 {
                     isCogida = true;
                     cogidaWinner = leadIsPlayerOne ? 2 : 1; // El que responde coge al que salió
@@ -2070,6 +2064,8 @@ namespace PericonAPI.Hubs
             bool isGameOver = false;
             int winningTeamOfMatch = 0;
             int fallenInTumbaTeam = 0;
+            bool isCogida2v2 = false;
+            int cogidaTeam = 0;
 
             lock (rooms2v2Lock)
             {
@@ -2124,6 +2120,34 @@ namespace PericonAPI.Hubs
 
                     t1Tricks = session.TricksTeam1;
                     t2Tricks = session.TricksTeam2;
+
+                    // Verificación de La Cogía (10 de Oro matado con 1 de Oro de equipo rival)
+                    int tenGoldIdx = session.CurrentTrick.FindIndex(p => p.CardId == 7);
+                    int oneGoldIdx = session.CurrentTrick.FindIndex(p => p.CardId == 0);
+                    if (tenGoldIdx != -1 && oneGoldIdx != -1 && oneGoldIdx > tenGoldIdx)
+                    {
+                        int tenSeat = session.CurrentTrick[tenGoldIdx].SeatIndex;
+                        int oneSeat = session.CurrentTrick[oneGoldIdx].SeatIndex;
+                        int tenTeam = (tenSeat == 0 || tenSeat == 2) ? 1 : 2;
+                        int oneTeam = (oneSeat == 0 || oneSeat == 2) ? 1 : 2;
+                        if (tenTeam != oneTeam)
+                        {
+                            isCogida2v2 = true;
+                            cogidaTeam = oneTeam;
+                            int oldT1C = session.PointsTeam1;
+                            int oldT2C = session.PointsTeam2;
+                            if (cogidaTeam == 1) session.PointsTeam1 += 3;
+                            else session.PointsTeam2 += 3;
+                            session.UpdateTumbaStatus(oldT1C, oldT2C);
+                            Console.WriteLine($"[La Cogia 2v2] ¡Equipo {cogidaTeam} se acredita +3 piedras por La Cogía!");
+
+                            if (session.PointsTeam1 >= 10 || session.PointsTeam2 >= 10)
+                            {
+                                isGameOver = true;
+                                winningTeamOfMatch = session.PointsTeam1 >= 10 ? 1 : 2;
+                            }
+                        }
+                    }
 
                     session.LeadPlayer = bestSeat;
                     session.CurrentTurn = bestSeat;
@@ -2228,7 +2252,11 @@ namespace PericonAPI.Hubs
                     tricksTeam1 = t1Tricks,
                     tricksTeam2 = t2Tricks,
                     pointsTeam1 = pT1,
-                    pointsTeam2 = pT2
+                    pointsTeam2 = pT2,
+                    isCogida = isCogida2v2,
+                    cogidaTeam = cogidaTeam,
+                    isGameOver = isGameOver,
+                    winningTeamOfMatch = winningTeamOfMatch
                 });
 
                 if (handCompleted && session != null)

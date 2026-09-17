@@ -409,9 +409,16 @@ namespace PericonAPI.Models
             if (suitCard == cardLife)
             {
                 // El As de la vida (1 de la vida) vale "5 y medio" según la tradición del Pericón:
-                // No puede matar al 4 de la vida (15) ni al 5 de la vida (16).
-                if (faceValue == 1) return 14;
-                return 11 + faceValue; // 4=15, 5=16, 6=17, 7=18, 10=21, 11=22, 12=23
+                // Le gana al 4 de la vida (15) y al 5 de la vida (16).
+                // Pero pierde con el 6 de la vida (18).
+                if (faceValue == 4) return 15;
+                if (faceValue == 5) return 16;
+                if (faceValue == 1) return 17; // As de la vida ("5 y medio", gana a 4 y 5)
+                if (faceValue == 6) return 18;
+                if (faceValue == 7) return 19;
+                if (faceValue == 10) return 20;
+                if (faceValue == 11) return 21;
+                if (faceValue == 12) return 22;
             }
 
             // Cartas comunes (no triunfo)
@@ -504,11 +511,8 @@ namespace PericonAPI.Models
             }
 
             // Detección de La Cogía en Solitario: Si salieron con 10 de Oro (7) y el que respondió tiró 1 de Oro (0)
-            // No aplica si se está tumbando (cualquiera de los dos está en Tumba)
             int isCogiaBonus = 0; // 1 = playerOne gana cogia, 2 = playerTwo gana cogia
-            bool isTumba = IsTumbaOne || IsTumbaTwo || PointsOne >= 9 || PointsTwo >= 9 ||
-                           (IsTumbaDeParaAtrasOne && PointsOne == 8) || (IsTumbaDeParaAtrasTwo && PointsTwo == 8);
-            if (!isTumba && leadCard == 7 && respCard == 0)
+            if (leadCard == 7 && respCard == 0)
             {
                 isCogiaBonus = turn ? 2 : 1;
             }
