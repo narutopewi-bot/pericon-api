@@ -81,10 +81,19 @@ namespace PericonAPI.Hubs
     public class MessagingHub : Hub
     {
         private readonly IServiceScopeFactory _scopeFactory;
+        private readonly IHubContext<MessagingHub> _hubContext;
+        private static IHubContext<MessagingHub>? _staticHubContext;
 
-        public MessagingHub(IServiceScopeFactory scopeFactory)
+        public static void SetHubContext(IHubContext<MessagingHub> context)
+        {
+            _staticHubContext = context;
+        }
+
+        public MessagingHub(IServiceScopeFactory scopeFactory, IHubContext<MessagingHub> hubContext)
         {
             _scopeFactory = scopeFactory;
+            _hubContext = hubContext;
+            _staticHubContext = hubContext;
         }
 
         private static List<GamePlayOneVsOne> games = new List<GamePlayOneVsOne>(); 
@@ -1973,10 +1982,17 @@ namespace PericonAPI.Hubs
                 isTumbaDeParaAtrasTeam2 = false
             };
 
-            await Clients.Group(roomKey).SendAsync("GameStarted2v2", payload);
+            if (_staticHubContext != null)
+            {
+                await _staticHubContext.Clients.Group(roomKey).SendAsync("GameStarted2v2", payload);
+            }
+            else
+            {
+                await Clients.Group(roomKey).SendAsync("GameStarted2v2", payload);
+            }
         }
 
-        public async Task DealNewHand2v2(string roomName, int starterPlayer)
+        public static async Task DealNewHand2v2Static(string roomName, int starterPlayer)
         {
             string roomKey = (roomName ?? "").Trim().ToLowerInvariant();
             Room2v2Session? session;
@@ -2050,7 +2066,74 @@ namespace PericonAPI.Hubs
                 isTumbaDeParaAtrasTeam2 = session.IsTumbaDeParaAtrasTeam2
             };
 
-            await Clients.Group(roomKey).SendAsync("NewHandDealt2v2", payload);
+            if (_staticHubContext != null)
+            {
+                Console.WriteLine($"[DealNewHand2v2] Enviando NewHandDealt2v2 a sala '{roomKey}', starter={starterPlayer}, mano={session.HandCount}");
+                await _staticHubContext.Clients.Group(roomKey).SendAsync("NewHandDealt2v2", payload);
+            }
+            else
+            {
+                Console.WriteLine($"[DealNewHand2v2 WARN] _staticHubContext es null para sala '{roomKey}'");
+            }
+        }
+
+        public async Task DealNewHand2v2(string roomName, int starterPlayer)
+        {
+            await DealNewHand2v2Static(roomName, starterPlayer);
+        }
+
+        public async Task RequestNewHand2v2(string roomName)
+        {
+            string roomKey = (roomName ?? "").Trim().ToLowerInvariant();
+            Room2v2Session? session;
+            int nextStarter = 0;
+            bool shouldDeal = false;
+            bool shouldRebroadcast = false;
+
+            lock (rooms2v2Lock)
+            {
+                if (!rooms2v2.TryGetValue(roomKey, out session)) return;
+                if (!session.GameStarted) return;
+                if (session.PointsTeam1 >= 10 || session.PointsTeam2 >= 10) return;
+
+                // Si la mano concluyó y está en resolución, o si todos jugaron sus cartas y no hay bazas activas
+                if (session.IsHandResolving || (session.CurrentTrick.Count == 0 && session.HandHistoryCards.Count >= 8))
+                {
+                    nextStarter = (session.LastHandStarter + 1) % 4;
+                    shouldDeal = true;
+                }
+                else if (session.HandHistoryCards.Count == 0 && !string.IsNullOrEmpty(session.CurrentInitHand))
+                {
+                    // La mano ya fue repartida recientemente, retransmitir al cliente que pudo perderla
+                    shouldRebroadcast = true;
+                }
+            }
+
+            if (shouldDeal)
+            {
+                Console.WriteLine($"[RequestNewHand2v2] Forzando reparto de nueva mano para sala '{roomKey}', starter={nextStarter}");
+                await DealNewHand2v2Static(roomKey, nextStarter);
+            }
+            else if (shouldRebroadcast && session != null)
+            {
+                Console.WriteLine($"[RequestNewHand2v2] Reenviando NewHandDealt2v2 a sala '{roomKey}'");
+                var payload = new
+                {
+                    roomName = session.RoomName,
+                    initHand = session.CurrentInitHand,
+                    starterPlayer = session.LastHandStarter,
+                    pointsTeam1 = session.PointsTeam1,
+                    pointsTeam2 = session.PointsTeam2,
+                    isTumbaTeam1 = session.IsTumbaTeam1,
+                    isTumbaTeam2 = session.IsTumbaTeam2,
+                    isTumbaDeParaAtrasTeam1 = session.IsTumbaDeParaAtrasTeam1,
+                    isTumbaDeParaAtrasTeam2 = session.IsTumbaDeParaAtrasTeam2
+                };
+                if (_staticHubContext != null)
+                {
+                    await _staticHubContext.Clients.Group(roomKey).SendAsync("NewHandDealt2v2", payload);
+                }
+            }
         }
 
         public async Task PlayCard2v2(string roomName, int seatIndex, int cardId)
@@ -2292,11 +2375,18 @@ namespace PericonAPI.Hubs
 
                     if (!isGameOver)
                     {
+                        int nextStarter = (session.LastHandStarter + 1) % 4;
                         _ = Task.Run(async () =>
                         {
-                            await Task.Delay(4000);
-                            int nextStarter = (session.LastHandStarter + 1) % 4;
-                            await DealNewHand2v2(roomKey, nextStarter);
+                            try
+                            {
+                                await Task.Delay(4000);
+                                await DealNewHand2v2Static(roomKey, nextStarter);
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"[DealNewHand2v2 PlayCard Error]: {ex}");
+                            }
                         });
                     }
                 }
@@ -2431,11 +2521,18 @@ namespace PericonAPI.Hubs
 
             if (reward > 0 && !isGameOver && session != null)
             {
+                int nextStarter = (session.LastHandStarter + 1) % 4;
                 _ = Task.Run(async () =>
                 {
-                    await Task.Delay(3000);
-                    int nextStarter = (session.LastHandStarter + 1) % 4;
-                    await DealNewHand2v2(roomKey, nextStarter);
+                    try
+                    {
+                        await Task.Delay(3000);
+                        await DealNewHand2v2Static(roomKey, nextStarter);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[DealNewHand2v2 AnswerStake Error]: {ex}");
+                    }
                 });
             }
         }
@@ -2491,11 +2588,18 @@ namespace PericonAPI.Hubs
 
             if (!isGameOver)
             {
+                int nextStarter = (session.LastHandStarter + 1) % 4;
                 _ = Task.Run(async () =>
                 {
-                    await Task.Delay(2500);
-                    int nextStarter = (session.LastHandStarter + 1) % 4;
-                    await DealNewHand2v2(roomKey, nextStarter);
+                    try
+                    {
+                        await Task.Delay(2500);
+                        await DealNewHand2v2Static(roomKey, nextStarter);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[DealNewHand2v2 PassTumba Error]: {ex}");
+                    }
                 });
             }
         }

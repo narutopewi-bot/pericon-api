@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using PericonAPI.Data;
@@ -90,6 +91,16 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
+
+try
+{
+    var hubContext = app.Services.GetRequiredService<IHubContext<MessagingHub>>();
+    MessagingHub.SetHubContext(hubContext);
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"[Program.cs Startup Warn] No se pudo inicializar static HubContext: {ex.Message}");
+}
 
 using (var scope = app.Services.CreateScope())
 {
