@@ -2773,12 +2773,34 @@ namespace PericonAPI.Hubs
         public async Task SendVoiceSignal2v2(string roomName, int fromSeat, int toSeat, string signalData)
         {
             string roomKey = (roomName ?? "").Trim().ToLowerInvariant();
+            if (string.IsNullOrEmpty(roomKey)) return;
+
+            if (toSeat >= 0 && toSeat <= 3)
+            {
+                string? targetConnId = null;
+                lock (rooms2v2Lock)
+                {
+                    if (rooms2v2.TryGetValue(roomKey, out var session))
+                    {
+                        var seat = session.Seats.FirstOrDefault(s => s.SeatIndex == toSeat && s.IsConnected);
+                        targetConnId = seat?.ConnectionId;
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(targetConnId))
+                {
+                    await Clients.Client(targetConnId).SendAsync("VoiceSignalReceived2v2", fromSeat, toSeat, signalData);
+                    return;
+                }
+            }
+
             await Clients.OthersInGroup(roomKey).SendAsync("VoiceSignalReceived2v2", fromSeat, toSeat, signalData);
         }
 
         public async Task BroadcastVoiceState2v2(string roomName, int seatIndex, bool isSpeaking, bool isMuted)
         {
             string roomKey = (roomName ?? "").Trim().ToLowerInvariant();
+            if (string.IsNullOrEmpty(roomKey)) return;
             await Clients.OthersInGroup(roomKey).SendAsync("VoiceStateUpdated2v2", seatIndex, isSpeaking, isMuted);
         }
 
