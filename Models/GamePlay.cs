@@ -13,6 +13,9 @@ namespace PericonAPI.Models
         public string IdPTwo { get; set; }
         public string NamePOne { get; set; } = string.Empty;
         public string NamePTwo { get; set; } = string.Empty;
+        public string UserIdPOne { get; set; } = string.Empty;
+        public string UserIdPTwo { get; set; } = string.Empty;
+        public int LastStakeAsker { get; set; } = 0; // 0 = ninguno, 1 = P1, 2 = P2
         public bool IsSolitaire { get; set; }
         public Boolean IsActive { get; set; }
         public List<Card> CardsOne { get; set; }

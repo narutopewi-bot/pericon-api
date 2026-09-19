@@ -249,16 +249,55 @@ namespace PericonAPI.Hubs
         public async Task IdentifyPlayer(string playerName, string email, int coins)
         {
             Console.WriteLine($"IdentifyPlayer. Cliente: {Context.ConnectionId}, Nombre: {playerName}");
-            foreach (var user in users)
+            int realCoins = coins;
+            try
             {
-                if (user.Id.Equals(Context.ConnectionId))
+                using (var scope = _scopeFactory.CreateScope())
                 {
-                    if (!string.IsNullOrWhiteSpace(playerName)) user.Name = playerName;
-                    if (!string.IsNullOrWhiteSpace(email)) user.Email = email;
-                    user.Coins = Math.Max(0, coins);
-                    await Clients.Client(user.Id).SendAsync("GetPlayer", user);
-                    return;
+                    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                    var dbUser = db.Users.FirstOrDefault(u =>
+                        (!string.IsNullOrEmpty(playerName) && u.Username.ToLower() == playerName.ToLower()) ||
+                        (!string.IsNullOrEmpty(email) && u.Email.ToLower() == email.ToLower()));
+                    if (dbUser != null)
+                    {
+                        realCoins = dbUser.Coins;
+                    }
                 }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[IdentifyPlayer DB check error] {ex.Message}");
+            }
+
+            GamePlayer? toNotify = null;
+            lock (users)
+            {
+                foreach (var user in users)
+                {
+                    if (user.Id.Equals(Context.ConnectionId))
+                    {
+                        if (!string.IsNullOrWhiteSpace(playerName)) user.Name = playerName;
+                        if (!string.IsNullOrWhiteSpace(email)) user.Email = email;
+                        user.Coins = Math.Max(0, realCoins);
+                        toNotify = user;
+                        break;
+                    }
+                }
+
+                if (toNotify == null)
+                {
+                    toNotify = new GamePlayer(Context.ConnectionId, playerName ?? "Jugador", email ?? "")
+                    {
+                        Coins = Math.Max(0, realCoins),
+                        Active = true
+                    };
+                    users.Add(toNotify);
+                }
+            }
+
+            if (toNotify != null)
+            {
+                await Clients.Client(toNotify.Id).SendAsync("GetPlayer", toNotify);
             }
         }
 
@@ -300,6 +339,14 @@ namespace PericonAPI.Hubs
             }
 
             bool callerIsP1 = (Context.ConnectionId == games[numg].IdPOne);
+            int callerNum = callerIsP1 ? 1 : 2;
+
+            if (games[numg].LastStakeAsker == callerNum)
+            {
+                Console.WriteLine($"[Ask369Game] Pedir bloqueado: el jugador {callerNum} ya pidió previamente sin revire.");
+                return;
+            }
+            games[numg].LastStakeAsker = callerNum;
             string sentto = callerIsP1 ? games[numg].IdPTwo : games[numg].IdPOne;
 
             GameMessage data = new GameMessage();
@@ -359,6 +406,7 @@ namespace PericonAPI.Hubs
                 case 2: // Acepta 3
                     games[numg].CurrentStake = 3;
                     games[numg].Ask369 = 3;
+                    games[numg].LastStakeAsker = callerIsP1 ? 2 : 1;
                     data.content = $"2 {games[numg].PointsOne} {games[numg].PointsTwo}";
                     await Clients.Client(ownto).SendAsync("EndAsk369Round", data);
                     if (!string.IsNullOrEmpty(sentto)) await Clients.Client(sentto).SendAsync("Answered369Game", data);
@@ -366,6 +414,7 @@ namespace PericonAPI.Hubs
                     break;
                 case 3: // Rechaza 3 -> Quien pidió 3 (rival de caller) gana 1 punto
                     games[numg].Ask369 = -1;
+                    games[numg].LastStakeAsker = 0;
                     games[numg].RoundOne = 0;
                     games[numg].RoundTwo = 0;
                     if (callerIsP1) games[numg].PointsTwo += 1;
@@ -377,6 +426,7 @@ namespace PericonAPI.Hubs
                     else await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("Answered369Game", data);
                     break;
                 case 4: // Revira a 6 (propone 6 a sentto)
+                    games[numg].LastStakeAsker = callerIsP1 ? 1 : 2;
                     data.order = 76;
                     data.content = "4";
                     data.game = move.game;
@@ -386,6 +436,7 @@ namespace PericonAPI.Hubs
                 case 5: // Acepta 6
                     games[numg].CurrentStake = 6;
                     games[numg].Ask369 = 6;
+                    games[numg].LastStakeAsker = callerIsP1 ? 2 : 1;
                     data.content = $"5 {games[numg].PointsOne} {games[numg].PointsTwo}";
                     await Clients.Client(ownto).SendAsync("EndAsk369Round", data);
                     if (!string.IsNullOrEmpty(sentto)) await Clients.Client(sentto).SendAsync("Answered369Game", data);
@@ -393,6 +444,7 @@ namespace PericonAPI.Hubs
                     break;
                 case 6: // Rechaza 6 -> Quien propuso 6 gana las 3 piedras ya pactadas
                     games[numg].Ask369 = -1;
+                    games[numg].LastStakeAsker = 0;
                     games[numg].RoundOne = 0;
                     games[numg].RoundTwo = 0;
                     if (callerIsP1) games[numg].PointsTwo += 3;
@@ -404,6 +456,7 @@ namespace PericonAPI.Hubs
                     else await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("Answered369Game", data);
                     break;
                 case 7: // Revira a 9 (propone 9 a sentto)
+                    games[numg].LastStakeAsker = callerIsP1 ? 1 : 2;
                     data.order = 76;
                     data.content = "7";
                     data.game = move.game;
@@ -413,6 +466,7 @@ namespace PericonAPI.Hubs
                 case 8: // Acepta 9
                     games[numg].CurrentStake = 9;
                     games[numg].Ask369 = 9;
+                    games[numg].LastStakeAsker = callerIsP1 ? 2 : 1;
                     data.content = $"8 {games[numg].PointsOne} {games[numg].PointsTwo}";
                     await Clients.Client(ownto).SendAsync("EndAsk369Round", data);
                     if (!string.IsNullOrEmpty(sentto)) await Clients.Client(sentto).SendAsync("Answered369Game", data);
@@ -420,6 +474,7 @@ namespace PericonAPI.Hubs
                     break;
                 case 9: // Rechaza 9 -> Quien propuso 9 gana las 6 piedras ya pactadas
                     games[numg].Ask369 = -1;
+                    games[numg].LastStakeAsker = 0;
                     games[numg].RoundOne = 0;
                     games[numg].RoundTwo = 0;
                     if (callerIsP1) games[numg].PointsTwo += 6;
@@ -490,8 +545,10 @@ namespace PericonAPI.Hubs
             GamePlayOneVsOne newgame = new GamePlayOneVsOne(POne, PTwo);
             GamePlayer QOne = GetPlayerData(POne);
             GamePlayer QTwo = GetPlayerData(PTwo);
-            newgame.NamePOne = QOne.Name;
-            newgame.NamePTwo = QTwo.Name;
+            string name1 = !string.IsNullOrEmpty(QOne.Name) && !QOne.Name.StartsWith("Jugador-") ? QOne.Name : (QOne.Name ?? "Jugador 1");
+            string name2 = !string.IsNullOrEmpty(QTwo.Name) && !QTwo.Name.StartsWith("Jugador-") ? QTwo.Name : (QTwo.Name ?? "Jugador 2");
+            newgame.NamePOne = name1;
+            newgame.NamePTwo = name2;
 
             // Sorteo de mano inicial 50% / 50%
             Random rng = new Random();
@@ -507,12 +564,12 @@ namespace PericonAPI.Hubs
             GameMessage sentence = new GameMessage();
             sentence.game = newgame.Id;
             sentence.order = 99;
-            string previewcontent = POne + " " + QOne.Name + " " + PTwo + " " + QTwo.Name + " ";
+            string previewcontent = $"{POne}|{name1}|{PTwo}|{name2}|";
             sentence.content = previewcontent + "1";
             Console.WriteLine($"Juego creado: {newgame.Id}, Mano inicial: {newgame.InitHand}, Inicia P{startingPlayer}");
-            await Clients.Client(POne).SendAsync("ReadyToGame1vs1",sentence);
+            await Clients.Client(POne).SendAsync("ReadyToGame1vs1", sentence);
             sentence.content = previewcontent + "0";
-            await Clients.Client(PTwo).SendAsync("ReadyToGame1vs1",sentence);
+            await Clients.Client(PTwo).SendAsync("ReadyToGame1vs1", sentence);
         }
 
 
@@ -552,6 +609,7 @@ namespace PericonAPI.Hubs
             games[numg].Deck.RandomCards();
             games[numg].ShuffleCards_1vs1();
             games[numg].CurrentStake = 1;
+            games[numg].LastStakeAsker = 0;
             games[numg].Ask369 = 0;
             games[numg].RoundOne = 0;
             games[numg].RoundTwo = 0;
@@ -666,6 +724,7 @@ namespace PericonAPI.Hubs
             games[numg].PlayerTurn = (games[numg].HandStarter == 1);
             games[numg].HandCount++;
             games[numg].CurrentStake = 1;
+            games[numg].LastStakeAsker = 0;
             games[numg].Ask369 = 0;
             games[numg].RoundOne = 0;
             games[numg].RoundTwo = 0;
@@ -1196,12 +1255,17 @@ namespace PericonAPI.Hubs
                     string winnerEmail = winnerPlayer.Email ?? "";
                     string loserEmail = loserPlayer.Email ?? "";
 
+                    string winnerUserId = (winnerConnectionId == game.IdPOne) ? game.UserIdPOne : game.UserIdPTwo;
+                    string loserUserId = (loserConnectionId == game.IdPOne) ? game.UserIdPOne : game.UserIdPTwo;
+
                     var dbWinner = db.Users.FirstOrDefault(u => 
-                        u.Username.ToLower() == winnerName.ToLower() || 
+                        (!string.IsNullOrEmpty(winnerUserId) && u.Id.ToString() == winnerUserId) ||
+                        (!string.IsNullOrEmpty(winnerName) && u.Username.ToLower() == winnerName.ToLower()) || 
                         (!string.IsNullOrEmpty(winnerEmail) && u.Email.ToLower() == winnerEmail.ToLower()));
 
                     var dbLoser = db.Users.FirstOrDefault(u => 
-                        u.Username.ToLower() == loserName.ToLower() || 
+                        (!string.IsNullOrEmpty(loserUserId) && u.Id.ToString() == loserUserId) ||
+                        (!string.IsNullOrEmpty(loserName) && u.Username.ToLower() == loserName.ToLower()) || 
                         (!string.IsNullOrEmpty(loserEmail) && u.Email.ToLower() == loserEmail.ToLower()));
 
                     if (dbLoser != null)
@@ -1210,6 +1274,12 @@ namespace PericonAPI.Hubs
                         dbLoser.Coins -= loserDeduction;
                         dbLoser.Losses += 1;
                         loserNewCoins = dbLoser.Coins;
+                        loserPlayer.Coins = loserNewCoins;
+                    }
+                    else
+                    {
+                        loserPlayer.Coins = Math.Max(0, loserPlayer.Coins - bet);
+                        loserNewCoins = loserPlayer.Coins;
                     }
 
                     if (dbWinner != null)
@@ -1218,6 +1288,12 @@ namespace PericonAPI.Hubs
                         dbWinner.Coins += netWinnerGain;
                         dbWinner.Wins += 1;
                         winnerNewCoins = dbWinner.Coins;
+                        winnerPlayer.Coins = winnerNewCoins;
+                    }
+                    else
+                    {
+                        winnerPlayer.Coins = Math.Max(0, winnerPlayer.Coins + (winnerPrize - bet));
+                        winnerNewCoins = winnerPlayer.Coins;
                     }
 
                     if (dbWinner != null || dbLoser != null)
@@ -1621,8 +1697,27 @@ namespace PericonAPI.Hubs
                 newGame.Coins = matchedPlayer.Bet;
                 GamePlayer q1 = GetPlayerData(p1);
                 GamePlayer q2 = GetPlayerData(p2);
-                newGame.NamePOne = q1.Name;
-                newGame.NamePTwo = q2.Name;
+
+                string name1 = !string.IsNullOrEmpty(matchedPlayer.PlayerName) && !matchedPlayer.PlayerName.StartsWith("Jugador-")
+                    ? matchedPlayer.PlayerName
+                    : (!string.IsNullOrEmpty(q1.Name) && !q1.Name.StartsWith("Jugador-") ? q1.Name : "Jugador 1");
+
+                string name2 = !string.IsNullOrEmpty(playerName) && !playerName.StartsWith("Jugador-")
+                    ? playerName
+                    : (!string.IsNullOrEmpty(q2.Name) && !q2.Name.StartsWith("Jugador-") ? q2.Name : "Jugador 2");
+
+                newGame.NamePOne = name1;
+                newGame.NamePTwo = name2;
+                newGame.UserIdPOne = matchedPlayer.UserId ?? "";
+                newGame.UserIdPTwo = userId ?? "";
+
+                lock (users)
+                {
+                    var u1 = users.FirstOrDefault(u => u.Id == p1);
+                    if (u1 != null && !string.IsNullOrEmpty(name1) && !name1.StartsWith("Jugador-")) u1.Name = name1;
+                    var u2 = users.FirstOrDefault(u => u.Id == p2);
+                    if (u2 != null && !string.IsNullOrEmpty(name2) && !name2.StartsWith("Jugador-")) u2.Name = name2;
+                }
 
                 // Sorteo de mano inicial 50% / 50%
                 Random rng = new Random();
@@ -1636,20 +1731,20 @@ namespace PericonAPI.Hubs
                 newGame.ShuffleCards_1vs1();
                 games.Add(newGame);
 
-                Console.WriteLine($"[Matchmaking] Emparejados {p1} vs {p2}. Juego: {newGame.Id}");
+                Console.WriteLine($"[Matchmaking] Emparejados {p1} ({name1}) vs {p2} ({name2}). Juego: {newGame.Id}");
 
                 GameMessage msgP1 = new GameMessage
                 {
                     game = newGame.Id,
                     order = 99,
-                    content = $"{p1} {q1.Name} {p2} {q2.Name} 1"
+                    content = $"{p1}|{name1}|{p2}|{name2}|1"
                 };
 
                 GameMessage msgP2 = new GameMessage
                 {
                     game = newGame.Id,
                     order = 99,
-                    content = $"{p1} {q1.Name} {p2} {q2.Name} 0"
+                    content = $"{p1}|{name1}|{p2}|{name2}|0"
                 };
 
                 await Clients.Client(p1).SendAsync("MatchFound", msgP1);
