@@ -167,6 +167,8 @@ namespace PericonAPI.Hubs
             public bool IsTumbaDecisionPending { get; set; } = false;
             public bool IsHandResolving { get; set; } = false;
             public int LastHandStarter { get; set; } = 0;
+            public bool IsGameOver { get; set; } = false;
+            public int WinningTeam { get; set; } = 0;
 
             public void UpdateTumbaStatus(int oldT1 = -1, int oldT2 = -1)
             {
@@ -2194,7 +2196,7 @@ namespace PericonAPI.Hubs
             {
                 if (!rooms2v2.TryGetValue(roomKey, out session)) return;
                 if (!session.GameStarted) return;
-                if (session.PointsTeam1 >= 10 || session.PointsTeam2 >= 10) return;
+                if (session.IsGameOver) return;
 
                 // Si la mano concluyó y está en resolución, o si todos jugaron sus cartas y no hay bazas activas
                 if (session.IsHandResolving || (session.CurrentTrick.Count == 0 && session.HandHistoryCards.Count >= 8))
@@ -2262,7 +2264,7 @@ namespace PericonAPI.Hubs
                 if (!session.GameStarted) return;
                 if (seatIndex < 0 || seatIndex > 3) return;
                 // Bloquear jugar cartas mientras hay un cante pendiente de respuesta, la mano está resolviendo o la partida terminó
-                if (session.PendingStake > 0 || session.PointsTeam1 >= 10 || session.PointsTeam2 >= 10 || session.IsHandResolving) return;
+                if (session.PendingStake > 0 || session.IsGameOver || session.IsHandResolving) return;
                 // Validar que sea el turno de este asiento
                 if (session.CurrentTurn != seatIndex) return;
                 // Evitar que el mismo jugador juegue dos cartas en la misma baza
@@ -2335,12 +2337,6 @@ namespace PericonAPI.Hubs
                             else session.PointsTeam2 += 3;
                             session.UpdateTumbaStatus(oldT1C, oldT2C);
                             Console.WriteLine($"[La Cogia 2v2] ¡Equipo {cogidaTeam} se acredita +3 piedras por La Cogía!");
-
-                            if (session.PointsTeam1 >= 10 || session.PointsTeam2 >= 10)
-                            {
-                                isGameOver = true;
-                                winningTeamOfMatch = session.PointsTeam1 >= 10 ? 1 : 2;
-                            }
                         }
                     }
 
@@ -2405,23 +2401,23 @@ namespace PericonAPI.Hubs
                         }
                         else
                         {
-                            // Mano normal: suma valor de la apuesta stake (tope 9 para requerir ganar en Tumba)
+                            // Mano normal: suma valor de la apuesta stake. Si llega a >= 9, entra en Tumba para la siguiente mano pero NO gana la partida aún.
                             int stake = session.CurrentStake > 0 ? session.CurrentStake : 1;
                             if (handWinningTeam == 1)
                             {
-                                session.PointsTeam1 = Math.Min(9, session.PointsTeam1 + stake);
+                                session.PointsTeam1 += stake;
                             }
                             else
                             {
-                                session.PointsTeam2 = Math.Min(9, session.PointsTeam2 + stake);
+                                session.PointsTeam2 += stake;
                             }
                             session.UpdateTumbaStatus(oldT1, oldT2);
                         }
 
-                        if (session.PointsTeam1 >= 10 || session.PointsTeam2 >= 10)
+                        if (isGameOver)
                         {
-                            isGameOver = true;
-                            winningTeamOfMatch = session.PointsTeam1 >= 10 ? 1 : 2;
+                            session.IsGameOver = true;
+                            session.WinningTeam = winningTeamOfMatch;
                         }
                     }
 
@@ -2572,20 +2568,13 @@ namespace PericonAPI.Hubs
                     int oldT2 = session.PointsTeam2;
                     if (askerTeam == 1)
                     {
-                        // En Pericón, a 9 se entra en Tumba; el punto 10 solo se puede conseguir ganando en Tumba
-                        session.PointsTeam1 = Math.Min(9, session.PointsTeam1 + reward);
+                        session.PointsTeam1 += reward;
                     }
                     else
                     {
-                        session.PointsTeam2 = Math.Min(9, session.PointsTeam2 + reward);
+                        session.PointsTeam2 += reward;
                     }
                     session.UpdateTumbaStatus(oldT1, oldT2);
-
-                    if (session.PointsTeam1 >= 10 || session.PointsTeam2 >= 10)
-                    {
-                        isGameOver = true;
-                        winningTeamOfMatch = session.PointsTeam1 >= 10 ? 1 : 2;
-                    }
 
                     finalStake = session.CurrentStake;
                     session.PendingStake = 0;
@@ -2668,8 +2657,8 @@ namespace PericonAPI.Hubs
                 session.UpdateTumbaStatus(oldT1, oldT2);
             }
 
-            bool isGameOver = session.PointsTeam1 >= 10 || session.PointsTeam2 >= 10;
-            int winningTeam = isGameOver ? (session.PointsTeam1 >= 10 ? 1 : 2) : 0;
+            bool isGameOver = false;
+            int winningTeam = 0;
 
             await Clients.Group(roomKey).SendAsync("TumbaPassedNotice2v2", new
             {
@@ -2686,22 +2675,19 @@ namespace PericonAPI.Hubs
                 message = $"El Equipo {(passingTeam == 1 ? "Azul" : "Rojo")} pasó en Tumba (-1 piedra para ellos, +1 para el rival)."
             });
 
-            if (!isGameOver)
+            int nextStarter = (session.LastHandStarter + 1) % 4;
+            _ = Task.Run(async () =>
             {
-                int nextStarter = (session.LastHandStarter + 1) % 4;
-                _ = Task.Run(async () =>
+                try
                 {
-                    try
-                    {
-                        await Task.Delay(2500);
-                        await DealNewHand2v2Static(roomKey, nextStarter);
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"[DealNewHand2v2 PassTumba Error]: {ex}");
-                    }
-                });
-            }
+                    await Task.Delay(2500);
+                    await DealNewHand2v2Static(roomKey, nextStarter);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[DealNewHand2v2 PassTumba Error]: {ex}");
+                }
+            });
         }
 
         public async Task AcceptTumba2v2(string roomName, int seatIndex)
