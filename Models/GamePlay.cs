@@ -308,9 +308,14 @@ namespace PericonAPI.Models
             // Si el oponente tiró primero, responder inteligentemente respetando la Regla del Pelao
             if (oppPlayedCardId != -1)
             {
-                // Regla del Pelao: Si el rival salió con triunfo y tenemos triunfos, es obligatorio lanzar triunfo
+                // Regla del Pelao: Si el rival salió con triunfo y tenemos triunfos, es obligatorio lanzar triunfo (salvo excepción del 5 de Oro en 1ra baza)
                 bool oppIsTriumph = EvaluateCard(oppPlayedCardId, Life.Id) >= 11;
                 bool hasTriumph = CardsTwo.Any(c => EvaluateCard(c.Id, Life.Id) >= 11);
+
+                bool isFirstBaza = CardsTwo.Count == 3;
+                bool hasCincoDeOro = CardsTwo.Any(c => c.Id == 4);
+                int trumpsCount = CardsTwo.Count(c => EvaluateCard(c.Id, Life.Id) >= 11);
+                bool canDenyCinco = isFirstBaza && hasCincoDeOro && trumpsCount == 1;
 
                 int bestBeatIndex = -1;
                 int lowestWinningPower = int.MaxValue;
@@ -323,8 +328,14 @@ namespace PericonAPI.Models
                     int power = EvaluateCard(cId, Life.Id);
                     bool isTriumph = power >= 11;
 
-                    // Si aplica la regla del Pelao, ignorar cartas que no sean triunfo
-                    if (oppIsTriumph && hasTriumph && !isTriumph)
+                    // Si aplica la regla del Pelao (y no puede negar el 5 de Oro), ignorar cartas que no sean triunfo
+                    if (oppIsTriumph && hasTriumph && !canDenyCinco && !isTriumph)
+                    {
+                        continue;
+                    }
+
+                    // Si puede negar el 5 de Oro en primera baza, reservar el 5 de Oro y tirar una carta blanca
+                    if (canDenyCinco && cId == 4 && CardsTwo.Count > 1)
                     {
                         continue;
                     }
