@@ -48,6 +48,8 @@ namespace PericonAPI.Controllers
                 level = calculatedLevel,
                 experience = user.Experience,
                 avatarUrl = user.AvatarUrl,
+                hasClaimedInstagramReward = user.HasClaimedInstagramReward,
+                instagramHandle = user.InstagramHandle,
                 createdAt = user.CreatedAt
             });
         }
@@ -283,6 +285,53 @@ namespace PericonAPI.Controllers
                 }
             });
         }
+
+        [HttpPost("claim-instagram-reward")]
+        public async Task<IActionResult> ClaimInstagramReward([FromBody] ClaimInstagramRewardDto dto)
+        {
+            if (dto == null || dto.UserId <= 0)
+            {
+                return BadRequest(new { message = "Datos de usuario inválidos." });
+            }
+
+            var user = await _context.Users.FindAsync(dto.UserId);
+            if (user == null)
+            {
+                return NotFound(new { message = "Usuario no encontrado." });
+            }
+
+            if (user.HasClaimedInstagramReward)
+            {
+                return BadRequest(new { message = "Ya has reclamado tu recompensa de 300 monedas de Instagram anteriormente." });
+            }
+
+            const int instagramReward = 300;
+            user.Coins += instagramReward;
+            user.HasClaimedInstagramReward = true;
+            if (!string.IsNullOrWhiteSpace(dto.InstagramHandle))
+            {
+                var cleanHandle = dto.InstagramHandle.Trim();
+                if (!cleanHandle.StartsWith("@")) cleanHandle = "@" + cleanHandle;
+                user.InstagramHandle = cleanHandle;
+            }
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                id = user.Id,
+                coins = user.Coins,
+                bonus = instagramReward,
+                instagramHandle = user.InstagramHandle,
+                message = "¡Recompensa activada con éxito! Te hemos acreditado 300 monedas por apoyar a @pericon.lat en Instagram. 🐐📸🪙"
+            });
+        }
+    }
+
+    public class ClaimInstagramRewardDto
+    {
+        public int UserId { get; set; }
+        public string? InstagramHandle { get; set; }
     }
 
     public class UpdateProfileDto

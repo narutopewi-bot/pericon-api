@@ -126,6 +126,8 @@ using (var scope = app.Services.CreateScope())
         try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN IsAdmin INTEGER NOT NULL DEFAULT 0;"); } catch { }
         try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN LastDailyClaim TEXT NULL;"); } catch { }
         try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN AvatarUrl TEXT NULL;"); } catch { }
+        try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN HasClaimedInstagramReward INTEGER NOT NULL DEFAULT 0;"); } catch { }
+        try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN InstagramHandle TEXT NULL;"); } catch { }
         try
         {
             db.Database.ExecuteSqlRaw(@"
@@ -256,6 +258,18 @@ using (var scope = app.Services.CreateScope())
         try
         {
             db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""PhoneNumber"" TEXT NULL;");
+        }
+        catch { }
+
+        try
+        {
+            db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""HasClaimedInstagramReward"" BOOLEAN NOT NULL DEFAULT FALSE;");
+        }
+        catch { }
+
+        try
+        {
+            db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""InstagramHandle"" TEXT NULL;");
         }
         catch { }
 

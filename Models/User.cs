@@ -44,6 +44,11 @@ namespace PericonAPI.Models
 
         public DateTime? LastDailyClaim { get; set; }
 
+        public bool HasClaimedInstagramReward { get; set; } = false;
+
+        [MaxLength(50)]
+        public string? InstagramHandle { get; set; }
+
         public string GetCalculatedLevel()
         {
             if (Wins <= 10) return "Peón de Casona";
