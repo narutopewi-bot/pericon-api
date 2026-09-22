@@ -934,10 +934,18 @@ namespace PericonAPI.Hubs
 
                 bool isCogida = false;
                 int cogidaWinner = 0; // 1 = playerOne, 2 = playerTwo
-                if (!isTumbaMulti && leadCard == 7 && respCard == 0)
+                if (!isTumbaMulti && ((leadCard == 7 && respCard == 0) || (leadCard == 0 && respCard == 7)))
                 {
                     isCogida = true;
-                    cogidaWinner = leadIsPlayerOne ? 2 : 1; // El que responde coge al que salió
+                    // El que tiene el 1 de Oro (0) siempre gana la cogía (+3 piedras), sea que salió o respondió
+                    if (leadCard == 0)
+                    {
+                        cogidaWinner = leadIsPlayerOne ? 1 : 2;
+                    }
+                    else
+                    {
+                        cogidaWinner = leadIsPlayerOne ? 2 : 1;
+                    }
                 }
 
                 if (isCogida)
@@ -2416,7 +2424,7 @@ namespace PericonAPI.Hubs
 
                     int tenGoldIdx = session.CurrentTrick.FindIndex(p => p.CardId == 7);
                     int oneGoldIdx = session.CurrentTrick.FindIndex(p => p.CardId == 0);
-                    if (!isTumba2v2 && tenGoldIdx != -1 && oneGoldIdx != -1 && oneGoldIdx > tenGoldIdx)
+                    if (!isTumba2v2 && tenGoldIdx != -1 && oneGoldIdx != -1)
                     {
                         int tenSeat = session.CurrentTrick[tenGoldIdx].SeatIndex;
                         int oneSeat = session.CurrentTrick[oneGoldIdx].SeatIndex;
@@ -2425,7 +2433,7 @@ namespace PericonAPI.Hubs
                         if (tenTeam != oneTeam)
                         {
                             isCogida2v2 = true;
-                            cogidaTeam = oneTeam;
+                            cogidaTeam = oneTeam; // El equipo que tiene el 1 de Oro siempre gana La Cogía
                             int oldT1C = session.PointsTeam1;
                             int oldT2C = session.PointsTeam2;
                             if (cogidaTeam == 1) session.PointsTeam1 += 3;

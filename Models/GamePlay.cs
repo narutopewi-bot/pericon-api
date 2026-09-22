@@ -524,14 +524,15 @@ namespace PericonAPI.Models
                 answer.content = _cardOne.Id.ToString("D2") + "-" + CardPlayed.Id.ToString("D2") + "-" + _evaluate;
             }
 
-            // Detección de La Cogía en Solitario: Si salieron con 10 de Oro (7) y el que respondió tiró 1 de Oro (0)
+            // Detección de La Cogía en Solitario: Se activa si se juegan 10 de Oro (7) y 1 de Oro (0) en cualquier orden
             // En tumba la cogía NO vale (innecesario adquirir 3 puntos)
             int isCogiaBonus = 0; // 1 = playerOne gana cogia, 2 = playerTwo gana cogia
             bool isTumba = IsTumbaOne || IsTumbaTwo || PointsOne >= 9 || PointsTwo >= 9 ||
                            (IsTumbaDeParaAtrasOne && PointsOne == 8) || (IsTumbaDeParaAtrasTwo && PointsTwo == 8);
-            if (!isTumba && leadCard == 7 && respCard == 0)
+            if (!isTumba && ((leadCard == 7 && respCard == 0) || (leadCard == 0 && respCard == 7)))
             {
-                isCogiaBonus = turn ? 2 : 1;
+                // El jugador que posee el 1 de Oro siempre gana La Cogía (+3 piedras)
+                isCogiaBonus = (_cardOne.Id == 0) ? 1 : 2;
             }
 
             if (_evaluate.Equals("00"))
