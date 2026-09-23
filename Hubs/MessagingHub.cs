@@ -2907,6 +2907,33 @@ namespace PericonAPI.Hubs
             await Clients.OthersInGroup(roomKey).SendAsync("VoiceStateUpdated2v2", seatIndex, isSpeaking, isMuted);
         }
 
+        public async Task SendVoiceChunk2v2(string roomName, int fromSeat, int toSeat, string base64Data)
+        {
+            string roomKey = (roomName ?? "").Trim().ToLowerInvariant();
+            if (string.IsNullOrEmpty(roomKey) || string.IsNullOrEmpty(base64Data)) return;
+
+            if (toSeat >= 0 && toSeat <= 3)
+            {
+                string? targetConnId = null;
+                lock (rooms2v2Lock)
+                {
+                    if (rooms2v2.TryGetValue(roomKey, out var session))
+                    {
+                        var seat = session.Seats.FirstOrDefault(s => s.SeatIndex == toSeat && s.IsConnected);
+                        targetConnId = seat?.ConnectionId;
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(targetConnId))
+                {
+                    await Clients.Client(targetConnId).SendAsync("VoiceChunkReceived2v2", fromSeat, toSeat, base64Data);
+                    return;
+                }
+            }
+
+            await Clients.OthersInGroup(roomKey).SendAsync("VoiceChunkReceived2v2", fromSeat, toSeat, base64Data);
+        }
+
         public override async Task OnDisconnectedAsync(Exception? exception)
         {
             string callerId = Context.ConnectionId;
