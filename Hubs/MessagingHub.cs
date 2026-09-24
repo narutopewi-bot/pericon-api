@@ -652,6 +652,111 @@ namespace PericonAPI.Hubs
             await ChangeGame1vs1(move);
         }
 
+        public async Task RequestRevancha1vs1(int gameId, string requesterName)
+        {
+            GameLogger.Log(gameId, "RequestRevancha1vs1", $"Invocado por Cliente: {Context.ConnectionId}, Nombre: {requesterName}");
+            int numg = FindGame1vs1(gameId);
+            if (numg < 0 || numg >= games.Count) return;
+
+            string caller = Context.ConnectionId;
+            bool callerIsP1 = (caller == games[numg].IdPOne);
+            string targetOpp = callerIsP1 ? games[numg].IdPTwo : games[numg].IdPOne;
+            string reqName = !string.IsNullOrWhiteSpace(requesterName)
+                ? requesterName
+                : (callerIsP1 ? (!string.IsNullOrEmpty(games[numg].NamePOne) ? games[numg].NamePOne : "Tu rival")
+                              : (!string.IsNullOrEmpty(games[numg].NamePTwo) ? games[numg].NamePTwo : "Tu rival"));
+
+            if (string.IsNullOrEmpty(targetOpp))
+            {
+                await Clients.Caller.SendAsync("RevanchaRejected1vs1", new { responderName = "El contrincante (desconectado)" });
+                return;
+            }
+
+            await Clients.Client(targetOpp).SendAsync("RevanchaRequested1vs1", new
+            {
+                gameId = gameId,
+                requesterName = reqName
+            });
+        }
+
+        public async Task AnswerRevancha1vs1(int gameId, bool accepted, string responderName)
+        {
+            GameLogger.Log(gameId, "AnswerRevancha1vs1", $"Invocado por Cliente: {Context.ConnectionId}, Aceptado: {accepted}, Nombre: {responderName}");
+            int numg = FindGame1vs1(gameId);
+            if (numg < 0 || numg >= games.Count) return;
+
+            string caller = Context.ConnectionId;
+            bool callerIsP1 = (caller == games[numg].IdPOne);
+            string targetOpp = callerIsP1 ? games[numg].IdPTwo : games[numg].IdPOne;
+            string respName = !string.IsNullOrWhiteSpace(responderName)
+                ? responderName
+                : (callerIsP1 ? (!string.IsNullOrEmpty(games[numg].NamePOne) ? games[numg].NamePOne : "Tu rival")
+                              : (!string.IsNullOrEmpty(games[numg].NamePTwo) ? games[numg].NamePTwo : "Tu rival"));
+
+            if (!accepted)
+            {
+                if (!string.IsNullOrEmpty(targetOpp))
+                {
+                    await Clients.Client(targetOpp).SendAsync("RevanchaRejected1vs1", new { responderName = respName });
+                }
+                await Clients.Caller.SendAsync("RevanchaRejected1vs1", new { responderName = respName });
+                return;
+            }
+
+            // Reiniciar estado completo para la revancha 1vs1
+            games[numg].PointsOne = 0;
+            games[numg].PointsTwo = 0;
+            games[numg].RoundOne = 0;
+            games[numg].RoundTwo = 0;
+            games[numg].CurrentStake = 1;
+            games[numg].LastStakeAsker = 0;
+            games[numg].Ask369 = 0;
+            games[numg].IsTumbaOne = false;
+            games[numg].IsTumbaTwo = false;
+            games[numg].IsTumbaDeParaAtrasOne = false;
+            games[numg].IsTumbaDeParaAtrasTwo = false;
+            games[numg].HandStarter = 1;
+            games[numg].HandCount = 1;
+            games[numg].PlayerTurn = true;
+            games[numg].IsActive = true;
+            games[numg].Deck.RandomCards();
+            games[numg].ShuffleCards_1vs1();
+
+            // Notificar aceptación
+            await Clients.Group($"game1vs1_{gameId}").SendAsync("RevanchaAccepted1vs1", new
+            {
+                gameId = gameId,
+                responderName = respName
+            });
+
+            // Enviar reparto de mano inicial de la revancha a ambos jugadores
+            string POne = games[numg].IdPOne;
+            string PTwo = games[numg].IdPTwo;
+            string PThree = games[numg].InitHand;
+            GameMessage sentence = new GameMessage();
+            sentence.game = gameId;
+            sentence.order = 87;
+            string previewcontent = PThree + "-";
+            string PFour = "1";
+            string PFive = "0";
+            string PScore = "-0-0";
+
+            sentence.content = previewcontent + PFour + PScore;
+            if (!string.IsNullOrEmpty(POne)) await Clients.Client(POne).SendAsync("setChangeHand", sentence);
+
+            sentence.content = previewcontent + PFive + PScore;
+            if (!string.IsNullOrEmpty(PTwo)) await Clients.Client(PTwo).SendAsync("setChangeHand", sentence);
+
+            await Clients.Group($"game1vs1_{gameId}").SendAsync("GameHandUpdated1vs1", new
+            {
+                game = gameId,
+                handCards = PThree,
+                handStarter = 1,
+                pointsOne = 0,
+                pointsTwo = 0
+            });
+        }
+
         public async Task RejoinGame1vs1(int gameId, bool isPlayerOne)
         {
             Console.WriteLine($"[RejoinGame1vs1] Cliente: {Context.ConnectionId}, Juego: {gameId}, EsP1: {isPlayerOne}");
@@ -2110,6 +2215,67 @@ namespace PericonAPI.Hubs
         public async Task StartGame2v2(string roomName)
         {
             string roomKey = (roomName ?? "").Trim().ToLowerInvariant();
+            await StartGame2v2Internal(roomKey);
+        }
+
+        public async Task RequestRevancha2v2(string roomName, int requesterSeat, string requesterName)
+        {
+            string roomKey = (roomName ?? "").Trim().ToLowerInvariant();
+            GameLogger.Log(0, "RequestRevancha2v2", $"Sala: {roomKey}, Seat: {requesterSeat}, Nombre: {requesterName}");
+
+            Room2v2Session? session;
+            lock (rooms2v2Lock)
+            {
+                if (!rooms2v2.TryGetValue(roomKey, out session)) return;
+            }
+
+            int requesterTeam = (requesterSeat == 0 || requesterSeat == 2) ? 1 : 2;
+            string reqName = !string.IsNullOrWhiteSpace(requesterName)
+                ? requesterName
+                : (session.Seats.FirstOrDefault(s => s.SeatIndex == requesterSeat)?.Name ?? "Un rival");
+
+            await Clients.Group(roomKey).SendAsync("RevanchaRequested2v2", new
+            {
+                roomName = session.RoomName,
+                requesterSeat = requesterSeat,
+                requesterName = reqName,
+                requesterTeam = requesterTeam
+            });
+        }
+
+        public async Task AnswerRevancha2v2(string roomName, int responderSeat, string responderName, bool accepted)
+        {
+            string roomKey = (roomName ?? "").Trim().ToLowerInvariant();
+            GameLogger.Log(0, "AnswerRevancha2v2", $"Sala: {roomKey}, Seat: {responderSeat}, Aceptado: {accepted}");
+
+            Room2v2Session? session;
+            lock (rooms2v2Lock)
+            {
+                if (!rooms2v2.TryGetValue(roomKey, out session)) return;
+            }
+
+            string respName = !string.IsNullOrWhiteSpace(responderName)
+                ? responderName
+                : (session.Seats.FirstOrDefault(s => s.SeatIndex == responderSeat)?.Name ?? "Un jugador");
+
+            if (!accepted)
+            {
+                await Clients.Group(roomKey).SendAsync("RevanchaRejected2v2", new
+                {
+                    roomName = session.RoomName,
+                    responderSeat = responderSeat,
+                    responderName = respName
+                });
+                return;
+            }
+
+            await Clients.Group(roomKey).SendAsync("RevanchaAccepted2v2", new
+            {
+                roomName = session.RoomName,
+                responderSeat = responderSeat,
+                responderName = respName
+            });
+
             await StartGame2v2Internal(roomKey);
         }
 
