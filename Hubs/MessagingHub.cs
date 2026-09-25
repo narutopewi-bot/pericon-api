@@ -1347,6 +1347,12 @@ namespace PericonAPI.Hubs
 
             int winnerNewCoins = 0;
             int loserNewCoins = 0;
+            int winnerWins = 0;
+            int winnerLosses = 0;
+            string winnerLevel = "Peón de Casona";
+            int loserWins = 0;
+            int loserLosses = 0;
+            string loserLevel = "Peón de Casona";
 
             try
             {
@@ -1386,13 +1392,19 @@ namespace PericonAPI.Hubs
                         int loserDeduction = Math.Min(dbLoser.Coins, bet);
                         dbLoser.Coins -= loserDeduction;
                         dbLoser.Losses += 1;
+                        dbLoser.Level = dbLoser.GetCalculatedLevel();
                         loserNewCoins = dbLoser.Coins;
                         loserPlayer.Coins = loserNewCoins;
+                        loserWins = dbLoser.Wins;
+                        loserLosses = dbLoser.Losses;
+                        loserLevel = dbLoser.Level;
                     }
                     else
                     {
                         loserPlayer.Coins = Math.Max(0, loserPlayer.Coins - bet);
                         loserNewCoins = loserPlayer.Coins;
+                        loserWins = 0;
+                        loserLosses = 1;
                     }
 
                     if (dbWinner != null)
@@ -1400,13 +1412,19 @@ namespace PericonAPI.Hubs
                         int netWinnerGain = Math.Max(0, winnerPrize - bet);
                         dbWinner.Coins += netWinnerGain;
                         dbWinner.Wins += 1;
+                        dbWinner.Level = dbWinner.GetCalculatedLevel();
                         winnerNewCoins = dbWinner.Coins;
                         winnerPlayer.Coins = winnerNewCoins;
+                        winnerWins = dbWinner.Wins;
+                        winnerLosses = dbWinner.Losses;
+                        winnerLevel = dbWinner.Level;
                     }
                     else
                     {
                         winnerPlayer.Coins = Math.Max(0, winnerPlayer.Coins + (winnerPrize - bet));
                         winnerNewCoins = winnerPlayer.Coins;
+                        winnerWins = 1;
+                        winnerLosses = 0;
                     }
 
                     if (dbWinner != null || dbLoser != null)
@@ -1449,6 +1467,9 @@ namespace PericonAPI.Hubs
                     winnerPrize = winnerPrize,
                     netGain = winnerPrize - bet,
                     newBalance = winnerNewCoins,
+                    newWins = winnerWins,
+                    newLosses = winnerLosses,
+                    level = winnerLevel,
                     message = $"🏆 ¡Ganaste la partida! Te llevas {winnerPrize} monedas (80% del pozo de {totalPot}). Comisión de sala (20%): {houseCommission} monedas."
                 });
 
@@ -1461,12 +1482,123 @@ namespace PericonAPI.Hubs
                     winnerPrize = winnerPrize,
                     netGain = -bet,
                     newBalance = loserNewCoins,
+                    newWins = loserWins,
+                    newLosses = loserLosses,
+                    level = loserLevel,
                     message = $"Partida finalizada. Se descontaron {bet} monedas de tu monedero."
                 });
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[ProcessMatchPayout Send Error] {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Procesa la liquidación de apuestas y actualización de victorias/derrotas para partidas 2 vs 2.
+        /// </summary>
+        private async Task ProcessMatchPayout2v2(string roomKey, Room2v2Session session, int winningTeamOfMatch, string reason)
+        {
+            if (session == null || session.Seats.Count < 4) return;
+
+            int betPerPlayer = Math.Max(10, session.Bet);
+            int totalPot = betPerPlayer * 4;
+            int houseCommission = (int)Math.Round(totalPot * 0.20);
+            int totalPrize = totalPot - houseCommission;
+            int winnerPrizePerPlayer = totalPrize / 2;
+
+            try
+            {
+                using (var scope = _scopeFactory.CreateScope())
+                {
+                    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+                    foreach (var seat in session.Seats)
+                    {
+                        bool isWinner = (seat.Team == winningTeamOfMatch);
+
+                        var dbUser = db.Users.FirstOrDefault(u =>
+                            (!string.IsNullOrEmpty(seat.UserId) && u.Id.ToString() == seat.UserId) ||
+                            (!string.IsNullOrEmpty(seat.Name) && u.Username.ToLower() == seat.Name.ToLower()));
+
+                        int newBalance = 0;
+                        int newWins = 0;
+                        int newLosses = 0;
+                        string calculatedLevel = "Peón de Casona";
+
+                        if (dbUser != null)
+                        {
+                            if (isWinner)
+                            {
+                                int netGain = Math.Max(0, winnerPrizePerPlayer - betPerPlayer);
+                                dbUser.Coins += netGain;
+                                dbUser.Wins += 1;
+                            }
+                            else
+                            {
+                                int deduction = Math.Min(dbUser.Coins, betPerPlayer);
+                                dbUser.Coins -= deduction;
+                                dbUser.Losses += 1;
+                            }
+
+                            dbUser.Level = dbUser.GetCalculatedLevel();
+                            newBalance = dbUser.Coins;
+                            newWins = dbUser.Wins;
+                            newLosses = dbUser.Losses;
+                            calculatedLevel = dbUser.Level;
+                        }
+
+                        if (!string.IsNullOrEmpty(seat.ConnectionId))
+                        {
+                            try
+                            {
+                                await Clients.Client(seat.ConnectionId).SendAsync("MatchFinishedPayout", new
+                                {
+                                    isWinner = isWinner,
+                                    bet = betPerPlayer,
+                                    totalPot = totalPot,
+                                    houseCommission = houseCommission,
+                                    winnerPrize = winnerPrizePerPlayer,
+                                    netGain = isWinner ? (winnerPrizePerPlayer - betPerPlayer) : -betPerPlayer,
+                                    newBalance = newBalance,
+                                    newWins = newWins,
+                                    newLosses = newLosses,
+                                    level = calculatedLevel,
+                                    message = isWinner
+                                        ? $"🏆 ¡Tu equipo ganó la partida 2 vs 2! Te llevas {winnerPrizePerPlayer} monedas. Comisión de sala: {houseCommission / 2} monedas."
+                                        : $"Partida 2 vs 2 finalizada. Se descontaron {betPerPlayer} monedas de tu monedero."
+                                });
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"[ProcessMatchPayout2v2 Send Error] {ex.Message}");
+                            }
+                        }
+                    }
+
+                    await db.SaveChangesAsync();
+
+                    var betRecord = new MatchBetRecord
+                    {
+                        GameId = 0,
+                        PlayerOneName = "Equipo 1 (Azul)",
+                        PlayerTwoName = "Equipo 2 (Rojo)",
+                        BetPerPlayer = betPerPlayer,
+                        TotalPot = totalPot,
+                        HouseCommission = houseCommission,
+                        WinnerPrize = totalPrize,
+                        WinnerUsername = winningTeamOfMatch == 1 ? "Equipo Azul" : "Equipo Rojo",
+                        LoserUsername = winningTeamOfMatch == 1 ? "Equipo Rojo" : "Equipo Azul",
+                        EndReason = reason,
+                        CreatedAt = DateTime.UtcNow
+                    };
+                    db.MatchBetRecords.Add(betRecord);
+                    await db.SaveChangesAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ProcessMatchPayout2v2 Error] {ex.Message}");
             }
         }
 
@@ -2738,7 +2870,21 @@ namespace PericonAPI.Hubs
                             : (isGameOver ? $"¡El Equipo {(winningTeamOfMatch == 1 ? "Azul" : "Rojo")} ha ganado la partida!" : "")
                     });
 
-                    if (!isGameOver)
+                    if (isGameOver)
+                    {
+                        _ = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                await ProcessMatchPayout2v2(roomKey, session, winningTeamOfMatch, "Victoria 2 vs 2 por límite de puntos");
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"[ProcessMatchPayout2v2 PlayCard Error]: {ex}");
+                            }
+                        });
+                    }
+                    else
                     {
                         int nextStarter = (session.LastHandStarter + 1) % 4;
                         _ = Task.Run(async () =>
@@ -2877,7 +3023,21 @@ namespace PericonAPI.Hubs
                 winningTeamOfMatch
             });
 
-            if (reward > 0 && !isGameOver && session != null)
+            if (reward > 0 && isGameOver && session != null)
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await ProcessMatchPayout2v2(roomKey, session, winningTeamOfMatch, "Victoria 2 vs 2 por rechazo de cante");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[ProcessMatchPayout2v2 AnswerStake Error]: {ex}");
+                    }
+                });
+            }
+            else if (reward > 0 && !isGameOver && session != null)
             {
                 int nextStarter = (session.LastHandStarter + 1) % 4;
                 _ = Task.Run(async () =>
@@ -2929,6 +3089,21 @@ namespace PericonAPI.Hubs
             bool isGameOver = false;
             int winningTeam = 0;
 
+            if (session.PointsTeam1 >= 12)
+            {
+                isGameOver = true;
+                winningTeam = 1;
+                session.IsGameOver = true;
+                session.WinningTeam = 1;
+            }
+            else if (session.PointsTeam2 >= 12)
+            {
+                isGameOver = true;
+                winningTeam = 2;
+                session.IsGameOver = true;
+                session.WinningTeam = 2;
+            }
+
             await Clients.Group(roomKey).SendAsync("TumbaPassedNotice2v2", new
             {
                 seatIndex,
@@ -2944,19 +3119,36 @@ namespace PericonAPI.Hubs
                 message = $"El Equipo {(passingTeam == 1 ? "Azul" : "Rojo")} pasó en Tumba (-1 piedra para ellos, +1 para el rival)."
             });
 
-            int nextStarter = (session.LastHandStarter + 1) % 4;
-            _ = Task.Run(async () =>
+            if (isGameOver)
             {
-                try
+                _ = Task.Run(async () =>
                 {
-                    await Task.Delay(2500);
-                    await DealNewHand2v2Static(roomKey, nextStarter);
-                }
-                catch (Exception ex)
+                    try
+                    {
+                        await ProcessMatchPayout2v2(roomKey, session, winningTeam, "Victoria 2 vs 2 por pase en Tumba");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[ProcessMatchPayout2v2 PassTumba Error]: {ex}");
+                    }
+                });
+            }
+            else
+            {
+                int nextStarter = (session.LastHandStarter + 1) % 4;
+                _ = Task.Run(async () =>
                 {
-                    Console.WriteLine($"[DealNewHand2v2 PassTumba Error]: {ex}");
-                }
-            });
+                    try
+                    {
+                        await Task.Delay(2500);
+                        await DealNewHand2v2Static(roomKey, nextStarter);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[DealNewHand2v2 PassTumba Error]: {ex}");
+                    }
+                });
+            }
         }
 
         public async Task AcceptTumba2v2(string roomName, int seatIndex)

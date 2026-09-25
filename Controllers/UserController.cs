@@ -16,10 +16,35 @@ namespace PericonAPI.Controllers
             _context = context;
         }
 
-        [HttpGet("{id}/profile")]
-        public async Task<IActionResult> GetProfile(int id)
+        [HttpGet("{identifier}/profile")]
+        public async Task<IActionResult> GetProfile(string identifier, [FromQuery] string? email = null, [FromQuery] string? username = null)
         {
-            var user = await _context.Users.FindAsync(id);
+            User? user = null;
+            if (int.TryParse(identifier, out int id) && id > 0)
+            {
+                user = await _context.Users.FindAsync(id);
+            }
+
+            if (user == null && !string.IsNullOrWhiteSpace(identifier))
+            {
+                var clean = identifier.Trim().ToLowerInvariant();
+                user = await _context.Users.FirstOrDefaultAsync(u =>
+                    u.Email.ToLower() == clean ||
+                    u.Username.ToLower() == clean);
+            }
+
+            if (user == null && !string.IsNullOrWhiteSpace(email))
+            {
+                var cleanEmail = email.Trim().ToLowerInvariant();
+                user = await _context.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == cleanEmail);
+            }
+
+            if (user == null && !string.IsNullOrWhiteSpace(username))
+            {
+                var cleanUsername = username.Trim().ToLowerInvariant();
+                user = await _context.Users.FirstOrDefaultAsync(u => u.Username.ToLower() == cleanUsername);
+            }
+
             if (user == null)
             {
                 return NotFound(new { message = "Usuario no encontrado." });
@@ -54,10 +79,34 @@ namespace PericonAPI.Controllers
             });
         }
 
+        [HttpGet("profile")]
+        public async Task<IActionResult> GetProfileByQuery([FromQuery] string? id = null, [FromQuery] string? email = null, [FromQuery] string? username = null)
+        {
+            string identifier = id ?? email ?? username ?? "";
+            return await GetProfile(identifier, email, username);
+        }
+
         [HttpPost("record-match")]
         public async Task<IActionResult> RecordMatch([FromBody] RecordMatchDto dto)
         {
-            var user = await _context.Users.FindAsync(dto.UserId);
+            User? user = null;
+            if (dto.UserId > 0)
+            {
+                user = await _context.Users.FindAsync(dto.UserId);
+            }
+
+            if (user == null && !string.IsNullOrWhiteSpace(dto.Email))
+            {
+                var cleanEmail = dto.Email.Trim().ToLowerInvariant();
+                user = await _context.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == cleanEmail);
+            }
+
+            if (user == null && !string.IsNullOrWhiteSpace(dto.Username))
+            {
+                var cleanUsername = dto.Username.Trim().ToLowerInvariant();
+                user = await _context.Users.FirstOrDefaultAsync(u => u.Username.ToLower() == cleanUsername);
+            }
+
             if (user == null)
             {
                 return NotFound(new { message = "Usuario no encontrado." });
@@ -350,6 +399,8 @@ namespace PericonAPI.Controllers
     public class RecordMatchDto
     {
         public int UserId { get; set; }
+        public string? Email { get; set; }
+        public string? Username { get; set; }
         public bool Won { get; set; }
         public int CoinsChange { get; set; } = 0;
     }

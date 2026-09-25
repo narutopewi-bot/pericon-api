@@ -48,7 +48,7 @@ namespace PericonAPI.Controllers
                 PhoneNumber = rawPhone,
                 PasswordHash = passwordHash,
                 Coins = 300,
-                Level = "Aprendiz",
+                Level = "Peón de Casona",
                 Experience = 0,
                 CreatedAt = DateTime.UtcNow,
                 IsActive = true
@@ -64,7 +64,10 @@ namespace PericonAPI.Controllers
                 Email = user.Email,
                 PhoneNumber = user.PhoneNumber,
                 Coins = user.Coins,
-                Level = user.Level,
+                Wins = 0,
+                Losses = 0,
+                WinRate = 0,
+                Level = user.GetCalculatedLevel(),
                 Experience = user.Experience,
                 AvatarUrl = user.AvatarUrl,
                 Message = "Usuario registrado exitosamente."
@@ -114,6 +117,16 @@ namespace PericonAPI.Controllers
                 return BadRequest(new { message = "🚫 Tu cuenta ha sido suspendida por la administración de El Pericón." });
             }
 
+            var totalMatches = user.Wins + user.Losses;
+            var winRate = totalMatches > 0 ? Math.Round((double)user.Wins / totalMatches * 100, 1) : 0;
+            var calculatedLevel = user.GetCalculatedLevel();
+
+            if (user.Level != calculatedLevel)
+            {
+                user.Level = calculatedLevel;
+                await _context.SaveChangesAsync();
+            }
+
             return Ok(new AuthResponseDto
             {
                 Id = user.Id,
@@ -121,7 +134,10 @@ namespace PericonAPI.Controllers
                 Email = user.Email,
                 PhoneNumber = user.PhoneNumber,
                 Coins = user.Coins,
-                Level = user.Level,
+                Wins = user.Wins,
+                Losses = user.Losses,
+                WinRate = winRate,
+                Level = calculatedLevel,
                 Experience = user.Experience,
                 AvatarUrl = user.AvatarUrl,
                 Message = "Inicio de sesión exitoso."
@@ -216,6 +232,16 @@ namespace PericonAPI.Controllers
                 }
             }
 
+            var totalMatches = user.Wins + user.Losses;
+            var winRate = totalMatches > 0 ? Math.Round((double)user.Wins / totalMatches * 100, 1) : 0;
+            var calculatedLevel = user.GetCalculatedLevel();
+
+            if (user.Level != calculatedLevel)
+            {
+                user.Level = calculatedLevel;
+                await _context.SaveChangesAsync();
+            }
+
             return Ok(new AuthResponseDto
             {
                 Id = user.Id,
@@ -223,7 +249,10 @@ namespace PericonAPI.Controllers
                 Email = user.Email,
                 PhoneNumber = user.PhoneNumber,
                 Coins = user.Coins,
-                Level = user.Level,
+                Wins = user.Wins,
+                Losses = user.Losses,
+                WinRate = winRate,
+                Level = calculatedLevel,
                 Experience = user.Experience,
                 AvatarUrl = user.AvatarUrl,
                 Message = "Autenticación con Google exitosa."
@@ -239,6 +268,16 @@ namespace PericonAPI.Controllers
                 return NotFound(new { message = "Usuario no encontrado." });
             }
 
+            var totalMatches = user.Wins + user.Losses;
+            var winRate = totalMatches > 0 ? Math.Round((double)user.Wins / totalMatches * 100, 1) : 0;
+            var calculatedLevel = user.GetCalculatedLevel();
+
+            if (user.Level != calculatedLevel)
+            {
+                user.Level = calculatedLevel;
+                await _context.SaveChangesAsync();
+            }
+
             return Ok(new AuthResponseDto
             {
                 Id = user.Id,
@@ -246,7 +285,10 @@ namespace PericonAPI.Controllers
                 Email = user.Email,
                 PhoneNumber = user.PhoneNumber,
                 Coins = user.Coins,
-                Level = user.Level,
+                Wins = user.Wins,
+                Losses = user.Losses,
+                WinRate = winRate,
+                Level = calculatedLevel,
                 Experience = user.Experience,
                 AvatarUrl = user.AvatarUrl,
                 Message = "Perfil obtenido."
