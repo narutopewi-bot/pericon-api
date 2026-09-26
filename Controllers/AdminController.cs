@@ -896,6 +896,81 @@ namespace PericonAPI.Controllers
 
             return Ok(new { message = $"Se eliminaron {resolved.Count} incidencias resueltas." });
         }
+
+        [HttpPost("reset-season-stats")]
+        public async Task<IActionResult> ResetSeasonStats([FromBody] ResetSeasonDto? dto)
+        {
+            var targetCoins = dto != null && dto.Coins > 0 ? dto.Coins : 500;
+            var users = await _context.Users.ToListAsync();
+            int resetCount = 0;
+
+            foreach (var u in users)
+            {
+                u.Coins = targetCoins;
+                u.Wins = 0;
+                u.Losses = 0;
+                u.Experience = 0;
+                u.Level = "Peón de Casona";
+                resetCount++;
+            }
+
+            if (dto?.ClearMatchHistory == true)
+            {
+                _context.MatchBetRecords.RemoveRange(_context.MatchBetRecords);
+            }
+
+            // Desactivar anuncios anteriores
+            var activeAnnouncements = await _context.SystemAnnouncements.Where(a => a.IsActive).ToListAsync();
+            foreach (var a in activeAnnouncements)
+            {
+                a.IsActive = false;
+            }
+
+            var announcement = new SystemAnnouncement
+            {
+                Title = "🚨 ¡COMIENZA LA ERA DE DINERO REAL! • SALDO INICIAL Y RANKING REINICIADO 🚨",
+                Message = "¡Atención a todos los jugadores de El Pericón! A partir de hoy iniciamos oficialmente las partidas con DINERO REAL. Con motivo del lanzamiento, todos los jugadores han recibido 500 MONEDAS DE SALDO INICIAL y el ranking de victorias se ha reiniciado a cero para una competencia 100% limpia y justa. ¡Recarga desde 800 Bs. por Pago Móvil, compite en mesas 1v1 y 2v2 y retira tus ganancias directo a tu cuenta bancaria! Entra a www.pericon.lat",
+                Type = "alerta",
+                IsActive = true,
+                CreatedAt = DateTime.UtcNow,
+                CreatedBy = "Guardian"
+            };
+            _context.SystemAnnouncements.Add(announcement);
+
+            await _context.SaveChangesAsync();
+
+            // Emitir en vivo por SignalR a todos los jugadores conectados
+            await _hubContext.Clients.All.SendAsync("GlobalAnnouncement", new
+            {
+                id = announcement.Id,
+                title = announcement.Title,
+                message = announcement.Message,
+                type = announcement.Type,
+                createdAt = announcement.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
+                timestamp = DateTime.UtcNow.ToString("HH:mm")
+            });
+
+            return Ok(new
+            {
+                success = true,
+                usersReset = resetCount,
+                coinsSet = targetCoins,
+                message = $"Se reiniciaron con éxito {resetCount} usuarios a {targetCoins} monedas, 0 victorias, ranking en cero y comunicado activo publicado.",
+                announcement = new
+                {
+                    id = announcement.Id,
+                    title = announcement.Title,
+                    message = announcement.Message,
+                    type = announcement.Type
+                }
+            });
+        }
+    }
+
+    public class ResetSeasonDto
+    {
+        public int Coins { get; set; } = 500;
+        public bool ClearMatchHistory { get; set; } = false;
     }
 
     public class CreatePromoDto

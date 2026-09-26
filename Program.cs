@@ -420,6 +420,88 @@ using (var scope = app.Services.CreateScope())
     {
         Console.WriteLine($"[Record136 Fix Error] {ex.Message}");
     }
+
+    // Migración única: Reinicio de Economía y Ranking a Dinero Real (500 Monedas, 0 Victorias, Ranking en cero)
+    try
+    {
+        if (db.Database.IsSqlite())
+        {
+            try { db.Database.ExecuteSqlRaw(@"CREATE TABLE IF NOT EXISTS SystemMigrations (MigrationKey TEXT PRIMARY KEY, AppliedAt TEXT NOT NULL);"); } catch { }
+        }
+        else
+        {
+            try { db.Database.ExecuteSqlRaw(@"CREATE TABLE IF NOT EXISTS ""SystemMigrations"" (""MigrationKey"" VARCHAR(100) PRIMARY KEY, ""AppliedAt"" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW());"); } catch { }
+        }
+
+        bool migrationDone = false;
+        try
+        {
+            using var cmd = db.Database.GetDbConnection().CreateCommand();
+            cmd.CommandText = db.Database.IsSqlite()
+                ? "SELECT COUNT(*) FROM SystemMigrations WHERE MigrationKey = 'SEASON_RESET_DINERO_REAL_500_COINS_V1';"
+                : @"SELECT COUNT(*) FROM ""SystemMigrations"" WHERE ""MigrationKey"" = 'SEASON_RESET_DINERO_REAL_500_COINS_V1';";
+
+            if (db.Database.GetDbConnection().State != System.Data.ConnectionState.Open)
+            {
+                db.Database.OpenConnection();
+            }
+            var countObj = cmd.ExecuteScalar();
+            migrationDone = countObj != null && Convert.ToInt32(countObj) > 0;
+        }
+        catch
+        {
+            migrationDone = false;
+        }
+
+        if (!migrationDone)
+        {
+            Console.WriteLine("[Season Reset] Iniciando migración de Dinero Real: fijando 500 monedas y 0 victorias a todos los usuarios...");
+            var usersToReset = db.Users.ToList();
+            foreach (var u in usersToReset)
+            {
+                u.Coins = 500;
+                u.Wins = 0;
+                u.Losses = 0;
+                u.Experience = 0;
+                u.Level = "Peón de Casona";
+            }
+
+            // Desactivar anuncios anteriores y publicar el aviso oficial de lanzamiento
+            var oldAnnouncements = db.SystemAnnouncements.Where(a => a.IsActive).ToList();
+            foreach (var a in oldAnnouncements)
+            {
+                a.IsActive = false;
+            }
+
+            db.SystemAnnouncements.Add(new SystemAnnouncement
+            {
+                Title = "🚨 ¡COMIENZA LA ERA DE DINERO REAL! • SALDO INICIAL Y RANKING REINICIADO 🚨",
+                Message = "¡Atención a todos los jugadores de El Pericón! A partir de hoy iniciamos oficialmente las partidas con DINERO REAL. Con motivo del lanzamiento, todos los jugadores han recibido 500 MONEDAS DE SALDO INICIAL y el ranking de victorias se ha reiniciado a cero para una competencia 100% limpia y justa. ¡Recarga desde 800 Bs. por Pago Móvil, compite en mesas 1v1 y 2v2 y retira tus ganancias directo a tu cuenta bancaria! Entra a www.pericon.lat",
+                Type = "alerta",
+                IsActive = true,
+                CreatedAt = DateTime.UtcNow,
+                CreatedBy = "Guardian"
+            });
+
+            db.SaveChanges();
+
+            // Marcar la migración como aplicada
+            if (db.Database.IsSqlite())
+            {
+                db.Database.ExecuteSqlRaw("INSERT INTO SystemMigrations (MigrationKey, AppliedAt) VALUES ('SEASON_RESET_DINERO_REAL_500_COINS_V1', datetime('now'));");
+            }
+            else
+            {
+                db.Database.ExecuteSqlRaw(@"INSERT INTO ""SystemMigrations"" (""MigrationKey"", ""AppliedAt"") VALUES ('SEASON_RESET_DINERO_REAL_500_COINS_V1', NOW());");
+            }
+
+            Console.WriteLine($"[Season Reset] Migración completada con éxito para {usersToReset.Count} usuarios.");
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[Season Reset Migration Error] {ex.Message}");
+    }
 }
 
 var uploadsDir = Path.Combine(builder.Environment.ContentRootPath, "wwwroot", "uploads", "receipts");
