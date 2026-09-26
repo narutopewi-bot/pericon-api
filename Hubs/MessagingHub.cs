@@ -1046,9 +1046,13 @@ namespace PericonAPI.Hubs
                 // El llamador de la orden 83 es quien responde. Por tanto, el jugador que salió (lead) es el contrincante:
                 bool leadIsPlayerOne = !isPlayerOne;
 
+                // Capturar el estado de Tumba al inicio de la baza: una mano normal nunca se transforma en mano de Tumba a mitad de baza
+                bool wasInTumbaOne = games[numg].IsTumbaOne;
+                bool wasInTumbaTwo = games[numg].IsTumbaTwo;
+
                 // Verificación de "La Cogía": Si se juega el 10 de Oro (7) y el rival responde con el 1 de Oro (0)
                 // En tumba la cogía NO vale (innecesario adquirir 3 puntos)
-                bool isTumbaMulti = games[numg].IsTumbaOne || games[numg].IsTumbaTwo ||
+                bool isTumbaMulti = wasInTumbaOne || wasInTumbaTwo ||
                                    games[numg].PointsOne >= 9 || games[numg].PointsTwo >= 9 ||
                                    (games[numg].IsTumbaDeParaAtrasOne && games[numg].PointsOne == 8) ||
                                    (games[numg].IsTumbaDeParaAtrasTwo && games[numg].PointsTwo == 8);
@@ -1071,12 +1075,11 @@ namespace PericonAPI.Hubs
 
                 if (isCogida)
                 {
-                    int oldP1 = games[numg].PointsOne;
-                    int oldP2 = games[numg].PointsTwo;
+                    // La Cogía suma +3 piedras inmediatamente al marcador (para cualquier puntaje inicial: 6, 7, 8, etc.).
+                    // NO actualizamos Tumba en este momento: la mano sigue su curso normal y Tumba se activará solo al finalizar la mano.
                     if (cogidaWinner == 1) games[numg].PointsOne += 3;
                     else games[numg].PointsTwo += 3;
-                    games[numg].UpdateTumbaStatus(oldP1, oldP2);
-                    Console.WriteLine($"[La Cogia] ¡Jugador {cogidaWinner} se acredita +3 piedras!");
+                    Console.WriteLine($"[La Cogia] ¡Jugador {cogidaWinner} se acredita +3 piedras! (Puntos actuales: P1={games[numg].PointsOne}, P2={games[numg].PointsTwo})");
                 }
 
                 // DetermineGame1vs1 retorna "1" si la carta de salida (lead) gana, o "0" si la de respuesta gana
@@ -1097,10 +1100,7 @@ namespace PericonAPI.Hubs
                         games[numg].RoundOne = 0; 
                         games[numg].RoundTwo = 0;
 
-                        // Reglas oficiales de Tumba y Obligado:
-                        bool wasInTumbaOne = games[numg].IsTumbaOne;
-                        bool wasInTumbaTwo = games[numg].IsTumbaTwo;
-
+                        // Reglas oficiales de Tumba y Obligado (basadas en el estado al comenzar la mano):
                         bool isP1Winner = false;
                         if (wasInTumbaOne && wasInTumbaTwo)
                         {
@@ -1151,9 +1151,6 @@ namespace PericonAPI.Hubs
                         mdef = (!leadIsPlayerOne) ? "3" : "2"; 
                         games[numg].RoundOne = 0; 
                         games[numg].RoundTwo = 0;
-
-                        bool wasInTumbaOne = games[numg].IsTumbaOne;
-                        bool wasInTumbaTwo = games[numg].IsTumbaTwo;
 
                         bool isP2Winner = false;
                         if (wasInTumbaOne && wasInTumbaTwo)
@@ -3030,8 +3027,12 @@ namespace PericonAPI.Hubs
                     t2Tricks = session.TricksTeam2;
 
                     // Verificación de La Cogía (10 de Oro matado con 1 de Oro de equipo rival)
+                    // Capturar si alguno de los equipos comenzó esta mano en Tumba
+                    bool wasInTumbaT1 = session.IsTumbaTeam1;
+                    bool wasInTumbaT2 = session.IsTumbaTeam2;
+
                     // En tumba la cogía NO vale (innecesario adquirir 3 puntos)
-                    bool isTumba2v2 = session.IsTumbaTeam1 || session.IsTumbaTeam2 ||
+                    bool isTumba2v2 = wasInTumbaT1 || wasInTumbaT2 ||
                                       session.PointsTeam1 >= 9 || session.PointsTeam2 >= 9 ||
                                       (session.IsTumbaDeParaAtrasTeam1 && session.PointsTeam1 == 8) ||
                                       (session.IsTumbaDeParaAtrasTeam2 && session.PointsTeam2 == 8);
@@ -3048,12 +3049,9 @@ namespace PericonAPI.Hubs
                         {
                             isCogida2v2 = true;
                             cogidaTeam = oneTeam; // El equipo que tiene el 1 de Oro siempre gana La Cogía
-                            int oldT1C = session.PointsTeam1;
-                            int oldT2C = session.PointsTeam2;
                             if (cogidaTeam == 1) session.PointsTeam1 += 3;
                             else session.PointsTeam2 += 3;
-                            session.UpdateTumbaStatus(oldT1C, oldT2C);
-                            Console.WriteLine($"[La Cogia 2v2] ¡Equipo {cogidaTeam} se acredita +3 piedras por La Cogía!");
+                            Console.WriteLine($"[La Cogia 2v2] ¡Equipo {cogidaTeam} se acredita +3 piedras por La Cogía! (Puntos actuales: T1={session.PointsTeam1}, T2={session.PointsTeam2})");
                         }
                     }
 
@@ -3071,8 +3069,6 @@ namespace PericonAPI.Hubs
                         int oldT1 = session.PointsTeam1;
                         int oldT2 = session.PointsTeam2;
 
-                        bool wasInTumbaT1 = session.IsTumbaTeam1;
-                        bool wasInTumbaT2 = session.IsTumbaTeam2;
                         bool isObligado = wasInTumbaT1 && wasInTumbaT2;
 
                         if (isObligado)
