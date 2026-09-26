@@ -191,6 +191,19 @@ namespace PericonAPI.Hubs
         private static Dictionary<string, Room2v2Session> rooms2v2 = new Dictionary<string, Room2v2Session>();
         private static readonly object rooms2v2Lock = new object();
 
+        public class Room1v1Session
+        {
+            public string RoomName { get; set; } = string.Empty;
+            public int Bet { get; set; } = 10;
+            public List<Seat2v2> Seats { get; set; } = new List<Seat2v2>();
+            public bool GameStarted { get; set; } = false;
+            public int GameId { get; set; } = 0;
+            public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+        }
+
+        private static Dictionary<string, Room1v1Session> rooms1v1 = new Dictionary<string, Room1v1Session>();
+        private static readonly object rooms1v1Lock = new object();
+
         private static Dictionary<string, GamePlayOneVsOne> solitaireSessions = new Dictionary<string, GamePlayOneVsOne>();
         private static readonly object solitaireLock = new object();
 
@@ -1976,6 +1989,9 @@ namespace PericonAPI.Hubs
                 newGame.ShuffleCards_1vs1();
                 games.Add(newGame);
 
+                await Groups.AddToGroupAsync(p1, $"game1vs1_{newGame.Id}");
+                await Groups.AddToGroupAsync(p2, $"game1vs1_{newGame.Id}");
+
                 Console.WriteLine($"[Matchmaking] Emparejados {p1} ({name1}) vs {p2} ({name2}). Juego: {newGame.Id}");
 
                 GameMessage msgP1 = new GameMessage
@@ -2065,6 +2081,179 @@ namespace PericonAPI.Hubs
                 await Clients.Client(game.IdPOne).SendAsync("TumbaRoundAccepted", notify);
                 await Clients.Client(game.IdPTwo).SendAsync("TumbaRoundAccepted", notify);
             }
+        }
+
+        // ==========================================
+        // SALAS PRIVADAS AMISTOSAS 1 VS 1
+        // ==========================================
+
+        public async Task JoinRoom1v1(string roomName, string playerName, int bet, string userId = "", string avatarUrl = "")
+        {
+            string callerId = Context.ConnectionId;
+            string roomKey = (roomName ?? "sala-1v1").Trim().ToLowerInvariant();
+            if (string.IsNullOrEmpty(playerName) || playerName == "nulo")
+            {
+                playerName = $"Jugador-{callerId.Substring(0, Math.Min(4, callerId.Length))}";
+            }
+
+            Room1v1Session session;
+            Seat2v2? assignedSeat = null;
+            bool shouldStart = false;
+
+            lock (rooms1v1Lock)
+            {
+                if (!rooms1v1.TryGetValue(roomKey, out session!))
+                {
+                    session = new Room1v1Session
+                    {
+                        RoomName = roomName ?? "sala-1v1",
+                        Bet = bet > 0 ? bet : 10
+                    };
+                    rooms1v1[roomKey] = session;
+                }
+
+                // Limpiar desconectados si no ha iniciado la partida (después de 120s)
+                if (!session.GameStarted)
+                {
+                    session.Seats.RemoveAll(s => !s.IsConnected && s.DisconnectedAt.HasValue && (DateTime.UtcNow - s.DisconnectedAt.Value).TotalSeconds > 120);
+                }
+
+                // Buscar si ya existe por ConnectionId o UserId
+                Seat2v2? existing = session.Seats.FirstOrDefault(s => s.ConnectionId == callerId || (!string.IsNullOrEmpty(userId) && s.UserId == userId));
+                if (existing != null)
+                {
+                    existing.ConnectionId = callerId;
+                    existing.IsConnected = true;
+                    existing.Name = playerName;
+                    existing.DisconnectedAt = null;
+                    assignedSeat = existing;
+                }
+                else if (session.Seats.Count < 2)
+                {
+                    int nextSeatIdx = session.Seats.Count == 0 ? 0 : (session.Seats[0].SeatIndex == 0 ? 1 : 0);
+                    assignedSeat = new Seat2v2
+                    {
+                        SeatIndex = nextSeatIdx,
+                        ConnectionId = callerId,
+                        UserId = userId ?? "",
+                        Name = playerName,
+                        AvatarUrl = avatarUrl ?? "",
+                        IsConnected = true
+                    };
+                    session.Seats.Add(assignedSeat);
+                }
+
+                if (session.Seats.Count == 2 && !session.GameStarted)
+                {
+                    session.GameStarted = true;
+                    shouldStart = true;
+                }
+            }
+
+            await Groups.AddToGroupAsync(callerId, roomKey);
+
+            if (assignedSeat == null)
+            {
+                await Clients.Caller.SendAsync("RoomFull1v1", new { message = "La sala 1 vs 1 ya cuenta con 2 jugadores completos." });
+                return;
+            }
+
+            var roomState = new
+            {
+                roomName = session.RoomName,
+                bet = session.Bet,
+                seats = session.Seats.OrderBy(s => s.SeatIndex).ToList(),
+                mySeatIndex = assignedSeat.SeatIndex,
+                isFull = session.Seats.Count >= 2,
+                gameStarted = session.GameStarted
+            };
+
+            await Clients.Group(roomKey).SendAsync("RoomUpdate1v1", roomState);
+
+            if (shouldStart)
+            {
+                var seat0 = session.Seats.First(s => s.SeatIndex == 0);
+                var seat1 = session.Seats.First(s => s.SeatIndex == 1);
+
+                string p1 = seat0.ConnectionId;
+                string p2 = seat1.ConnectionId;
+                string name1 = seat0.Name;
+                string name2 = seat1.Name;
+
+                GamePlayOneVsOne newGame = new GamePlayOneVsOne(p1, p2);
+                newGame.Coins = session.Bet;
+                newGame.NamePOne = name1;
+                newGame.NamePTwo = name2;
+                newGame.UserIdPOne = seat0.UserId;
+                newGame.UserIdPTwo = seat1.UserId;
+
+                Random rng = new Random();
+                int startP = rng.Next(2) == 0 ? 1 : 2;
+                newGame.HandStarter = startP;
+                newGame.PlayerTurn = (startP == 1);
+                newGame.HandCount = 1;
+
+                newGame.Deck.RandomCards();
+                newGame.Id = newGame.GenerateSeed(games);
+                newGame.ShuffleCards_1vs1();
+                games.Add(newGame);
+                session.GameId = newGame.Id;
+
+                await Groups.AddToGroupAsync(p1, $"game1vs1_{newGame.Id}");
+                await Groups.AddToGroupAsync(p2, $"game1vs1_{newGame.Id}");
+
+                Console.WriteLine($"[Room1v1] Partida iniciada en {roomKey}. Juego #{newGame.Id} ({name1} vs {name2})");
+
+                GameMessage msgP1 = new GameMessage
+                {
+                    game = newGame.Id,
+                    order = 99,
+                    content = $"{p1}|{name1}|{p2}|{name2}|1"
+                };
+                GameMessage msgP2 = new GameMessage
+                {
+                    game = newGame.Id,
+                    order = 99,
+                    content = $"{p1}|{name1}|{p2}|{name2}|0"
+                };
+
+                await Clients.Client(p1).SendAsync("MatchFound", msgP1);
+                await Clients.Client(p2).SendAsync("MatchFound", msgP2);
+            }
+        }
+
+        public Task<object> GetRoomInfo(string roomName)
+        {
+            string key = (roomName ?? "").Trim().ToLowerInvariant();
+            if (!key.StartsWith("sala-") && !key.StartsWith("match-"))
+            {
+                key = $"sala-{key}";
+            }
+
+            lock (rooms1v1Lock)
+            {
+                if (rooms1v1.TryGetValue(key, out var s1))
+                {
+                    return Task.FromResult<object>(new { exists = true, mode = "1v1", roomName = s1.RoomName, count = s1.Seats.Count, isFull = s1.Seats.Count >= 2, gameStarted = s1.GameStarted });
+                }
+            }
+
+            lock (rooms2v2Lock)
+            {
+                if (rooms2v2.TryGetValue(key, out var s2))
+                {
+                    return Task.FromResult<object>(new { exists = true, mode = "2v2", roomName = s2.RoomName, count = s2.Seats.Count, isFull = s2.Seats.Count >= 4, gameStarted = s2.GameStarted });
+                }
+            }
+
+            return Task.FromResult<object>(new { exists = false });
+        }
+
+        public async Task JoinVoice1vs1(int gameId, int seatIndex)
+        {
+            string roomKey = $"game1vs1_{gameId}";
+            await Groups.AddToGroupAsync(Context.ConnectionId, roomKey);
+            Console.WriteLine($"[Voice1vs1] Cliente {Context.ConnectionId} unido al canal de voz {roomKey} en asiento {seatIndex}");
         }
 
         // ==========================================
@@ -3248,6 +3437,18 @@ namespace PericonAPI.Hubs
                     }
                 }
 
+                if (string.IsNullOrEmpty(targetConnId))
+                {
+                    lock (rooms1v1Lock)
+                    {
+                        if (rooms1v1.TryGetValue(roomKey, out var session1))
+                        {
+                            var seat = session1.Seats.FirstOrDefault(s => s.SeatIndex == toSeat && s.IsConnected);
+                            targetConnId = seat?.ConnectionId;
+                        }
+                    }
+                }
+
                 if (!string.IsNullOrEmpty(targetConnId))
                 {
                     await Clients.Client(targetConnId).SendAsync("VoiceSignalReceived2v2", fromSeat, toSeat, signalData);
@@ -3282,6 +3483,18 @@ namespace PericonAPI.Hubs
                     }
                 }
 
+                if (string.IsNullOrEmpty(targetConnId))
+                {
+                    lock (rooms1v1Lock)
+                    {
+                        if (rooms1v1.TryGetValue(roomKey, out var session1))
+                        {
+                            var seat = session1.Seats.FirstOrDefault(s => s.SeatIndex == toSeat && s.IsConnected);
+                            targetConnId = seat?.ConnectionId;
+                        }
+                    }
+                }
+
                 if (!string.IsNullOrEmpty(targetConnId))
                 {
                     await Clients.Client(targetConnId).SendAsync("VoiceChunkReceived2v2", fromSeat, toSeat, base64Data);
@@ -3303,6 +3516,36 @@ namespace PericonAPI.Hubs
             lock (solitaireLock)
             {
                 solitaireSessions.Remove(callerId);
+            }
+
+            // Desconexión en salas 1 vs 1
+            List<(string key, Room1v1Session session, Seat2v2? disconnectedSeat)> affectedRooms1v1 = new();
+            lock (rooms1v1Lock)
+            {
+                foreach (var kvp in rooms1v1)
+                {
+                    var seat = kvp.Value.Seats.FirstOrDefault(s => s.ConnectionId == callerId);
+                    if (seat != null)
+                    {
+                        seat.IsConnected = false;
+                        seat.DisconnectedAt = DateTime.UtcNow;
+                        affectedRooms1v1.Add((kvp.Key, kvp.Value, seat));
+                    }
+                }
+            }
+
+            foreach (var (key, session, disconnectedSeat) in affectedRooms1v1)
+            {
+                var roomState = new
+                {
+                    roomName = session.RoomName,
+                    bet = session.Bet,
+                    seats = session.Seats.OrderBy(s => s.SeatIndex).ToList(),
+                    mySeatIndex = -1,
+                    isFull = session.Seats.Count >= 2,
+                    gameStarted = session.GameStarted
+                };
+                await Clients.Group(key).SendAsync("RoomUpdate1v1", roomState);
             }
 
             // Desconexión en salas 2 vs 2
