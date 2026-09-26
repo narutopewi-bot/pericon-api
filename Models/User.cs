@@ -19,8 +19,8 @@ namespace PericonAPI.Models
         [Required]
         public string PasswordHash { get; set; } = string.Empty;
 
-        public int Coins { get; set; } = 300;
-        public int BonusCoins { get; set; } = 300;
+        public int Coins { get; set; } = 200;
+        public int BonusCoins { get; set; } = 200;
 
         public int GetRetirableCoins() => Math.Max(0, Coins - BonusCoins);
 

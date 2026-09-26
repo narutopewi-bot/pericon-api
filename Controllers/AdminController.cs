@@ -1026,7 +1026,7 @@ namespace PericonAPI.Controllers
         [HttpPost("reset-season-stats")]
         public async Task<IActionResult> ResetSeasonStats([FromBody] ResetSeasonDto? dto)
         {
-            var targetCoins = dto != null && dto.Coins > 0 ? dto.Coins : 300;
+            var targetCoins = dto != null && dto.Coins > 0 ? dto.Coins : 200;
             var users = await _context.Users.ToListAsync();
             int resetCount = 0;
 
