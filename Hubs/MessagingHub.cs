@@ -1342,6 +1342,42 @@ namespace PericonAPI.Hubs
         }
 
         /// <summary>
+        /// El jugador activo reclama la victoria porque el rival agotó sus 30 segundos de turno o se desconectó.
+        /// </summary>
+        public async Task ClaimOpponentTimeout1vs1(int gameId)
+        {
+            Console.WriteLine($"[ClaimOpponentTimeout1vs1] Cliente: {Context.ConnectionId}, Juego: {gameId}");
+            int numg = FindGame1vs1(gameId);
+            if (numg < 0 || numg >= games.Count) return;
+            var game = games[numg];
+            if (!game.IsActive) return;
+
+            string caller = Context.ConnectionId;
+            bool callerIsP1 = (caller == game.IdPOne);
+            bool callerIsP2 = (caller == game.IdPTwo);
+            if (!callerIsP1 && !callerIsP2) return;
+
+            string winnerId = caller;
+            string loserId = callerIsP1 ? game.IdPTwo : game.IdPOne;
+
+            // Procesar liquidación otorgando la victoria al jugador activo
+            await ProcessMatchPayout(numg, winnerId, loserId, "AbandonoRival");
+
+            await Clients.Client(winnerId).SendAsync("OpponentSurrendered", new
+            {
+                message = "🏆 ¡Tu contrincante no respondió a tiempo y abandonó la partida! Has ganado la partida."
+            });
+
+            if (!string.IsNullOrEmpty(loserId))
+            {
+                await Clients.Client(loserId).SendAsync("YouSurrendered", new
+                {
+                    message = "Partida perdida por tiempo agotado o desconexión."
+                });
+            }
+        }
+
+        /// <summary>
         /// Liquida las apuestas de la partida 1 vs 1:
         /// - Descuenta la apuesta al perdedor.
         /// - Retiene el 20% de comisión para la casa/administrador.
@@ -3607,6 +3643,29 @@ namespace PericonAPI.Hubs
             lock (solitaireLock)
             {
                 solitaireSessions.Remove(callerId);
+            }
+
+            // Notificar desconexión inmediata al oponente en partidas 1 vs 1 activas
+            lock (games)
+            {
+                for (int i = 0; i < games.Count; i++)
+                {
+                    var g = games[i];
+                    if (g.IsActive && (g.IdPOne == callerId || g.IdPTwo == callerId))
+                    {
+                        string oppId = (g.IdPOne == callerId) ? g.IdPTwo : g.IdPOne;
+                        string discName = (g.IdPOne == callerId) ? g.NamePOne : g.NamePTwo;
+                        if (!string.IsNullOrEmpty(oppId))
+                        {
+                            _ = Clients.Client(oppId).SendAsync("OpponentDisconnectedNotice1vs1", new
+                            {
+                                gameId = g.Id,
+                                disconnectedPlayerName = discName,
+                                disconnectedConnectionId = callerId
+                            });
+                        }
+                    }
+                }
             }
 
             // Desconexión en salas 1 vs 1
