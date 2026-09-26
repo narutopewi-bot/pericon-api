@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using PericonAPI.Classes;
 using PericonAPI.Data;
 using PericonAPI.Hubs;
 using PericonAPI.Models;
@@ -89,6 +90,8 @@ builder.Services.AddCors(options =>
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddHttpClient();
+builder.Services.AddScoped<INotificationService, NotificationService>();
 
 var app = builder.Build();
 

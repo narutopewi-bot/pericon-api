@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using PericonAPI.Classes;
 using PericonAPI.Data;
 using PericonAPI.Models;
 
@@ -11,11 +12,13 @@ namespace PericonAPI.Controllers
     {
         private readonly AppDbContext _context;
         private readonly IWebHostEnvironment _env;
+        private readonly INotificationService _notificationService;
 
-        public PaymentController(AppDbContext context, IWebHostEnvironment env)
+        public PaymentController(AppDbContext context, IWebHostEnvironment env, INotificationService notificationService)
         {
             _context = context;
             _env = env;
+            _notificationService = notificationService;
         }
 
         [HttpPost("report")]
@@ -74,6 +77,14 @@ namespace PericonAPI.Controllers
 
             _context.PaymentRecharges.Add(recharge);
             await _context.SaveChangesAsync();
+
+            _ = _notificationService.SendRechargeNotificationAsync(
+                user.Username,
+                recharge.AmountBs,
+                recharge.CoinsAmount,
+                recharge.Reference,
+                recharge.ReceiptImageUrl
+            );
 
             return Ok(new
             {
@@ -154,6 +165,14 @@ namespace PericonAPI.Controllers
 
             _context.PaymentRecharges.Add(recharge);
             await _context.SaveChangesAsync();
+
+            _ = _notificationService.SendRechargeNotificationAsync(
+                user.Username,
+                recharge.AmountBs,
+                recharge.CoinsAmount,
+                recharge.Reference,
+                recharge.ReceiptImageUrl
+            );
 
             return Ok(new
             {
@@ -257,6 +276,15 @@ namespace PericonAPI.Controllers
 
             _context.PaymentWithdrawals.Add(withdrawal);
             await _context.SaveChangesAsync();
+
+            _ = _notificationService.SendWithdrawalNotificationAsync(
+                user.Username,
+                withdrawal.AmountBs,
+                withdrawal.CoinsAmount,
+                withdrawal.BankName,
+                withdrawal.PhoneNumber,
+                withdrawal.IdCard
+            );
 
             return Ok(new
             {
