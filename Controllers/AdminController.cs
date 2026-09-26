@@ -46,6 +46,17 @@ namespace PericonAPI.Controllers
             var totalMatchesFinished = matchRecords.Count;
             var totalCoinsWagered = matchRecords.Sum(m => m.TotalPot);
 
+            var botMatches = await _context.BotMatchRecords.ToListAsync();
+            var totalBotMatches = botMatches.Count;
+            var totalBotCoinsWagered = botMatches.Sum(m => m.BetAmount);
+            var totalBotHouseProfit = botMatches.Sum(m => m.HouseProfit);
+            var totalBotUserWins = botMatches.Count(m => m.UserWon);
+            var totalBotWins = botMatches.Count(m => !m.UserWon);
+
+            var combinedTotalMatches = totalMatchesFinished + totalBotMatches;
+            var combinedCoinsWagered = totalCoinsWagered + totalBotCoinsWagered;
+            var combinedHouseProfit = totalHouseCommissions + totalBotHouseProfit;
+
             return Ok(new
             {
                 totalUsers,
@@ -58,7 +69,15 @@ namespace PericonAPI.Controllers
                 totalBsWithdrawn,
                 totalHouseCommissions,
                 totalMatchesFinished,
-                totalCoinsWagered
+                totalCoinsWagered,
+                totalBotMatches,
+                totalBotCoinsWagered,
+                totalBotHouseProfit,
+                totalBotUserWins,
+                totalBotWins,
+                combinedTotalMatches,
+                combinedCoinsWagered,
+                combinedHouseProfit
             });
         }
 
@@ -86,6 +105,96 @@ namespace PericonAPI.Controllers
                 .ToListAsync();
 
             return Ok(matches);
+        }
+
+        [HttpGet("bot-matches")]
+        public async Task<IActionResult> GetBotMatches([FromQuery] string? search, [FromQuery] string? filter)
+        {
+            var query = _context.BotMatchRecords.AsQueryable();
+
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                var cleanSearch = search.Trim().ToLowerInvariant();
+                query = query.Where(m => m.Username.ToLower().Contains(cleanSearch) || m.BotName.ToLower().Contains(cleanSearch));
+            }
+
+            if (!string.IsNullOrWhiteSpace(filter))
+            {
+                if (filter.ToLower() == "user_won") query = query.Where(m => m.UserWon);
+                else if (filter.ToLower() == "bot_won") query = query.Where(m => !m.UserWon);
+            }
+
+            var allList = await _context.BotMatchRecords.ToListAsync();
+            var totalBotMatches = allList.Count;
+            var userWinsCount = allList.Count(m => m.UserWon);
+            var botWinsCount = allList.Count(m => !m.UserWon);
+            var userWinRate = totalBotMatches > 0 ? Math.Round((double)userWinsCount / totalBotMatches * 100, 1) : 0;
+            var botWinRate = totalBotMatches > 0 ? Math.Round((double)botWinsCount / totalBotMatches * 100, 1) : 0;
+            var totalCoinsWagered = allList.Sum(m => m.BetAmount);
+            var totalCoinsWonByUser = allList.Sum(m => m.CoinsWon);
+            var totalCoinsWonByHouse = allList.Sum(m => m.CoinsLost);
+            var netHouseProfit = allList.Sum(m => m.HouseProfit);
+
+            var matches = await query
+                .OrderByDescending(m => m.CreatedAt)
+                .Take(200)
+                .Select(m => new
+                {
+                    id = m.Id,
+                    userId = m.UserId,
+                    username = m.Username,
+                    botName = m.BotName,
+                    betAmount = m.BetAmount,
+                    userWon = m.UserWon,
+                    coinsWon = m.CoinsWon,
+                    coinsLost = m.CoinsLost,
+                    houseProfit = m.HouseProfit,
+                    userCoinsBefore = m.UserCoinsBefore,
+                    userCoinsAfter = m.UserCoinsAfter,
+                    endReason = m.EndReason,
+                    createdAt = m.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")
+                })
+                .ToListAsync();
+
+            return Ok(new
+            {
+                summary = new
+                {
+                    totalBotMatches,
+                    userWinsCount,
+                    botWinsCount,
+                    userWinRate,
+                    botWinRate,
+                    totalCoinsWagered,
+                    totalCoinsWonByUser,
+                    totalCoinsWonByHouse,
+                    netHouseProfit
+                },
+                matches
+            });
+        }
+
+        [HttpPost("matches/reset-history")]
+        public async Task<IActionResult> ResetMatchHistory()
+        {
+            var pvpMatches = await _context.MatchBetRecords.ToListAsync();
+            var botMatches = await _context.BotMatchRecords.ToListAsync();
+
+            int pvpCount = pvpMatches.Count;
+            int botCount = botMatches.Count;
+
+            _context.MatchBetRecords.RemoveRange(pvpMatches);
+            _context.BotMatchRecords.RemoveRange(botMatches);
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                success = true,
+                message = $"Panel reiniciado a CERO con éxito. Se eliminaron {pvpCount} partidas multijugador y {botCount} partidas contra el Bot. Las estadísticas y ganancias arrancan desde cero a partir de la próxima jugada.",
+                pvpDeleted = pvpCount,
+                botDeleted = botCount
+            });
         }
 
         [HttpPost("matches/{id}/set-sala-commission")]
@@ -529,6 +638,11 @@ namespace PericonAPI.Controllers
             var totalWagered = matches.Sum(m => m.TotalPot);
             var totalMatches = matches.Count;
 
+            var botMatches = await _context.BotMatchRecords.ToListAsync();
+            var totalBotMatches = botMatches.Count;
+            var totalBotWagered = botMatches.Sum(m => m.BetAmount);
+            var totalBotHouseProfit = botMatches.Sum(m => m.HouseProfit);
+
             var userCoinsInCirculation = await _context.Users.SumAsync(u => u.Coins);
 
             return Ok(new
@@ -543,6 +657,10 @@ namespace PericonAPI.Controllers
                     totalCommissionsCollected = totalCommissions,
                     totalMatchesPlayed = totalMatches,
                     totalCoinsWagered = totalWagered,
+                    totalBotMatchesPlayed = totalBotMatches,
+                    totalBotCoinsWagered = totalBotWagered,
+                    totalBotHouseProfit = totalBotHouseProfit,
+                    totalCombinedProfit = totalCommissions + totalBotHouseProfit,
                     pendingRechargesCount,
                     pendingWithdrawalsCount
                 }
@@ -918,6 +1036,7 @@ namespace PericonAPI.Controllers
             if (dto?.ClearMatchHistory == true)
             {
                 _context.MatchBetRecords.RemoveRange(_context.MatchBetRecords);
+                _context.BotMatchRecords.RemoveRange(_context.BotMatchRecords);
             }
 
             // Desactivar anuncios anteriores

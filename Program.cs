@@ -229,6 +229,28 @@ using (var scope = app.Services.CreateScope())
             ");
         }
         catch { }
+
+        try
+        {
+            db.Database.ExecuteSqlRaw(@"
+                CREATE TABLE IF NOT EXISTS BotMatchRecords (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    UserId INTEGER NOT NULL,
+                    Username TEXT NOT NULL,
+                    BotName TEXT NOT NULL,
+                    BetAmount INTEGER NOT NULL,
+                    UserWon INTEGER NOT NULL,
+                    CoinsWon INTEGER NOT NULL,
+                    CoinsLost INTEGER NOT NULL,
+                    HouseProfit INTEGER NOT NULL,
+                    UserCoinsBefore INTEGER NOT NULL,
+                    UserCoinsAfter INTEGER NOT NULL,
+                    EndReason TEXT NOT NULL,
+                    CreatedAt TEXT NOT NULL
+                );
+            ");
+        }
+        catch { }
     }
     else
     {
@@ -296,6 +318,35 @@ using (var scope = app.Services.CreateScope())
                     ""CreatedBy"" VARCHAR(100) NULL
                 );
             ");
+        }
+        catch { }
+
+        try
+        {
+            db.Database.ExecuteSqlRaw(@"
+                CREATE TABLE IF NOT EXISTS ""BotMatchRecords"" (
+                    ""Id"" SERIAL PRIMARY KEY,
+                    ""UserId"" INT NOT NULL,
+                    ""Username"" VARCHAR(150) NOT NULL,
+                    ""BotName"" VARCHAR(150) NOT NULL,
+                    ""BetAmount"" INT NOT NULL,
+                    ""UserWon"" BOOLEAN NOT NULL,
+                    ""CoinsWon"" INT NOT NULL,
+                    ""CoinsLost"" INT NOT NULL,
+                    ""HouseProfit"" INT NOT NULL,
+                    ""UserCoinsBefore"" INT NOT NULL,
+                    ""UserCoinsAfter"" INT NOT NULL,
+                    ""EndReason"" TEXT NOT NULL,
+                    ""CreatedAt"" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+                );
+            ");
+        }
+        catch { }
+
+        try
+        {
+            // Limpieza de partidas de prueba históricas para el reinicio oficial del panel a cero
+            db.Database.ExecuteSqlRaw(@"DELETE FROM ""MatchBetRecords"" WHERE ""CreatedAt"" < '2026-09-26 12:00:00+00';");
         }
         catch { }
     }

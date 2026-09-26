@@ -114,18 +114,53 @@ namespace PericonAPI.Controllers
                 return NotFound(new { message = "Usuario no encontrado." });
             }
 
+            int bet = dto.BetAmount > 0 ? dto.BetAmount : Math.Abs(dto.CoinsChange);
+            if (bet <= 0) bet = 100;
+
+            int coinsBefore = user.Coins;
+            int coinsWon = 0;
+            int coinsLost = 0;
+            int houseProfit = 0;
+
             if (dto.Won)
             {
                 user.Wins += 1;
+                user.Coins += bet;
+                coinsWon = bet;
+                coinsLost = 0;
+                houseProfit = -bet; // La casa pagó el premio
             }
             else
             {
                 user.Losses += 1;
+                int lossDeduction = Math.Min(user.Coins, bet);
+                user.Coins -= lossDeduction;
+                // Billetera Dual: consumir saldo de cortesía primero
+                user.BonusCoins = Math.Max(0, user.BonusCoins - lossDeduction);
+                coinsWon = 0;
+                coinsLost = lossDeduction;
+                houseProfit = lossDeduction; // La casa retuvo la apuesta
             }
 
-            user.Coins = Math.Max(0, user.Coins + dto.CoinsChange);
             user.Level = user.GetCalculatedLevel();
 
+            var botRecord = new BotMatchRecord
+            {
+                UserId = user.Id,
+                Username = user.Username,
+                BotName = !string.IsNullOrWhiteSpace(dto.BotName) ? dto.BotName : "Pericón (Bot IA)",
+                BetAmount = bet,
+                UserWon = dto.Won,
+                CoinsWon = coinsWon,
+                CoinsLost = coinsLost,
+                HouseProfit = houseProfit,
+                UserCoinsBefore = coinsBefore,
+                UserCoinsAfter = user.Coins,
+                EndReason = !string.IsNullOrWhiteSpace(dto.EndReason) ? dto.EndReason : (dto.Won ? "Victoria del Jugador" : "Victoria de la Máquina"),
+                CreatedAt = DateTime.UtcNow
+            };
+
+            _context.BotMatchRecords.Add(botRecord);
             await _context.SaveChangesAsync();
 
             var totalMatches = user.Wins + user.Losses;
@@ -136,6 +171,8 @@ namespace PericonAPI.Controllers
                 id = user.Id,
                 username = user.Username,
                 coins = user.Coins,
+                bonusCoins = user.BonusCoins,
+                retirableCoins = user.GetRetirableCoins(),
                 wins = user.Wins,
                 losses = user.Losses,
                 totalMatches,
@@ -405,6 +442,9 @@ namespace PericonAPI.Controllers
         public string? Username { get; set; }
         public bool Won { get; set; }
         public int CoinsChange { get; set; } = 0;
+        public int BetAmount { get; set; } = 0;
+        public string? EndReason { get; set; }
+        public string? BotName { get; set; }
     }
 
     public class ClaimDailyDto
