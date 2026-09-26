@@ -169,8 +169,13 @@ namespace PericonAPI.Classes
         {
             try
             {
+                string cleanPhone = phone.Trim().Replace(" ", "").Replace("-", "");
+                if (!cleanPhone.StartsWith("+"))
+                {
+                    cleanPhone = "+" + cleanPhone;
+                }
                 string encoded = Uri.EscapeDataString(message);
-                string url = $"https://api.callmebot.com/whatsapp.php?phone={phone}&text={encoded}&apikey={apiKey}";
+                string url = $"https://api.callmebot.com/whatsapp.php?phone={cleanPhone}&text={encoded}&apikey={apiKey}";
                 var response = await _httpClient.GetAsync(url);
                 _logger.LogInformation("WhatsApp CallMeBot response status: {StatusCode}", response.StatusCode);
             }
