@@ -396,6 +396,27 @@ using (var scope = app.Services.CreateScope())
     {
         Console.WriteLine($"[PromoCode Error] {ex.Message}");
     }
+
+    // Corregir partidas de Salas en MatchBetRecords (por ejemplo #136) para que reflejen 100% de comisión para la casa
+    try
+    {
+        var record136 = db.MatchBetRecords.FirstOrDefault(r => r.Id == 136);
+        if (record136 != null && record136.TotalPot == 20 && record136.HouseCommission == 4)
+        {
+            record136.HouseCommission = 20;
+            record136.WinnerPrize = 0;
+            if (!record136.EndReason.StartsWith("[SALA"))
+            {
+                record136.EndReason = $"[SALA 100%] {record136.EndReason}";
+            }
+            db.SaveChanges();
+            Console.WriteLine("[Database] Partida #136 actualizada con comisión de sala del 100% (+20 monedas para la casa).");
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[Record136 Fix Error] {ex.Message}");
+    }
 }
 
 var uploadsDir = Path.Combine(builder.Environment.ContentRootPath, "wwwroot", "uploads", "receipts");

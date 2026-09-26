@@ -38,6 +38,8 @@ namespace PericonAPI.Models
         public string InitHand {  get; set; }
         public bool ChoiceTurn { get; set; }
         public int Coins { get; set; } = 10;
+        public string RoomName { get; set; } = string.Empty;
+        public bool IsFriendlyRoom { get; set; } = false;
 
         public GamePlayOneVsOne()
         {

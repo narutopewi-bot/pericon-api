@@ -138,6 +138,7 @@ namespace PericonAPI.Hubs
         {
             public string RoomName { get; set; } = string.Empty;
             public int Bet { get; set; } = 100;
+            public int GameId { get; set; } = 0;
             public List<Seat2v2> Seats { get; set; } = new List<Seat2v2>();
             public bool GameStarted { get; set; } = false;
             public bool IsStarting { get; set; } = false;
@@ -562,6 +563,8 @@ namespace PericonAPI.Hubs
             string name2 = !string.IsNullOrEmpty(QTwo.Name) && !QTwo.Name.StartsWith("Jugador-") ? QTwo.Name : (QTwo.Name ?? "Jugador 2");
             newgame.NamePOne = name1;
             newgame.NamePTwo = name2;
+            newgame.RoomName = $"match-{newgame.Id}";
+            newgame.IsFriendlyRoom = false;
 
             // Sorteo de mano inicial 50% / 50%
             Random rng = new Random();
@@ -1353,10 +1356,33 @@ namespace PericonAPI.Hubs
             if (!game.IsActive) return; // Evitar doble liquidación si ya se procesó
             game.IsActive = false;
 
+            bool isSala = game.IsFriendlyRoom 
+                || (!string.IsNullOrEmpty(game.RoomName) && game.RoomName.StartsWith("sala-", StringComparison.OrdinalIgnoreCase));
+            if (!isSala)
+            {
+                lock (rooms1v1Lock)
+                {
+                    isSala = rooms1v1.Values.Any(s => s.GameId == game.Id);
+                }
+            }
+
             int bet = game.Coins > 0 ? game.Coins : 10;
             int totalPot = bet * 2;
-            int houseCommission = (int)Math.Round(totalPot * 0.20); // 20% retenido por la plataforma
-            int winnerPrize = totalPot - houseCommission;           // 80% que se lleva el ganador
+            int houseCommission;
+            int winnerPrize;
+
+            if (isSala)
+            {
+                // En salas privadas (amistosas): Todo el dinero recaudado de la tarifa de sala va para la casa (Administrador)
+                houseCommission = totalPot;
+                winnerPrize = 0;
+            }
+            else
+            {
+                // En duelos de emparejamiento público: 20% para la casa, 80% para el ganador
+                houseCommission = (int)Math.Round(totalPot * 0.20);
+                winnerPrize = totalPot - houseCommission;
+            }
 
             int winnerNewCoins = 0;
             int loserNewCoins = 0;
@@ -1422,8 +1448,18 @@ namespace PericonAPI.Hubs
 
                     if (dbWinner != null)
                     {
-                        int netWinnerGain = Math.Max(0, winnerPrize - bet);
-                        dbWinner.Coins += netWinnerGain;
+                        if (isSala)
+                        {
+                            // En sala, ambos jugadores pagan la tarifa de sala de entrada (10 monedas) para la casa
+                            int winnerDeduction = Math.Min(dbWinner.Coins, bet);
+                            dbWinner.Coins -= winnerDeduction;
+                        }
+                        else
+                        {
+                            int netWinnerGain = Math.Max(0, winnerPrize - bet);
+                            dbWinner.Coins += netWinnerGain;
+                        }
+
                         dbWinner.Wins += 1;
                         dbWinner.Level = dbWinner.GetCalculatedLevel();
                         winnerNewCoins = dbWinner.Coins;
@@ -1434,7 +1470,14 @@ namespace PericonAPI.Hubs
                     }
                     else
                     {
-                        winnerPlayer.Coins = Math.Max(0, winnerPlayer.Coins + (winnerPrize - bet));
+                        if (isSala)
+                        {
+                            winnerPlayer.Coins = Math.Max(0, winnerPlayer.Coins - bet);
+                        }
+                        else
+                        {
+                            winnerPlayer.Coins = Math.Max(0, winnerPlayer.Coins + (winnerPrize - bet));
+                        }
                         winnerNewCoins = winnerPlayer.Coins;
                         winnerWins = 1;
                         winnerLosses = 0;
@@ -1453,13 +1496,13 @@ namespace PericonAPI.Hubs
                             WinnerPrize = winnerPrize,
                             WinnerUsername = dbWinner?.Username ?? winnerName,
                             LoserUsername = dbLoser?.Username ?? loserName,
-                            EndReason = reason,
+                            EndReason = isSala ? $"[SALA 100%] {reason}" : reason,
                             CreatedAt = DateTime.UtcNow
                         };
                         db.MatchBetRecords.Add(betRecord);
                         await db.SaveChangesAsync();
 
-                        GameLogger.Log(game.Id, "ProcessMatchPayout", $"Ganador={dbWinner?.Username ?? winnerName} (Saldo={winnerNewCoins}), Perdedor={dbLoser?.Username ?? loserName} (Saldo={loserNewCoins}), Premio={winnerPrize}, Casa={houseCommission}, Razon={reason}");
+                        GameLogger.Log(game.Id, "ProcessMatchPayout", $"[{(isSala ? "SALA 100%" : "DUELO 20%")}] Ganador={dbWinner?.Username ?? winnerName} (Saldo={winnerNewCoins}), Perdedor={dbLoser?.Username ?? loserName} (Saldo={loserNewCoins}), Premio={winnerPrize}, Casa={houseCommission}, Razon={reason}");
                     }
                 }
             }
@@ -1471,24 +1514,34 @@ namespace PericonAPI.Hubs
             // Notificar SIEMPRE a ambos jugadores para que vean su pantalla final y monedas
             try
             {
+                string winnerMessage = isSala
+                    ? $"🏆 ¡Ganaste la partida en sala privada! Tarifa de sala ({bet} monedas) abonada a la plataforma."
+                    : $"🏆 ¡Ganaste la partida! Te llevas {winnerPrize} monedas (80% del pozo de {totalPot}). Comisión de sala (20%): {houseCommission} monedas.";
+
+                string loserMessage = isSala
+                    ? $"Partida en sala privada finalizada. Tarifa de sala ({bet} monedas) abonada a la plataforma."
+                    : $"Partida finalizada. Se descontaron {bet} monedas de tu monedero.";
+
                 await Clients.Client(winnerConnectionId).SendAsync("MatchFinishedPayout", new
                 {
                     isWinner = true,
+                    isSala = isSala,
                     bet = bet,
                     totalPot = totalPot,
                     houseCommission = houseCommission,
                     winnerPrize = winnerPrize,
-                    netGain = winnerPrize - bet,
+                    netGain = isSala ? -bet : (winnerPrize - bet),
                     newBalance = winnerNewCoins,
                     newWins = winnerWins,
                     newLosses = winnerLosses,
                     level = winnerLevel,
-                    message = $"🏆 ¡Ganaste la partida! Te llevas {winnerPrize} monedas (80% del pozo de {totalPot}). Comisión de sala (20%): {houseCommission} monedas."
+                    message = winnerMessage
                 });
 
                 await Clients.Client(loserConnectionId).SendAsync("MatchFinishedPayout", new
                 {
                     isWinner = false,
+                    isSala = isSala,
                     bet = bet,
                     totalPot = totalPot,
                     houseCommission = houseCommission,
@@ -1498,7 +1551,7 @@ namespace PericonAPI.Hubs
                     newWins = loserWins,
                     newLosses = loserLosses,
                     level = loserLevel,
-                    message = $"Partida finalizada. Se descontaron {bet} monedas de tu monedero."
+                    message = loserMessage
                 });
             }
             catch (Exception ex)
@@ -1514,11 +1567,28 @@ namespace PericonAPI.Hubs
         {
             if (session == null || session.Seats.Count < 4) return;
 
+            bool isSala2v2 = (session.RoomName != null && session.RoomName.StartsWith("sala-", StringComparison.OrdinalIgnoreCase))
+                          || (roomKey != null && roomKey.StartsWith("sala-", StringComparison.OrdinalIgnoreCase));
+
             int betPerPlayer = Math.Max(10, session.Bet);
             int totalPot = betPerPlayer * 4;
-            int houseCommission = (int)Math.Round(totalPot * 0.20);
-            int totalPrize = totalPot - houseCommission;
-            int winnerPrizePerPlayer = totalPrize / 2;
+            int houseCommission;
+            int totalPrize;
+            int winnerPrizePerPlayer;
+
+            if (isSala2v2)
+            {
+                // En salas 2v2: 100% de la tarifa recaudada va para la casa (4 jugadores * betPerPlayer = totalPot)
+                houseCommission = totalPot;
+                totalPrize = 0;
+                winnerPrizePerPlayer = 0;
+            }
+            else
+            {
+                houseCommission = (int)Math.Round(totalPot * 0.20);
+                totalPrize = totalPot - houseCommission;
+                winnerPrizePerPlayer = totalPrize / 2;
+            }
 
             try
             {
@@ -1543,8 +1613,16 @@ namespace PericonAPI.Hubs
                         {
                             if (isWinner)
                             {
-                                int netGain = Math.Max(0, winnerPrizePerPlayer - betPerPlayer);
-                                dbUser.Coins += netGain;
+                                if (isSala2v2)
+                                {
+                                    int deduction = Math.Min(dbUser.Coins, betPerPlayer);
+                                    dbUser.Coins -= deduction;
+                                }
+                                else
+                                {
+                                    int netGain = Math.Max(0, winnerPrizePerPlayer - betPerPlayer);
+                                    dbUser.Coins += netGain;
+                                }
                                 dbUser.Wins += 1;
                             }
                             else
@@ -1565,21 +1643,28 @@ namespace PericonAPI.Hubs
                         {
                             try
                             {
+                                string seatMsg = isWinner
+                                    ? (isSala2v2
+                                        ? $"🏆 ¡Tu equipo ganó la partida en sala privada! Tarifa de sala ({betPerPlayer} monedas) abonada a la plataforma."
+                                        : $"🏆 ¡Tu equipo ganó la partida 2 vs 2! Te llevas {winnerPrizePerPlayer} monedas. Comisión de sala: {houseCommission / 2} monedas.")
+                                    : (isSala2v2
+                                        ? $"Partida en sala privada 2 vs 2 finalizada. Tarifa de sala ({betPerPlayer} monedas) abonada a la plataforma."
+                                        : $"Partida 2 vs 2 finalizada. Se descontaron {betPerPlayer} monedas de tu monedero.");
+
                                 await Clients.Client(seat.ConnectionId).SendAsync("MatchFinishedPayout", new
                                 {
                                     isWinner = isWinner,
+                                    isSala = isSala2v2,
                                     bet = betPerPlayer,
                                     totalPot = totalPot,
                                     houseCommission = houseCommission,
                                     winnerPrize = winnerPrizePerPlayer,
-                                    netGain = isWinner ? (winnerPrizePerPlayer - betPerPlayer) : -betPerPlayer,
+                                    netGain = isWinner ? (isSala2v2 ? -betPerPlayer : (winnerPrizePerPlayer - betPerPlayer)) : -betPerPlayer,
                                     newBalance = newBalance,
                                     newWins = newWins,
                                     newLosses = newLosses,
                                     level = calculatedLevel,
-                                    message = isWinner
-                                        ? $"🏆 ¡Tu equipo ganó la partida 2 vs 2! Te llevas {winnerPrizePerPlayer} monedas. Comisión de sala: {houseCommission / 2} monedas."
-                                        : $"Partida 2 vs 2 finalizada. Se descontaron {betPerPlayer} monedas de tu monedero."
+                                    message = seatMsg
                                 });
                             }
                             catch (Exception ex)
@@ -1593,7 +1678,7 @@ namespace PericonAPI.Hubs
 
                     var betRecord = new MatchBetRecord
                     {
-                        GameId = 0,
+                        GameId = session.GameId,
                         PlayerOneName = "Equipo 1 (Azul)",
                         PlayerTwoName = "Equipo 2 (Rojo)",
                         BetPerPlayer = betPerPlayer,
@@ -1602,11 +1687,13 @@ namespace PericonAPI.Hubs
                         WinnerPrize = totalPrize,
                         WinnerUsername = winningTeamOfMatch == 1 ? "Equipo Azul" : "Equipo Rojo",
                         LoserUsername = winningTeamOfMatch == 1 ? "Equipo Rojo" : "Equipo Azul",
-                        EndReason = reason,
+                        EndReason = isSala2v2 ? $"[SALA 100%] {reason}" : reason,
                         CreatedAt = DateTime.UtcNow
                     };
                     db.MatchBetRecords.Add(betRecord);
                     await db.SaveChangesAsync();
+
+                    GameLogger.Log(session.GameId, "ProcessMatchPayout2v2", $"[{(isSala2v2 ? "SALA 2v2 100%" : "DUELO 2v2 20%")}] Equipo Ganador={winningTeamOfMatch}, Pozo={totalPot}, Casa={houseCommission}, Razon={reason}");
                 }
             }
             catch (Exception ex)
@@ -1968,6 +2055,8 @@ namespace PericonAPI.Hubs
                 newGame.NamePTwo = name2;
                 newGame.UserIdPOne = matchedPlayer.UserId ?? "";
                 newGame.UserIdPTwo = userId ?? "";
+                newGame.RoomName = $"match-{newGame.Id}";
+                newGame.IsFriendlyRoom = false;
 
                 lock (users)
                 {
@@ -2186,6 +2275,8 @@ namespace PericonAPI.Hubs
                 newGame.NamePTwo = name2;
                 newGame.UserIdPOne = seat0.UserId;
                 newGame.UserIdPTwo = seat1.UserId;
+                newGame.RoomName = session.RoomName;
+                newGame.IsFriendlyRoom = session.RoomName.StartsWith("sala-", StringComparison.OrdinalIgnoreCase);
 
                 Random rng = new Random();
                 int startP = rng.Next(2) == 0 ? 1 : 2;

@@ -88,6 +88,22 @@ namespace PericonAPI.Controllers
             return Ok(matches);
         }
 
+        [HttpPost("matches/{id}/set-sala-commission")]
+        public async Task<IActionResult> SetSalaCommission(int id)
+        {
+            var match = await _context.MatchBetRecords.FindAsync(id);
+            if (match == null) return NotFound(new { success = false, message = "Partida no encontrada." });
+
+            match.HouseCommission = match.TotalPot;
+            match.WinnerPrize = 0;
+            if (!match.EndReason.StartsWith("[SALA"))
+            {
+                match.EndReason = $"[SALA 100%] {match.EndReason}";
+            }
+            await _context.SaveChangesAsync();
+            return Ok(new { success = true, message = $"Partida #{id} actualizada con comisión del 100% (+🪙 {match.TotalPot} para la casa)." });
+        }
+
         [HttpGet("recharges")]
         public async Task<IActionResult> GetRecharges([FromQuery] string? status)
         {
