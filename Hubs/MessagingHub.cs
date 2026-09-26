@@ -1816,9 +1816,18 @@ namespace PericonAPI.Hubs
         // Movimientos nuevos
         // 
 
-        // Comienzo del juego: el usuario comienza como mano del juego
-
+        // Comienzo del juego en Solitario: admite parámetros opcionales de userId y playerLevel para calibrar la dificultad
         public async Task InitGameSol()
+        {
+            await StartSolitaireInternal(null, null);
+        }
+
+        public async Task InitGameSolWithParams(string? userId, string? playerLevel)
+        {
+            await StartSolitaireInternal(userId, playerLevel);
+        }
+
+        private async Task StartSolitaireInternal(string? userId, string? playerLevel)
         {
             string callerId = Context.ConnectionId;
             GamePlayOneVsOne newgame = new GamePlayOneVsOne(1);
@@ -1827,6 +1836,29 @@ namespace PericonAPI.Hubs
             newgame.ChoiceTurn = newgame.PlayerTurn;
             newgame.Deck.RandomCards();
             newgame.Id = newgame.GenerateSeed(games);
+            newgame.UserIdPOne = userId ?? string.Empty;
+
+            if (!string.IsNullOrWhiteSpace(playerLevel))
+            {
+                newgame.PlayerLevel = playerLevel;
+            }
+            else if (!string.IsNullOrWhiteSpace(userId) && int.TryParse(userId, out int uId))
+            {
+                try
+                {
+                    using (var scope = _scopeFactory.CreateScope())
+                    {
+                        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                        var dbUser = db.Users.FirstOrDefault(u => u.Id == uId);
+                        if (dbUser != null)
+                        {
+                            newgame.PlayerLevel = dbUser.GetCalculatedLevel();
+                            newgame.NamePOne = dbUser.Username;
+                        }
+                    }
+                }
+                catch { }
+            }
 
             lock (solitaireLock)
             {
@@ -1842,7 +1874,7 @@ namespace PericonAPI.Hubs
             sentence.game = newgame.Id;
             sentence.order = 100;
             sentence.content = newgame.StartGame();
-            Console.WriteLine($"InitGameSol ejecutado. Cliente: {callerId}, Juego: {newgame.Id}, Mano: {sentence.content}");
+            Console.WriteLine($"InitGameSol ejecutado. Cliente: {callerId}, Nivel: {newgame.PlayerLevel}, Juego: {newgame.Id}, Mano: {sentence.content}");
             await Clients.Caller.SendAsync("InitiatedGameSol", sentence);
         }
 

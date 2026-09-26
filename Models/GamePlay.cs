@@ -18,6 +18,7 @@ namespace PericonAPI.Models
         public int LastStakeAsker { get; set; } = 0; // 0 = ninguno, 1 = P1, 2 = P2
         public bool IsSolitaire { get; set; }
         public static double BotAdvantageProbability { get; set; } = 0.72;
+        public string PlayerLevel { get; set; } = "Peón de Casona";
         public Boolean IsActive { get; set; }
         public List<Card> CardsOne { get; set; }
         public List<Card> CardsTwo { get; set; }
@@ -51,6 +52,7 @@ namespace PericonAPI.Models
             InitHand = ""; Ask369 = 0; CurrentStake = 1;
             IsTumbaOne = false; IsTumbaTwo = false;
             IsTumbaDeParaAtrasOne = false; IsTumbaDeParaAtrasTwo = false;
+            PlayerLevel = "Peón de Casona";
         }
 
         public GamePlayOneVsOne(int UNO) : this()
@@ -135,7 +137,7 @@ namespace PericonAPI.Models
         }
 
         // Asegura que el Bot posea cartas dominantes y de respaldo para ganar 2 bazas en la mano
-        private void EnsureBotSuperiorHand()
+        private void EnsureBotSuperiorHand(bool isBeginner = false)
         {
             if (Deck?.Package == null || Deck.Package.Count < 5 || Life == null || Life.Id < 0)
                 return;
@@ -238,33 +240,75 @@ namespace PericonAPI.Models
             }
 
             // 5. Limitar los triunfos del usuario a un máximo de 1 carta (y de menor jerarquía que el bot)
-            int userTrumpsCount = CardsOne.Count(c => EvaluateCard(c.Id, lifeId) >= 15);
-            if (userTrumpsCount >= 2)
+            // Para principiantes (Peón de Casona), no limitamos sus triunfos para permitirle disfrutar de buenas bazas
+            if (!isBeginner)
             {
-                int weakestUserTrumpIdx = -1;
-                int minUserTrumpPower = int.MaxValue;
-                for (int i = 0; i < CardsOne.Count; i++)
+                int userTrumpsCount = CardsOne.Count(c => EvaluateCard(c.Id, lifeId) >= 15);
+                if (userTrumpsCount >= 2)
                 {
-                    int p = EvaluateCard(CardsOne[i].Id, lifeId);
-                    if (p >= 15 && p < minUserTrumpPower)
+                    int weakestUserTrumpIdx = -1;
+                    int minUserTrumpPower = int.MaxValue;
+                    for (int i = 0; i < CardsOne.Count; i++)
                     {
-                        minUserTrumpPower = p;
-                        weakestUserTrumpIdx = i;
+                        int p = EvaluateCard(CardsOne[i].Id, lifeId);
+                        if (p >= 15 && p < minUserTrumpPower)
+                        {
+                            minUserTrumpPower = p;
+                            weakestUserTrumpIdx = i;
+                        }
                     }
-                }
 
-                if (weakestUserTrumpIdx != -1)
-                {
-                    var whiteCard = Deck.Package.FirstOrDefault(c => EvaluateCard(c.Id, lifeId) == 0);
-                    if (whiteCard != null)
+                    if (weakestUserTrumpIdx != -1)
                     {
-                        Card userCardToDeck = CardsOne[weakestUserTrumpIdx];
-                        Deck.Package.Remove(whiteCard);
-                        Deck.Package.Add(userCardToDeck);
-                        CardsOne[weakestUserTrumpIdx] = whiteCard;
+                        var whiteCard = Deck.Package.FirstOrDefault(c => EvaluateCard(c.Id, lifeId) == 0);
+                        if (whiteCard != null)
+                        {
+                            Card userCardToDeck = CardsOne[weakestUserTrumpIdx];
+                            Deck.Package.Remove(whiteCard);
+                            Deck.Package.Add(userCardToDeck);
+                            CardsOne[weakestUserTrumpIdx] = whiteCard;
+                        }
                     }
                 }
             }
+        }
+
+        // Retorna la probabilidad base de ventaja de la Casa según el nivel y experiencia del jugador
+        public double GetLevelAdvantageBase()
+        {
+            string lvl = PlayerLevel?.Trim() ?? "";
+            if (lvl.Contains("Peón", StringComparison.OrdinalIgnoreCase) || lvl.Contains("Novato", StringComparison.OrdinalIgnoreCase))
+            {
+                // Nivel Principiante (Peón de Casona, <= 10 victorias):
+                // Lo deja ganar de vez en cuando (~52% Casa / ~48% Jugador) para que aprenda y se entusiasme.
+                return 0.52;
+            }
+            if (lvl.Contains("Arriero", StringComparison.OrdinalIgnoreCase))
+            {
+                // Nivel Intermedio (Arriero de Chivos, 11-30 victorias): 60% Casa / 40% Jugador (balance estándar)
+                return 0.60;
+            }
+            if (lvl.Contains("Catador", StringComparison.OrdinalIgnoreCase))
+            {
+                // Nivel Avanzado (Catador de Cocuy, 31-60 victorias): 68% Casa / 32% Jugador
+                return 0.68;
+            }
+            if (lvl.Contains("Tocador", StringComparison.OrdinalIgnoreCase))
+            {
+                // Nivel Experto (Tocador de Cuatro, 61-100 victorias): 75% Casa / 25% Jugador
+                return 0.75;
+            }
+            if (lvl.Contains("Patrón", StringComparison.OrdinalIgnoreCase))
+            {
+                // Nivel Maestro (Patrón de Hacienda, 101-200 victorias): 80% Casa / 20% Jugador
+                return 0.80;
+            }
+            if (lvl.Contains("Leyenda", StringComparison.OrdinalIgnoreCase))
+            {
+                // Nivel Leyenda (Leyenda de Carora, > 200 victorias): 85% Casa / 15% Jugador (máxima dificultad)
+                return 0.85;
+            }
+            return 0.65; // Por defecto
         }
 
         // Repartir las cartas con balance House-Edge 60/40 para modo Solitario (vs Bot)
@@ -290,17 +334,26 @@ namespace PericonAPI.Models
             Card y = Deck.OutCard(); CardsTwo.Add(y);
             Card z = Deck.OutCard(); Life = z;
 
-            // Algoritmo House-Edge Definitivo para modo Solitario (vs Bot):
-            // Calibra la distribución de cartas y el mazo para que la Casa alcance 60% - 65% de victorias reales.
+            // Algoritmo House-Edge Definitivo con Dificultad Dinámica por Rango/Nivel:
             if (IsSolitaire)
             {
-                double favorProb = BotAdvantageProbability;
+                double baseProb = GetLevelAdvantageBase();
+                double favorProb = baseProb;
+                bool isBeginner = (baseProb <= 0.55);
+
+                // Si el bot a nivel global necesita recuperación (menos del 55% de victorias globales),
+                // aplicamos un boost moderado a niveles intermedios y altos
+                if (BotAdvantageProbability > 0.70 && !isBeginner)
+                {
+                    favorProb = Math.Min(0.88, favorProb + 0.05);
+                }
 
                 // Defensa táctica de la Casa (Rubberbanding):
                 if (PointsOne >= 7)
                 {
-                    // Si el jugador está cerca de ganar (7, 8 o 9 puntos), la Casa defiende con alta firmeza
-                    favorProb = Math.Max(favorProb, 0.85);
+                    // Si el jugador está cerca de ganar (7, 8 o 9 puntos):
+                    // Para principiantes la defensa es más suave (70%), para avanzados es estricta (85%)
+                    favorProb = isBeginner ? Math.Max(favorProb, 0.70) : Math.Max(favorProb, 0.85);
                 }
 
                 if (IsTumbaTwo)
@@ -311,19 +364,19 @@ namespace PericonAPI.Models
                 else if (IsTumbaOne)
                 {
                     // Si el jugador está en Tumba, el Bot busca rematarlo (+3 bot, -3 jugador)
-                    favorProb = Math.Max(favorProb, 0.85);
+                    favorProb = isBeginner ? Math.Max(favorProb, 0.65) : Math.Max(favorProb, 0.85);
                 }
                 else if (PointsTwo >= 7 && PointsTwo > PointsOne)
                 {
                     // Si el Bot va ganando en la recta final (7, 8 o 9 puntos)
-                    favorProb = Math.Max(favorProb, 0.80);
+                    favorProb = isBeginner ? Math.Max(favorProb, 0.65) : Math.Max(favorProb, 0.80);
                 }
 
                 bool favorBot = Random.Shared.NextDouble() < favorProb;
 
                 if (favorBot)
                 {
-                    EnsureBotSuperiorHand();
+                    EnsureBotSuperiorHand(isBeginner);
                 }
                 else
                 {
@@ -331,7 +384,8 @@ namespace PericonAPI.Models
                     // Si el bot tenía cartas demasiado superiores, damos oportunidad competitiva al usuario
                     double scoreUser = ScoreHand(CardsOne, Life.Id);
                     double scoreBot = ScoreHand(CardsTwo, Life.Id);
-                    if (scoreBot > scoreUser && Random.Shared.NextDouble() < 0.60)
+                    double swapChance = isBeginner ? 0.80 : 0.60;
+                    if (scoreBot > scoreUser && Random.Shared.NextDouble() < swapChance)
                     {
                         var temp = new List<Card>(CardsOne);
                         CardsOne = new List<Card>(CardsTwo);
