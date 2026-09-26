@@ -172,18 +172,18 @@ namespace PericonAPI.Controllers
 
                 if (currentBotWinRate < 0.55)
                 {
-                    // Si el bot va ganando menos del 55%, elevamos la ventaja a 70% para recuperar el objetivo de la Casa
-                    GamePlayOneVsOne.BotAdvantageProbability = 0.70;
+                    // Si el bot va ganando menos del 55%, elevamos la ventaja a 78% para recuperar rápidamente el balance de la Casa
+                    GamePlayOneVsOne.BotAdvantageProbability = 0.78;
                 }
                 else if (currentBotWinRate > 0.65)
                 {
-                    // Si el bot supera el 65%, relajamos a 55% para mantener el equilibrio
-                    GamePlayOneVsOne.BotAdvantageProbability = 0.55;
+                    // Si el bot supera el 65%, modulamos a 65% para mantener el equilibrio perfecto
+                    GamePlayOneVsOne.BotAdvantageProbability = 0.65;
                 }
                 else
                 {
-                    // Tasa estabilizada en el objetivo exacto del 60% Casa
-                    GamePlayOneVsOne.BotAdvantageProbability = 0.60;
+                    // Tasa estabilizada en el objetivo del 60-65% Casa
+                    GamePlayOneVsOne.BotAdvantageProbability = 0.72;
                 }
             }
             catch (Exception ex)

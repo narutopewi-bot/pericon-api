@@ -17,7 +17,7 @@ namespace PericonAPI.Models
         public string UserIdPTwo { get; set; } = string.Empty;
         public int LastStakeAsker { get; set; } = 0; // 0 = ninguno, 1 = P1, 2 = P2
         public bool IsSolitaire { get; set; }
-        public static double BotAdvantageProbability { get; set; } = 0.65;
+        public static double BotAdvantageProbability { get; set; } = 0.72;
         public Boolean IsActive { get; set; }
         public List<Card> CardsOne { get; set; }
         public List<Card> CardsTwo { get; set; }
@@ -134,6 +134,139 @@ namespace PericonAPI.Models
             return score;
         }
 
+        // Asegura que el Bot posea cartas dominantes y de respaldo para ganar 2 bazas en la mano
+        private void EnsureBotSuperiorHand()
+        {
+            if (Deck?.Package == null || Deck.Package.Count < 5 || Life == null || Life.Id < 0)
+                return;
+
+            if (CardsOne.Count != 3 || CardsTwo.Count != 3)
+                return;
+
+            int lifeId = Life.Id;
+
+            // 1. Obtener el poder máximo actual de las manos
+            int userMaxPower = CardsOne.Max(c => EvaluateCard(c.Id, lifeId));
+            int botMaxPower = CardsTwo.Max(c => EvaluateCard(c.Id, lifeId));
+
+            // 2. Si el bot no tiene la carta más alta o su triunfo no es de alto calibre (>= 24),
+            // buscamos en el mazo restante (Deck.Package) el triunfo más poderoso disponible
+            if (botMaxPower <= userMaxPower || botMaxPower < 24)
+            {
+                var trumpsInDeck = Deck.Package
+                    .Where(c => EvaluateCard(c.Id, lifeId) >= 20)
+                    .OrderByDescending(c => EvaluateCard(c.Id, lifeId))
+                    .ToList();
+
+                if (trumpsInDeck.Count > 0)
+                {
+                    var trumpToGive = trumpsInDeck[0];
+
+                    // Identificar la carta más débil del bot
+                    int botWeakestIndex = 0;
+                    int minScore = int.MaxValue;
+                    for (int i = 0; i < CardsTwo.Count; i++)
+                    {
+                        int p = EvaluateCard(CardsTwo[i].Id, lifeId);
+                        int face = SpanishCards.GetFaceValue(CardsTwo[i].Id);
+                        int score = p > 0 ? p * 10 : face;
+                        if (score < minScore)
+                        {
+                            minScore = score;
+                            botWeakestIndex = i;
+                        }
+                    }
+
+                    Card botCardToDeck = CardsTwo[botWeakestIndex];
+                    Deck.Package.Remove(trumpToGive);
+                    Deck.Package.Add(botCardToDeck);
+                    CardsTwo[botWeakestIndex] = trumpToGive;
+
+                    botMaxPower = EvaluateCard(trumpToGive.Id, lifeId);
+                }
+            }
+
+            // 3. Revisar si el usuario aún posee alguna carta que supere o iguale el triunfo del bot.
+            // Si el usuario tiene una carta >= botMaxPower, la intercambiamos por una carta blanca del mazo
+            for (int i = 0; i < CardsOne.Count; i++)
+            {
+                int uPower = EvaluateCard(CardsOne[i].Id, lifeId);
+                if (uPower >= botMaxPower && uPower > 0)
+                {
+                    var normalCardInDeck = Deck.Package.FirstOrDefault(c => EvaluateCard(c.Id, lifeId) == 0);
+                    if (normalCardInDeck != null)
+                    {
+                        Card userCardToDeck = CardsOne[i];
+                        Deck.Package.Remove(normalCardInDeck);
+                        Deck.Package.Add(userCardToDeck);
+                        CardsOne[i] = normalCardInDeck;
+                    }
+                }
+            }
+
+            // 4. Asegurar un segundo triunfo para el Bot (para garantizar 2 bazas ganadoras)
+            int botTrumpsCount = CardsTwo.Count(c => EvaluateCard(c.Id, lifeId) >= 15);
+            if (botTrumpsCount < 2)
+            {
+                var secondTrumpInDeck = Deck.Package
+                    .Where(c => EvaluateCard(c.Id, lifeId) >= 15)
+                    .OrderByDescending(c => EvaluateCard(c.Id, lifeId))
+                    .FirstOrDefault();
+
+                if (secondTrumpInDeck != null)
+                {
+                    int replaceIndex = -1;
+                    int minP = int.MaxValue;
+                    for (int i = 0; i < CardsTwo.Count; i++)
+                    {
+                        int p = EvaluateCard(CardsTwo[i].Id, lifeId);
+                        if (p < botMaxPower && p < minP)
+                        {
+                            minP = p;
+                            replaceIndex = i;
+                        }
+                    }
+
+                    if (replaceIndex != -1)
+                    {
+                        Card botCardToDeck = CardsTwo[replaceIndex];
+                        Deck.Package.Remove(secondTrumpInDeck);
+                        Deck.Package.Add(botCardToDeck);
+                        CardsTwo[replaceIndex] = secondTrumpInDeck;
+                    }
+                }
+            }
+
+            // 5. Limitar los triunfos del usuario a un máximo de 1 carta (y de menor jerarquía que el bot)
+            int userTrumpsCount = CardsOne.Count(c => EvaluateCard(c.Id, lifeId) >= 15);
+            if (userTrumpsCount >= 2)
+            {
+                int weakestUserTrumpIdx = -1;
+                int minUserTrumpPower = int.MaxValue;
+                for (int i = 0; i < CardsOne.Count; i++)
+                {
+                    int p = EvaluateCard(CardsOne[i].Id, lifeId);
+                    if (p >= 15 && p < minUserTrumpPower)
+                    {
+                        minUserTrumpPower = p;
+                        weakestUserTrumpIdx = i;
+                    }
+                }
+
+                if (weakestUserTrumpIdx != -1)
+                {
+                    var whiteCard = Deck.Package.FirstOrDefault(c => EvaluateCard(c.Id, lifeId) == 0);
+                    if (whiteCard != null)
+                    {
+                        Card userCardToDeck = CardsOne[weakestUserTrumpIdx];
+                        Deck.Package.Remove(whiteCard);
+                        Deck.Package.Add(userCardToDeck);
+                        CardsOne[weakestUserTrumpIdx] = whiteCard;
+                    }
+                }
+            }
+        }
+
         // Repartir las cartas con balance House-Edge 60/40 para modo Solitario (vs Bot)
         // Secuencia: CJ11 - CJ12 - CJ21 - CJ22 - CJ31 - CJ32 - CVIDA - CP2
 
@@ -157,28 +290,48 @@ namespace PericonAPI.Models
             Card y = Deck.OutCard(); CardsTwo.Add(y);
             Card z = Deck.OutCard(); Life = z;
 
-            // Algoritmo House-Edge 60/40 para modo Solitario (vs Bot):
-            // Calibra la distribución de cartas para que la Casa alcance ~60% de victorias y los usuarios ~40%.
+            // Algoritmo House-Edge Definitivo para modo Solitario (vs Bot):
+            // Calibra la distribución de cartas y el mazo para que la Casa alcance 60% - 65% de victorias reales.
             if (IsSolitaire)
             {
-                double scoreUser = ScoreHand(CardsOne, Life.Id);
-                double scoreBot = ScoreHand(CardsTwo, Life.Id);
+                double favorProb = BotAdvantageProbability;
 
-                bool favorBot = Random.Shared.NextDouble() < BotAdvantageProbability;
+                // Defensa táctica de la Casa (Rubberbanding):
+                if (PointsOne >= 7)
+                {
+                    // Si el jugador está cerca de ganar (7, 8 o 9 puntos), la Casa defiende con alta firmeza
+                    favorProb = Math.Max(favorProb, 0.85);
+                }
+
+                if (IsTumbaTwo)
+                {
+                    // Si el Bot está en Tumba, perder cuesta 6 piedras (-3 bot, +3 jugador). ¡Obligatorio blindar!
+                    favorProb = 1.0;
+                }
+                else if (IsTumbaOne)
+                {
+                    // Si el jugador está en Tumba, el Bot busca rematarlo (+3 bot, -3 jugador)
+                    favorProb = Math.Max(favorProb, 0.85);
+                }
+                else if (PointsTwo >= 7 && PointsTwo > PointsOne)
+                {
+                    // Si el Bot va ganando en la recta final (7, 8 o 9 puntos)
+                    favorProb = Math.Max(favorProb, 0.80);
+                }
+
+                bool favorBot = Random.Shared.NextDouble() < favorProb;
+
                 if (favorBot)
                 {
-                    // La Casa debe tener la ventaja en este 60% de manos
-                    if (scoreBot < scoreUser)
-                    {
-                        var temp = new List<Card>(CardsOne);
-                        CardsOne = new List<Card>(CardsTwo);
-                        CardsTwo = temp;
-                    }
+                    EnsureBotSuperiorHand();
                 }
                 else
                 {
-                    // El Jugador debe tener la ventaja en este 40% de manos legítimas
-                    if (scoreUser < scoreBot)
+                    // Mano orgánica para el usuario: permitir el flujo natural
+                    // Si el bot tenía cartas demasiado superiores, damos oportunidad competitiva al usuario
+                    double scoreUser = ScoreHand(CardsOne, Life.Id);
+                    double scoreBot = ScoreHand(CardsTwo, Life.Id);
+                    if (scoreBot > scoreUser && Random.Shared.NextDouble() < 0.60)
                     {
                         var temp = new List<Card>(CardsOne);
                         CardsOne = new List<Card>(CardsTwo);
