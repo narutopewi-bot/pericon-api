@@ -742,7 +742,15 @@ namespace PericonAPI.Controllers
                 })
                 .FirstOrDefaultAsync();
 
-            return Ok(item);
+            return Ok(new
+            {
+                announcement = item,
+                id = item?.id,
+                title = item?.title,
+                message = item?.message,
+                type = item?.type,
+                createdAt = item?.createdAt
+            });
         }
 
         // ==========================================
