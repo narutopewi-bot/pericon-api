@@ -1397,6 +1397,19 @@ namespace PericonAPI.Hubs
             bool callerIsP2 = (caller == game.IdPTwo);
             if (!callerIsP1 && !callerIsP2) return;
 
+            // Blindaje defensivo en backend: No permitir reclamos durante Tumba ni en transición de manos sin cartas
+            if (game.IsTumbaOne || game.IsTumbaTwo)
+            {
+                Console.WriteLine($"[ClaimOpponentTimeout1vs1] RECHAZADO para {caller}: El juego {gameId} se encuentra en fase de Tumba.");
+                return;
+            }
+
+            if ((game.CardsOne == null || game.CardsOne.Count == 0) && (game.CardsTwo == null || game.CardsTwo.Count == 0))
+            {
+                Console.WriteLine($"[ClaimOpponentTimeout1vs1] RECHAZADO para {caller}: El juego {gameId} está en transición de reparto de manos.");
+                return;
+            }
+
             string winnerId = caller;
             string loserId = callerIsP1 ? game.IdPTwo : game.IdPOne;
 
