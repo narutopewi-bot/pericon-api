@@ -1019,20 +1019,39 @@ namespace PericonAPI.Hubs
 
             string[] daticos = move.content.Split(" ");
             bool isPlayerOne = (Context.ConnectionId == games[numg].IdPOne);
-            if (!isPlayerOne && Context.ConnectionId != games[numg].IdPTwo)
+            bool isPlayerTwo = (Context.ConnectionId == games[numg].IdPTwo);
+            if (!isPlayerOne && !isPlayerTwo)
             {
                 // Auto-reparar socket si reconectó:
-                if (daticos.Length > 0 && daticos[0] == games[numg].IdPOne)
+                // En orden 82: move.content = playerown (daticos[0]) + " " + playeropp (daticos[1]) + ...
+                // En orden 83: move.content = playeropp (daticos[0]) + " " + oppCard (daticos[1]) + " " + playerown (daticos[2]) + ...
+                string oldCallerId = "";
+                if (move.order == 82 && daticos.Length > 0)
                 {
-                    games[numg].IdPOne = Context.ConnectionId;
-                    isPlayerOne = true;
+                    oldCallerId = daticos[0];
                 }
-                else if (daticos.Length > 0 && daticos[0] == games[numg].IdPTwo)
+                else if (move.order == 83 && daticos.Length > 2)
                 {
-                    games[numg].IdPTwo = Context.ConnectionId;
-                    isPlayerOne = false;
+                    oldCallerId = daticos[2];
+                }
+
+                if (!string.IsNullOrEmpty(oldCallerId))
+                {
+                    if (oldCallerId == games[numg].IdPOne)
+                    {
+                        games[numg].IdPOne = Context.ConnectionId;
+                        isPlayerOne = true;
+                    }
+                    else if (oldCallerId == games[numg].IdPTwo)
+                    {
+                        games[numg].IdPTwo = Context.ConnectionId;
+                        isPlayerOne = false;
+                    }
                 }
             }
+
+            // Asegurar que el socket activo esté vinculado al grupo de la sala 1vs1
+            await Groups.AddToGroupAsync(Context.ConnectionId, $"game1vs1_{move.game}");
 
             string targetOpp = isPlayerOne ? games[numg].IdPTwo : games[numg].IdPOne;
             GameMessage sentence = new GameMessage();
