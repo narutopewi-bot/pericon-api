@@ -408,14 +408,12 @@ namespace PericonAPI.Hubs
             }
             data.game = move.game;
             data.order = 76;
+            games[numg].PendingAsk369Message = data;
             if (!string.IsNullOrEmpty(sentto))
             {
                 await Clients.Client(sentto).SendAsync("Asked369Game", data);
             }
-            else
-            {
-                await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("Asked369Game", data);
-            }
+            await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("Asked369Game", data);
         }
 
         public async Task Answer369Game(GameMessage move)
@@ -445,83 +443,91 @@ namespace PericonAPI.Hubs
                     games[numg].CurrentStake = 3;
                     games[numg].Ask369 = 3;
                     games[numg].LastStakeAsker = callerIsP1 ? 2 : 1;
+                    games[numg].PendingAsk369Message = null;
                     data.content = $"2 {games[numg].PointsOne} {games[numg].PointsTwo}";
                     await Clients.Client(ownto).SendAsync("EndAsk369Round", data);
                     if (!string.IsNullOrEmpty(sentto)) await Clients.Client(sentto).SendAsync("Answered369Game", data);
-                    else await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("Answered369Game", data);
+                    await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("Answered369Game", data);
                     break;
                 case 3: // Rechaza 3 -> Quien pidió 3 (rival de caller) gana 1 punto
                     games[numg].Ask369 = -1;
                     games[numg].LastStakeAsker = 0;
                     games[numg].RoundOne = 0;
                     games[numg].RoundTwo = 0;
+                    games[numg].PendingAsk369Message = null;
                     if (callerIsP1) games[numg].PointsTwo += 1;
                     else games[numg].PointsOne += 1;
                     games[numg].UpdateTumbaStatus(oldP1, oldP2);
                     data.content = $"3 {games[numg].PointsOne} {games[numg].PointsTwo}";
                     await Clients.Client(ownto).SendAsync("EndAsk369Round", data);
                     if (!string.IsNullOrEmpty(sentto)) await Clients.Client(sentto).SendAsync("Answered369Game", data);
-                    else await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("Answered369Game", data);
+                    await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("Answered369Game", data);
                     break;
                 case 4: // Revira a 6 (propone 6 a sentto)
                     games[numg].LastStakeAsker = callerIsP1 ? 1 : 2;
                     data.order = 76;
                     data.content = "4";
                     data.game = move.game;
+                    games[numg].PendingAsk369Message = data;
                     if (!string.IsNullOrEmpty(sentto)) await Clients.Client(sentto).SendAsync("Asked369Game", data);
-                    else await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("Asked369Game", data);
+                    await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("Asked369Game", data);
                     break;
                 case 5: // Acepta 6
                     games[numg].CurrentStake = 6;
                     games[numg].Ask369 = 6;
                     games[numg].LastStakeAsker = callerIsP1 ? 2 : 1;
+                    games[numg].PendingAsk369Message = null;
                     data.content = $"5 {games[numg].PointsOne} {games[numg].PointsTwo}";
                     await Clients.Client(ownto).SendAsync("EndAsk369Round", data);
                     if (!string.IsNullOrEmpty(sentto)) await Clients.Client(sentto).SendAsync("Answered369Game", data);
-                    else await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("Answered369Game", data);
+                    await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("Answered369Game", data);
                     break;
                 case 6: // Rechaza 6 -> Quien propuso 6 gana las 3 piedras ya pactadas
                     games[numg].Ask369 = -1;
                     games[numg].LastStakeAsker = 0;
                     games[numg].RoundOne = 0;
                     games[numg].RoundTwo = 0;
+                    games[numg].PendingAsk369Message = null;
                     if (callerIsP1) games[numg].PointsTwo += 3;
                     else games[numg].PointsOne += 3;
                     games[numg].UpdateTumbaStatus(oldP1, oldP2);
                     data.content = $"6 {games[numg].PointsOne} {games[numg].PointsTwo}";
                     await Clients.Client(ownto).SendAsync("EndAsk369Round", data);
                     if (!string.IsNullOrEmpty(sentto)) await Clients.Client(sentto).SendAsync("Answered369Game", data);
-                    else await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("Answered369Game", data);
+                    await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("Answered369Game", data);
                     break;
                 case 7: // Revira a 9 (propone 9 a sentto)
                     games[numg].LastStakeAsker = callerIsP1 ? 1 : 2;
                     data.order = 76;
                     data.content = "7";
                     data.game = move.game;
+                    games[numg].PendingAsk369Message = data;
                     if (!string.IsNullOrEmpty(sentto)) await Clients.Client(sentto).SendAsync("Asked369Game", data);
-                    else await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("Asked369Game", data);
+                    await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("Asked369Game", data);
                     break;
                 case 8: // Acepta 9
                     games[numg].CurrentStake = 9;
                     games[numg].Ask369 = 9;
                     games[numg].LastStakeAsker = callerIsP1 ? 2 : 1;
+                    games[numg].PendingAsk369Message = null;
                     data.content = $"8 {games[numg].PointsOne} {games[numg].PointsTwo}";
                     await Clients.Client(ownto).SendAsync("EndAsk369Round", data);
                     if (!string.IsNullOrEmpty(sentto)) await Clients.Client(sentto).SendAsync("Answered369Game", data);
-                    else await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("Answered369Game", data);
+                    await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("Answered369Game", data);
                     break;
                 case 9: // Rechaza 9 -> Quien propuso 9 gana las 6 piedras ya pactadas
                     games[numg].Ask369 = -1;
                     games[numg].LastStakeAsker = 0;
                     games[numg].RoundOne = 0;
                     games[numg].RoundTwo = 0;
+                    games[numg].PendingAsk369Message = null;
                     if (callerIsP1) games[numg].PointsTwo += 6;
                     else games[numg].PointsOne += 6;
                     games[numg].UpdateTumbaStatus(oldP1, oldP2);
                     data.content = $"9 {games[numg].PointsOne} {games[numg].PointsTwo}";
                     await Clients.Client(ownto).SendAsync("EndAsk369Round", data);
                     if (!string.IsNullOrEmpty(sentto)) await Clients.Client(sentto).SendAsync("Answered369Game", data);
-                    else await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("Answered369Game", data);
+                    await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("Answered369Game", data);
                     break;
             }
         }
@@ -653,6 +659,8 @@ namespace PericonAPI.Hubs
             games[numg].Ask369 = 0;
             games[numg].RoundOne = 0;
             games[numg].RoundTwo = 0;
+            games[numg].CurrentLeadMove = null;
+            games[numg].PendingAsk369Message = null;
             string POne = games[numg].IdPOne;
             string PTwo = games[numg].IdPTwo;
             string PThree = games[numg].InitHand;
@@ -817,6 +825,47 @@ namespace PericonAPI.Hubs
                     isPlayerOne = isPlayerOne
                 });
             }
+
+            // Sincronización proactiva: si hay una carta de salida (orden 84) en la mesa, entregársela al reconectado
+            if (games[numg].CurrentLeadMove != null)
+            {
+                Console.WriteLine($"[RejoinGame1vs1] Entregando carta de mesa en curso a {Context.ConnectionId}: {games[numg].CurrentLeadMove.content}");
+                await Clients.Client(Context.ConnectionId).SendAsync("ResponseCard1vs1", games[numg].CurrentLeadMove);
+            }
+
+            // Si hay un reto de Pedir pendiente para este jugador, entregárselo
+            if (games[numg].PendingAsk369Message != null && games[numg].LastStakeAsker != (isPlayerOne ? 1 : 2))
+            {
+                Console.WriteLine($"[RejoinGame1vs1] Entregando reto de Pedir pendiente a reconectado");
+                await Clients.Client(Context.ConnectionId).SendAsync("Asked369Game", games[numg].PendingAsk369Message);
+            }
+        }
+
+        /// <summary>
+        /// Sincronización instantánea de la mesa ante microcortes o paquetes perdidos.
+        /// </summary>
+        public async Task SyncTable1vs1(int gameId)
+        {
+            int numg = FindGame1vs1(gameId);
+            if (numg < 0 || numg >= games.Count) return;
+            if (!games[numg].IsActive) return;
+
+            await Groups.AddToGroupAsync(Context.ConnectionId, $"game1vs1_{gameId}");
+
+            if (games[numg].CurrentLeadMove != null)
+            {
+                Console.WriteLine($"[SyncTable1vs1] Sincronizando carta activa de mesa hacia {Context.ConnectionId}: {games[numg].CurrentLeadMove.content}");
+                await Clients.Client(Context.ConnectionId).SendAsync("ResponseCard1vs1", games[numg].CurrentLeadMove);
+            }
+
+            if (games[numg].PendingAsk369Message != null)
+            {
+                bool isCallerP1 = (Context.ConnectionId == games[numg].IdPOne);
+                if (games[numg].LastStakeAsker != (isCallerP1 ? 1 : 2))
+                {
+                    await Clients.Client(Context.ConnectionId).SendAsync("Asked369Game", games[numg].PendingAsk369Message);
+                }
+            }
         }
 
         public async Task PassTumba1vs1(GameMessage move)
@@ -889,6 +938,16 @@ namespace PericonAPI.Hubs
             await Clients.Client(POne).SendAsync("setChangeHand", sentence);
             sentence.content = previewcontent + PFive + PScore;
             await Clients.Client(PTwo).SendAsync("setChangeHand", sentence);
+
+            // Respaldo de mano por grupo SignalR para garantizar entrega si un socket reconectó
+            await Clients.Group($"game1vs1_{move.game}").SendAsync("GameHandUpdated1vs1", new
+            {
+                game = move.game,
+                handCards = PThree,
+                handStarter = games[numg].HandStarter,
+                pointsOne = games[numg].PointsOne,
+                pointsTwo = games[numg].PointsTwo
+            });
         }
 
         public async Task AcceptTumba1vs1(GameMessage move)
@@ -901,7 +960,14 @@ namespace PericonAPI.Hubs
             bool callerIsP1 = (caller == games[numg].IdPOne);
             string otherPlayer = callerIsP1 ? games[numg].IdPTwo : games[numg].IdPOne;
 
-            await Clients.Client(otherPlayer).SendAsync("TumbaAcceptedNotice", new
+            if (!string.IsNullOrEmpty(otherPlayer))
+            {
+                await Clients.Client(otherPlayer).SendAsync("TumbaAcceptedNotice", new
+                {
+                    message = "El rival aceptó jugar la mano de Tumba."
+                });
+            }
+            await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("TumbaAcceptedNotice", new
             {
                 message = "El rival aceptó jugar la mano de Tumba."
             });
@@ -1020,33 +1086,74 @@ namespace PericonAPI.Hubs
             string[] daticos = move.content.Split(" ");
             bool isPlayerOne = (Context.ConnectionId == games[numg].IdPOne);
             bool isPlayerTwo = (Context.ConnectionId == games[numg].IdPTwo);
+
             if (!isPlayerOne && !isPlayerTwo)
             {
-                // Auto-reparar socket si reconectó:
-                // En orden 82: move.content = playerown (daticos[0]) + " " + playeropp (daticos[1]) + ...
-                // En orden 83: move.content = playeropp (daticos[0]) + " " + oppCard (daticos[1]) + " " + playerown (daticos[2]) + ...
-                string oldCallerId = "";
-                if (move.order == 82 && daticos.Length > 0)
-                {
-                    oldCallerId = daticos[0];
-                }
-                else if (move.order == 83 && daticos.Length > 2)
-                {
-                    oldCallerId = daticos[2];
-                }
+                // Auto-reparación resiliente de socket reconectado:
+                // Estrategia A: Identificar por el socket del rival en el mensaje
+                string oppSocket = "";
+                if (move.order == 82 && daticos.Length > 1) oppSocket = daticos[1];
+                else if (move.order == 83 && daticos.Length > 0) oppSocket = daticos[0];
 
-                if (!string.IsNullOrEmpty(oldCallerId))
+                if (!string.IsNullOrEmpty(oppSocket))
                 {
-                    if (oldCallerId == games[numg].IdPOne)
+                    if (oppSocket == games[numg].IdPTwo)
                     {
                         games[numg].IdPOne = Context.ConnectionId;
                         isPlayerOne = true;
+                        isPlayerTwo = false;
+                        Console.WriteLine($"[RequestCard1vs1] Auto-reparado P1 (rival es P2). Nuevo IdPOne: {Context.ConnectionId}");
                     }
-                    else if (oldCallerId == games[numg].IdPTwo)
+                    else if (oppSocket == games[numg].IdPOne)
                     {
                         games[numg].IdPTwo = Context.ConnectionId;
                         isPlayerOne = false;
+                        isPlayerTwo = true;
+                        Console.WriteLine($"[RequestCard1vs1] Auto-reparado P2 (rival es P1). Nuevo IdPTwo: {Context.ConnectionId}");
                     }
+                }
+
+                // Estrategia B: Identificar por nombre de usuario del jugador conectado
+                if (!isPlayerOne && !isPlayerTwo)
+                {
+                    var callerPlayer = SearchPlayer(Context.ConnectionId);
+                    if (callerPlayer != null && !string.IsNullOrEmpty(callerPlayer.Name) && callerPlayer.Name != "nulo")
+                    {
+                        if (callerPlayer.Name.Equals(games[numg].NamePOne, StringComparison.OrdinalIgnoreCase))
+                        {
+                            games[numg].IdPOne = Context.ConnectionId;
+                            isPlayerOne = true;
+                            isPlayerTwo = false;
+                            Console.WriteLine($"[RequestCard1vs1] Auto-reparado P1 por nombre de usuario ({callerPlayer.Name}).");
+                        }
+                        else if (callerPlayer.Name.Equals(games[numg].NamePTwo, StringComparison.OrdinalIgnoreCase))
+                        {
+                            games[numg].IdPTwo = Context.ConnectionId;
+                            isPlayerOne = false;
+                            isPlayerTwo = true;
+                            Console.WriteLine($"[RequestCard1vs1] Auto-reparado P2 por nombre de usuario ({callerPlayer.Name}).");
+                        }
+                    }
+                }
+
+                // Estrategia C: Deducción por turno de juego
+                if (!isPlayerOne && !isPlayerTwo)
+                {
+                    if (move.order == 82)
+                    {
+                        isPlayerOne = games[numg].PlayerTurn;
+                        isPlayerTwo = !games[numg].PlayerTurn;
+                    }
+                    else
+                    {
+                        isPlayerOne = !games[numg].PlayerTurn;
+                        isPlayerTwo = games[numg].PlayerTurn;
+                    }
+
+                    if (isPlayerOne) games[numg].IdPOne = Context.ConnectionId;
+                    else games[numg].IdPTwo = Context.ConnectionId;
+
+                    Console.WriteLine($"[RequestCard1vs1] Auto-reparado por turno de juego. EsP1={isPlayerOne}, EsP2={isPlayerTwo}");
                 }
             }
 
@@ -1061,6 +1168,7 @@ namespace PericonAPI.Hubs
                 sentence.game = move.game;
                 sentence.order = 84;
                 sentence.content = move.content;
+                games[numg].CurrentLeadMove = sentence;
                 Console.WriteLine($"[RequestCard1vs1 82] Enviando a rival ({targetOpp}): 84 {sentence.content}");
                 if (!string.IsNullOrEmpty(targetOpp))
                 {
@@ -1243,6 +1351,7 @@ namespace PericonAPI.Hubs
                 sentence.content = daticos[1] + " " + daticos[3] + " " + daticos[4] + " ";
                 rdef = cardwin + " " + mdef + " " + rone + " " + rtwo + " " + pone + " " + ptwo;
                 sentence.content += rdef;
+                games[numg].CurrentLeadMove = null;
                 Console.WriteLine($"[RequestCard1vs1 83] Enviando a rival ({targetOpp}): 85 {sentence.content}");
                 if (!string.IsNullOrEmpty(targetOpp))
                 {

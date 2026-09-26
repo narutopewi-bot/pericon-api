@@ -42,6 +42,8 @@ namespace PericonAPI.Models
         public int Coins { get; set; } = 10;
         public string RoomName { get; set; } = string.Empty;
         public bool IsFriendlyRoom { get; set; } = false;
+        public GameMessage? CurrentLeadMove { get; set; } = null;
+        public GameMessage? PendingAsk369Message { get; set; } = null;
 
         public GamePlayOneVsOne()
         {
