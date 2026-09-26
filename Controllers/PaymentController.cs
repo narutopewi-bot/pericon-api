@@ -21,13 +21,15 @@ namespace PericonAPI.Controllers
             _notificationService = notificationService;
         }
 
+        public const decimal MIN_RECHARGE_BS = 800m;
+
         [HttpPost("report")]
         [Consumes("multipart/form-data")]
         public async Task<IActionResult> ReportPayment([FromForm] PaymentReportFormDto dto)
         {
-            if (dto.AmountBs <= 0)
+            if (dto.AmountBs < MIN_RECHARGE_BS)
             {
-                return BadRequest(new { message = "El monto a transferir debe ser mayor a 0 Bs." });
+                return BadRequest(new { message = $"El monto mínimo de recarga es de {MIN_RECHARGE_BS:N0} Bs. ({MIN_RECHARGE_BS:N0} monedas)." });
             }
 
             if (string.IsNullOrWhiteSpace(dto.Reference))
@@ -102,9 +104,9 @@ namespace PericonAPI.Controllers
         [HttpPost("report-json")]
         public async Task<IActionResult> ReportPaymentJson([FromBody] PaymentReportJsonDto dto)
         {
-            if (dto.AmountBs <= 0)
+            if (dto.AmountBs < MIN_RECHARGE_BS)
             {
-                return BadRequest(new { message = "El monto a transferir debe ser mayor a 0 Bs." });
+                return BadRequest(new { message = $"El monto mínimo de recarga es de {MIN_RECHARGE_BS:N0} Bs. ({MIN_RECHARGE_BS:N0} monedas)." });
             }
 
             if (string.IsNullOrWhiteSpace(dto.Reference))
