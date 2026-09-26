@@ -44,6 +44,8 @@ namespace PericonAPI.Models
         public string Username { get; set; } = string.Empty;
         public string Email { get; set; } = string.Empty;
         public int Coins { get; set; }
+        public int BonusCoins { get; set; }
+        public int RetirableCoins { get; set; }
         public int Wins { get; set; }
         public int Losses { get; set; }
         public double WinRate { get; set; }

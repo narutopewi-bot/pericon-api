@@ -1463,6 +1463,7 @@ namespace PericonAPI.Hubs
                     {
                         int loserDeduction = Math.Min(dbLoser.Coins, bet);
                         dbLoser.Coins -= loserDeduction;
+                        dbLoser.BonusCoins = Math.Max(0, dbLoser.BonusCoins - loserDeduction);
                         dbLoser.Losses += 1;
                         dbLoser.Level = dbLoser.GetCalculatedLevel();
                         loserNewCoins = dbLoser.Coins;
@@ -1662,6 +1663,7 @@ namespace PericonAPI.Hubs
                             {
                                 int deduction = Math.Min(dbUser.Coins, betPerPlayer);
                                 dbUser.Coins -= deduction;
+                                dbUser.BonusCoins = Math.Max(0, dbUser.BonusCoins - deduction);
                                 dbUser.Losses += 1;
                             }
 

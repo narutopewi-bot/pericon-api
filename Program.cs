@@ -131,6 +131,7 @@ using (var scope = app.Services.CreateScope())
         try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN AvatarUrl TEXT NULL;"); } catch { }
         try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN HasClaimedInstagramReward INTEGER NOT NULL DEFAULT 0;"); } catch { }
         try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN InstagramHandle TEXT NULL;"); } catch { }
+        try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN BonusCoins INTEGER NOT NULL DEFAULT 0;"); } catch { }
         try
         {
             db.Database.ExecuteSqlRaw(@"
@@ -273,6 +274,12 @@ using (var scope = app.Services.CreateScope())
         try
         {
             db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""InstagramHandle"" TEXT NULL;");
+        }
+        catch { }
+
+        try
+        {
+            db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""BonusCoins"" INTEGER NOT NULL DEFAULT 0;");
         }
         catch { }
 
@@ -438,8 +445,8 @@ using (var scope = app.Services.CreateScope())
         {
             using var cmd = db.Database.GetDbConnection().CreateCommand();
             cmd.CommandText = db.Database.IsSqlite()
-                ? "SELECT COUNT(*) FROM SystemMigrations WHERE MigrationKey = 'SEASON_RESET_DINERO_REAL_500_COINS_V1';"
-                : @"SELECT COUNT(*) FROM ""SystemMigrations"" WHERE ""MigrationKey"" = 'SEASON_RESET_DINERO_REAL_500_COINS_V1';";
+                ? "SELECT COUNT(*) FROM SystemMigrations WHERE MigrationKey = 'SEASON_RESET_DINERO_REAL_300_BONUS_COINS_V2';"
+                : @"SELECT COUNT(*) FROM ""SystemMigrations"" WHERE ""MigrationKey"" = 'SEASON_RESET_DINERO_REAL_300_BONUS_COINS_V2';";
 
             if (db.Database.GetDbConnection().State != System.Data.ConnectionState.Open)
             {
@@ -455,11 +462,12 @@ using (var scope = app.Services.CreateScope())
 
         if (!migrationDone)
         {
-            Console.WriteLine("[Season Reset] Iniciando migración de Dinero Real: fijando 500 monedas y 0 victorias a todos los usuarios...");
+            Console.WriteLine("[Season Reset] Iniciando migración de Dinero Real: fijando 300 monedas de cortesía y 0 victorias a todos los usuarios...");
             var usersToReset = db.Users.ToList();
             foreach (var u in usersToReset)
             {
-                u.Coins = 500;
+                u.Coins = 300;
+                u.BonusCoins = 300;
                 u.Wins = 0;
                 u.Losses = 0;
                 u.Experience = 0;
@@ -475,8 +483,8 @@ using (var scope = app.Services.CreateScope())
 
             db.SystemAnnouncements.Add(new SystemAnnouncement
             {
-                Title = "🚨 ¡COMIENZA LA ERA DE DINERO REAL! • SALDO INICIAL Y RANKING REINICIADO 🚨",
-                Message = "¡Atención a todos los jugadores de El Pericón! A partir de hoy iniciamos oficialmente las partidas con DINERO REAL. Con motivo del lanzamiento, todos los jugadores han recibido 500 MONEDAS DE SALDO INICIAL y el ranking de victorias se ha reiniciado a cero para una competencia 100% limpia y justa. ¡Recarga desde 800 Bs. por Pago Móvil, compite en mesas 1v1 y 2v2 y retira tus ganancias directo a tu cuenta bancaria! Entra a www.pericon.lat",
+                Title = "🚨 ¡COMIENZA LA ERA DE DINERO REAL! • 300 MONEDAS DE CORTESÍA Y RANKING EN CERO 🚨",
+                Message = "¡Atención a todos los jugadores de El Pericón! A partir de hoy iniciamos oficialmente las partidas con DINERO REAL. Con motivo del lanzamiento, todos los jugadores han recibido 300 MONEDAS DE CORTESÍA para disputar 3 partidas de prueba y el ranking de victorias se ha reiniciado a cero para una competencia 100% limpia y justa. ¡Recarga desde 800 Bs. por Pago Móvil, compite en mesas 1v1 y 2v2 y retira tus ganancias directo a tu cuenta bancaria! Entra a www.pericon.lat",
                 Type = "alerta",
                 IsActive = true,
                 CreatedAt = DateTime.UtcNow,
@@ -488,14 +496,14 @@ using (var scope = app.Services.CreateScope())
             // Marcar la migración como aplicada
             if (db.Database.IsSqlite())
             {
-                db.Database.ExecuteSqlRaw("INSERT INTO SystemMigrations (MigrationKey, AppliedAt) VALUES ('SEASON_RESET_DINERO_REAL_500_COINS_V1', datetime('now'));");
+                db.Database.ExecuteSqlRaw("INSERT INTO SystemMigrations (MigrationKey, AppliedAt) VALUES ('SEASON_RESET_DINERO_REAL_300_BONUS_COINS_V2', datetime('now'));");
             }
             else
             {
-                db.Database.ExecuteSqlRaw(@"INSERT INTO ""SystemMigrations"" (""MigrationKey"", ""AppliedAt"") VALUES ('SEASON_RESET_DINERO_REAL_500_COINS_V1', NOW());");
+                db.Database.ExecuteSqlRaw(@"INSERT INTO ""SystemMigrations"" (""MigrationKey"", ""AppliedAt"") VALUES ('SEASON_RESET_DINERO_REAL_300_BONUS_COINS_V2', NOW());");
             }
 
-            Console.WriteLine($"[Season Reset] Migración completada con éxito para {usersToReset.Count} usuarios.");
+            Console.WriteLine($"[Season Reset] Migración completada con éxito para {usersToReset.Count} usuarios con 300 monedas de cortesía.");
         }
     }
     catch (Exception ex)

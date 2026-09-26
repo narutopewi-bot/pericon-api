@@ -66,6 +66,8 @@ namespace PericonAPI.Controllers
                 username = user.Username,
                 email = user.Email,
                 coins = user.Coins,
+                bonusCoins = user.BonusCoins,
+                retirableCoins = user.GetRetirableCoins(),
                 wins = user.Wins,
                 losses = user.Losses,
                 totalMatches,

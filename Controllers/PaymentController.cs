@@ -248,7 +248,17 @@ namespace PericonAPI.Controllers
                 return BadRequest(new { message = $"Saldo insuficiente. Tienes {user.Coins} monedas y deseas retirar {dto.CoinsAmount}." });
             }
 
-            // REGLA FINANCIERA: Cero retiros de moneda regalada.
+            // REGLA FINANCIERA 1: Diferenciación de Monedas de Cortesía vs Reales
+            int retirableCoins = user.GetRetirableCoins();
+            if (dto.CoinsAmount > retirableCoins && !user.IsAdmin && user.Username.ToLower() != "guardian")
+            {
+                return BadRequest(new
+                {
+                    message = $"Saldo retirable insuficiente. De tus {user.Coins:N0} monedas totales, {user.BonusCoins:N0} son de cortesía exclusivas para jugar. Tu saldo retirable disponible actualmente es de {retirableCoins:N0} monedas."
+                });
+            }
+
+            // REGLA FINANCIERA 2: Cero retiros de moneda regalada.
             // Para poder solicitar un retiro, el usuario debe haber realizado al menos una recarga real de saldo que haya sido APROBADA.
             bool hasApprovedDeposit = await _context.PaymentRecharges
                 .AnyAsync(r => r.UserId == dto.UserId && r.Status == "APROBADO");
@@ -258,6 +268,20 @@ namespace PericonAPI.Controllers
                 return BadRequest(new
                 {
                     message = "Por política de seguridad y protección financiera, para solicitar un retiro debes haber realizado al menos una recarga de saldo aprobada en la plataforma. Las monedas de bienvenida, bonos o cupones son exclusivas para jugar y no son retirables directamente sin un depósito previo."
+                });
+            }
+
+            // REGLA FINANCIERA 3: Prevención de fraude multicuenta (Unicidad de Pago Móvil y Cédula)
+            bool phoneUsedByOther = await _context.PaymentWithdrawals
+                .AnyAsync(w => w.UserId != dto.UserId && w.PhoneNumber == dto.PhoneNumber && w.Status != "RECHAZADO");
+            bool idUsedByOther = await _context.PaymentWithdrawals
+                .AnyAsync(w => w.UserId != dto.UserId && w.IdCard == dto.IdCard && w.Status != "RECHAZADO");
+
+            if ((phoneUsedByOther || idUsedByOther) && !user.IsAdmin && user.Username.ToLower() != "guardian")
+            {
+                return BadRequest(new
+                {
+                    message = "Por políticas de seguridad financiera y prevención de fraude multicuenta, este número de teléfono de Pago Móvil o cédula de identidad ya está registrado en otra cuenta para retiros. Cada cuenta debe corresponder a un titular bancario único."
                 });
             }
 

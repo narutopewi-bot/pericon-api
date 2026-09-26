@@ -900,13 +900,14 @@ namespace PericonAPI.Controllers
         [HttpPost("reset-season-stats")]
         public async Task<IActionResult> ResetSeasonStats([FromBody] ResetSeasonDto? dto)
         {
-            var targetCoins = dto != null && dto.Coins > 0 ? dto.Coins : 500;
+            var targetCoins = dto != null && dto.Coins > 0 ? dto.Coins : 300;
             var users = await _context.Users.ToListAsync();
             int resetCount = 0;
 
             foreach (var u in users)
             {
                 u.Coins = targetCoins;
+                u.BonusCoins = targetCoins;
                 u.Wins = 0;
                 u.Losses = 0;
                 u.Experience = 0;
@@ -928,8 +929,8 @@ namespace PericonAPI.Controllers
 
             var announcement = new SystemAnnouncement
             {
-                Title = "🚨 ¡COMIENZA LA ERA DE DINERO REAL! • SALDO INICIAL Y RANKING REINICIADO 🚨",
-                Message = "¡Atención a todos los jugadores de El Pericón! A partir de hoy iniciamos oficialmente las partidas con DINERO REAL. Con motivo del lanzamiento, todos los jugadores han recibido 500 MONEDAS DE SALDO INICIAL y el ranking de victorias se ha reiniciado a cero para una competencia 100% limpia y justa. ¡Recarga desde 800 Bs. por Pago Móvil, compite en mesas 1v1 y 2v2 y retira tus ganancias directo a tu cuenta bancaria! Entra a www.pericon.lat",
+                Title = "🚨 ¡COMIENZA LA ERA DE DINERO REAL! • 300 MONEDAS DE CORTESÍA Y RANKING EN CERO 🚨",
+                Message = "¡Atención a todos los jugadores de El Pericón! A partir de hoy iniciamos oficialmente las partidas con DINERO REAL. Con motivo del lanzamiento, todos los jugadores han recibido 300 MONEDAS DE CORTESÍA para disputar 3 partidas de prueba y el ranking de victorias se ha reiniciado a cero para una competencia 100% limpia y justa. ¡Recarga desde 800 Bs. por Pago Móvil, compite en mesas 1v1 y 2v2 y retira tus ganancias directo a tu cuenta bancaria! Entra a www.pericon.lat",
                 Type = "alerta",
                 IsActive = true,
                 CreatedAt = DateTime.UtcNow,
@@ -955,7 +956,7 @@ namespace PericonAPI.Controllers
                 success = true,
                 usersReset = resetCount,
                 coinsSet = targetCoins,
-                message = $"Se reiniciaron con éxito {resetCount} usuarios a {targetCoins} monedas, 0 victorias, ranking en cero y comunicado activo publicado.",
+                message = $"Se reiniciaron con éxito {resetCount} usuarios a {targetCoins} monedas de cortesía, 0 victorias, ranking en cero y comunicado activo publicado.",
                 announcement = new
                 {
                     id = announcement.Id,
@@ -969,7 +970,7 @@ namespace PericonAPI.Controllers
 
     public class ResetSeasonDto
     {
-        public int Coins { get; set; } = 500;
+        public int Coins { get; set; } = 300;
         public bool ClearMatchHistory { get; set; } = false;
     }
 
