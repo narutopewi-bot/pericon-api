@@ -228,6 +228,30 @@ namespace PericonAPI.Hubs
             await base.OnConnectedAsync();
         }
 
+        public static object GetLiveActivityStatus()
+        {
+            int sol = 0;
+            lock (solitaireLock) { sol = solitaireSessions.Count; }
+            int pvp1v1 = 0;
+            lock (games) { pvp1v1 = games.Count(g => !g.IsSolitaire && g.IsActive); }
+            int pvp2v2 = 0;
+            lock (games2vs2) { pvp2v2 = games2vs2.Count(g => g.IsActive); }
+            int queue = 0;
+            lock (queueLock) { queue = matchmakingQueue.Count; }
+            int online = 0;
+            lock (users) { online = users.Count; }
+
+            return new
+            {
+                onlineUsers = online,
+                activeSolitaire = sol,
+                active1v1 = pvp1v1,
+                active2v2 = pvp2v2,
+                inQueue = queue,
+                totalActiveGames = sol + pvp1v1 + pvp2v2
+            };
+        }
+
         // 
         public GamePlayer SearchPlayer(string id)
         {

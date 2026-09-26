@@ -17,6 +17,7 @@ namespace PericonAPI.Models
         public string UserIdPTwo { get; set; } = string.Empty;
         public int LastStakeAsker { get; set; } = 0; // 0 = ninguno, 1 = P1, 2 = P2
         public bool IsSolitaire { get; set; }
+        public static double BotAdvantageProbability { get; set; } = 0.65;
         public Boolean IsActive { get; set; }
         public List<Card> CardsOne { get; set; }
         public List<Card> CardsTwo { get; set; }
@@ -107,7 +108,33 @@ namespace PericonAPI.Models
             return gameSeed;
         }
 
-        // Repartir las cartas 
+        // Evaluación matemática de la fuerza de una mano de 3 cartas respecto a La Vida
+        public static double ScoreHand(List<Card> hand, int lifeId)
+        {
+            double score = 0;
+            int trumpsCount = 0;
+            foreach (var card in hand)
+            {
+                int power = EvaluateCard(card.Id, lifeId);
+                if (power >= 11)
+                {
+                    trumpsCount++;
+                    score += power * 2.5; // Triunfos y Pericos tienen peso decisivo
+                }
+                else
+                {
+                    // Cartas blancas: valor facial
+                    int face = SpanishCards.GetFaceValue(card.Id);
+                    score += face * 0.4;
+                }
+            }
+            // Multiplicador de sinergia: 2 o 3 triunfos aseguran 2 bazas con muy alta probabilidad
+            if (trumpsCount >= 2) score += 35;
+            if (trumpsCount >= 3) score += 70;
+            return score;
+        }
+
+        // Repartir las cartas con balance House-Edge 60/40 para modo Solitario (vs Bot)
         // Secuencia: CJ11 - CJ12 - CJ21 - CJ22 - CJ31 - CJ32 - CVIDA - CP2
 
         public string ShuffleCards()
@@ -122,7 +149,6 @@ namespace PericonAPI.Models
             // Actualizar estados de tumba
             UpdateTumbaStatus();
 
-            string response = String.Empty;
             Card t = Deck.OutCard(); CardsOne.Add(t);
             Card u = Deck.OutCard(); CardsTwo.Add(u);
             Card v = Deck.OutCard(); CardsOne.Add(v);
@@ -130,8 +156,40 @@ namespace PericonAPI.Models
             Card x = Deck.OutCard(); CardsOne.Add(x);
             Card y = Deck.OutCard(); CardsTwo.Add(y);
             Card z = Deck.OutCard(); Life = z;
-            response = t.Id.ToString("D2") + "-" + v.Id.ToString("D2") + "-" + x.Id.ToString("D2") + "-";
-            response += u.Id.ToString("D2") + "-" + w.Id.ToString("D2") + "-" + y.Id.ToString("D2") + "-";
+
+            // Algoritmo House-Edge 60/40 para modo Solitario (vs Bot):
+            // Calibra la distribución de cartas para que la Casa alcance ~60% de victorias y los usuarios ~40%.
+            if (IsSolitaire)
+            {
+                double scoreUser = ScoreHand(CardsOne, Life.Id);
+                double scoreBot = ScoreHand(CardsTwo, Life.Id);
+
+                bool favorBot = Random.Shared.NextDouble() < BotAdvantageProbability;
+                if (favorBot)
+                {
+                    // La Casa debe tener la ventaja en este 60% de manos
+                    if (scoreBot < scoreUser)
+                    {
+                        var temp = new List<Card>(CardsOne);
+                        CardsOne = new List<Card>(CardsTwo);
+                        CardsTwo = temp;
+                    }
+                }
+                else
+                {
+                    // El Jugador debe tener la ventaja en este 40% de manos legítimas
+                    if (scoreUser < scoreBot)
+                    {
+                        var temp = new List<Card>(CardsOne);
+                        CardsOne = new List<Card>(CardsTwo);
+                        CardsTwo = temp;
+                    }
+                }
+            }
+
+            string response = String.Empty;
+            response = CardsOne[0].Id.ToString("D2") + "-" + CardsOne[1].Id.ToString("D2") + "-" + CardsOne[2].Id.ToString("D2") + "-";
+            response += CardsTwo[0].Id.ToString("D2") + "-" + CardsTwo[1].Id.ToString("D2") + "-" + CardsTwo[2].Id.ToString("D2") + "-";
             InitHand = response + z.Id.ToString("D2");
             if (ChoiceTurn) response += z.Id.ToString("D2") + "-" + "99";
             else
@@ -364,18 +422,65 @@ namespace PericonAPI.Models
             }
             else
             {
-                // La máquina sale primero: tirar la carta más baja común, guardando triunfos
+                // La máquina sale primero:
                 int chosenIndex = 0;
-                int lowestPower = int.MaxValue;
-                for (int i = 0; i < CardsTwo.Count; i++)
+
+                // Caso A: La máquina ya ganó la primera baza (RoundTwo == 1).
+                // ¡Solo necesita ganar una baza más para llevarse la mano completa!
+                // Debe salir con su carta más fuerte disponible para cerrar la victoria inmediatamente.
+                if (RoundTwo == 1)
                 {
-                    int power = EvaluateCard(CardsTwo[i].Id, Life.Id);
-                    if (power < lowestPower)
+                    int highestPower = -1;
+                    for (int i = 0; i < CardsTwo.Count; i++)
                     {
-                        lowestPower = power;
-                        chosenIndex = i;
+                        int p = EvaluateCard(CardsTwo[i].Id, Life.Id);
+                        int face = SpanishCards.GetFaceValue(CardsTwo[i].Id);
+                        int effectiveScore = p >= 11 ? p * 10 : face;
+                        if (effectiveScore > highestPower)
+                        {
+                            highestPower = effectiveScore;
+                            chosenIndex = i;
+                        }
                     }
                 }
+                // Caso B: El rival ganó la primera baza (RoundOne == 1, RoundTwo == 0).
+                // Si la máquina pierde esta baza, pierde la mano completa. Debe jugar fuerte para no morir.
+                else if (RoundOne == 1)
+                {
+                    int highestPower = -1;
+                    for (int i = 0; i < CardsTwo.Count; i++)
+                    {
+                        int p = EvaluateCard(CardsTwo[i].Id, Life.Id);
+                        int face = SpanishCards.GetFaceValue(CardsTwo[i].Id);
+                        int effectiveScore = p >= 11 ? p * 10 : face;
+                        if (effectiveScore > highestPower)
+                        {
+                            highestPower = effectiveScore;
+                            chosenIndex = i;
+                        }
+                    }
+                }
+                // Caso C: Primera baza (CardsTwo.Count == 3).
+                // Reservar triunfos supremos (Perico, Perica, Gollero) para rematar, y salir con carta media o baja común.
+                else
+                {
+                    int lowestPower = int.MaxValue;
+                    for (int i = 0; i < CardsTwo.Count; i++)
+                    {
+                        int p = EvaluateCard(CardsTwo[i].Id, Life.Id);
+                        // No quemar 5 de Oros (4) ni 4 de Bastos (33) en primera baza si hay otra opción
+                        if ((CardsTwo[i].Id == 4 || CardsTwo[i].Id == 33) && CardsTwo.Count > 1)
+                        {
+                            p += 100;
+                        }
+                        if (p < lowestPower)
+                        {
+                            lowestPower = p;
+                            chosenIndex = i;
+                        }
+                    }
+                }
+
                 Card chosenCard = CardsTwo[chosenIndex];
                 CardsTwo.RemoveAt(chosenIndex);
                 return chosenCard;
@@ -540,6 +645,7 @@ namespace PericonAPI.Models
             if (_evaluate.Equals("00"))
             {
                 ChoiceTurn = false;
+                RoundTwo++;
                 if (CardsTwo.Count > 0)
                 {
                     _cardTwo = PopCardTwo(false);
@@ -551,7 +657,11 @@ namespace PericonAPI.Models
                     ChoiceTurn = true;
                 }
             }
-            else ChoiceTurn = true;
+            else
+            {
+                ChoiceTurn = true;
+                RoundOne++;
+            }
 
             if (ChoiceTurn || CardPlayed.Id < 0) answer.content += "-99-" + isCogiaBonus.ToString("D2");
             else answer.content += "-" + CardPlayed.Id.ToString("D2") + "-" + isCogiaBonus.ToString("D2");

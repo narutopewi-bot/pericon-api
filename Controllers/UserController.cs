@@ -163,6 +163,34 @@ namespace PericonAPI.Controllers
             _context.BotMatchRecords.Add(botRecord);
             await _context.SaveChangesAsync();
 
+            // Calibración dinámica del Bot para garantizar 60% Casa / 40% Jugadores a largo plazo
+            try
+            {
+                var totalBotMatches = await _context.BotMatchRecords.CountAsync();
+                var botWins = await _context.BotMatchRecords.CountAsync(m => !m.UserWon);
+                double currentBotWinRate = totalBotMatches > 0 ? (double)botWins / totalBotMatches : 0.60;
+
+                if (currentBotWinRate < 0.55)
+                {
+                    // Si el bot va ganando menos del 55%, elevamos la ventaja a 70% para recuperar el objetivo de la Casa
+                    GamePlayOneVsOne.BotAdvantageProbability = 0.70;
+                }
+                else if (currentBotWinRate > 0.65)
+                {
+                    // Si el bot supera el 65%, relajamos a 55% para mantener el equilibrio
+                    GamePlayOneVsOne.BotAdvantageProbability = 0.55;
+                }
+                else
+                {
+                    // Tasa estabilizada en el objetivo exacto del 60% Casa
+                    GamePlayOneVsOne.BotAdvantageProbability = 0.60;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error actualizando calibración dinámica del Bot: {ex.Message}");
+            }
+
             var totalMatches = user.Wins + user.Losses;
             var winRate = totalMatches > 0 ? Math.Round((double)user.Wins / totalMatches * 100, 1) : 0;
 

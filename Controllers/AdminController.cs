@@ -77,7 +77,8 @@ namespace PericonAPI.Controllers
                 totalBotWins,
                 combinedTotalMatches,
                 combinedCoinsWagered,
-                combinedHouseProfit
+                combinedHouseProfit,
+                live = Hubs.MessagingHub.GetLiveActivityStatus()
             });
         }
 
@@ -648,6 +649,7 @@ namespace PericonAPI.Controllers
             return Ok(new
             {
                 users = new { total = totalUsers, active = activeUsers, banned = bannedUsers },
+                live = Hubs.MessagingHub.GetLiveActivityStatus(),
                 financial = new
                 {
                     totalBsDeposited = totalBsRecharges,
@@ -665,6 +667,12 @@ namespace PericonAPI.Controllers
                     pendingWithdrawalsCount
                 }
             });
+        }
+
+        [HttpGet("live-activity")]
+        public IActionResult GetLiveActivity()
+        {
+            return Ok(Hubs.MessagingHub.GetLiveActivityStatus());
         }
 
         [HttpGet("promos")]
