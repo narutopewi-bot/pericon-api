@@ -223,7 +223,10 @@ namespace PericonAPI.Hubs
             var id = Context.ConnectionId;
             counter++;
             GamePlayer q = new GamePlayer(id.ToString(), "Jugador-" + counter.ToString(), "buzon@correo.com");
-            users.Add(q);
+            lock (users)
+            {
+                users.Add(q);
+            }
             Console.WriteLine($"Cliente: {q} y Cantidad de elementos en Users: {users.Count}");
             await base.OnConnectedAsync();
         }
@@ -239,7 +242,21 @@ namespace PericonAPI.Hubs
             int queue = 0;
             lock (queueLock) { queue = matchmakingQueue.Count; }
             int online = 0;
-            lock (users) { online = users.Count; }
+            lock (users)
+            {
+                // Contar usuarios reales únicos identificados por nombre/correo,
+                // más visitantes anónimos únicos con conexión activa en este instante.
+                var identifiedUsers = users
+                    .Where(u => !string.IsNullOrEmpty(u.Name) && !u.Name.StartsWith("Jugador-"))
+                    .Select(u => u.Name.ToLowerInvariant())
+                    .Distinct()
+                    .Count();
+
+                var anonymousSockets = users
+                    .Count(u => string.IsNullOrEmpty(u.Name) || u.Name.StartsWith("Jugador-"));
+
+                online = identifiedUsers + anonymousSockets;
+            }
 
             return new
             {
@@ -255,33 +272,26 @@ namespace PericonAPI.Hubs
         // 
         public GamePlayer SearchPlayer(string id)
         {
-            GamePlayer q = new GamePlayer();
-            foreach(GamePlayer player in users) 
+            lock (users)
             {
-                if (player.Id.Equals(id))
-                {
-                    q = player;
-                    break;
-                }
+                return users.FirstOrDefault(player => player.Id.Equals(id)) ?? new GamePlayer();
             }
-            return q;
         }
 
         public async Task SetPlayer()
         {
             Console.WriteLine($"SetPlayer. Cliente: {Context.ConnectionId}");
-            GamePlayer user = new GamePlayer();
-            user.Name = "nulo";
-            foreach(GamePlayer x in users)
+            GamePlayer user = new GamePlayer { Name = "nulo" };
+            lock (users)
             {
-                if (x.Id.Equals(Context.ConnectionId))
+                var found = users.FirstOrDefault(x => x.Id.Equals(Context.ConnectionId));
+                if (found != null)
                 {
                     Console.WriteLine("Está en la lista!");
-                    user = x;
-                    break;
+                    user = found;
                 }
             }
-            await Clients.Client(user.Id).SendAsync("GetPlayer", user);
+            await Clients.Client(user.Id ?? Context.ConnectionId).SendAsync("GetPlayer", user);
         }
 
         public async Task IdentifyPlayer(string playerName, string email, int coins)
@@ -310,6 +320,13 @@ namespace PericonAPI.Hubs
             GamePlayer? toNotify = null;
             lock (users)
             {
+                if (!string.IsNullOrWhiteSpace(playerName))
+                {
+                    users.RemoveAll(u => u.Id != Context.ConnectionId && 
+                                        !string.IsNullOrEmpty(u.Name) && 
+                                        u.Name.Equals(playerName, StringComparison.OrdinalIgnoreCase));
+                }
+
                 foreach (var user in users)
                 {
                     if (user.Id.Equals(Context.ConnectionId))
@@ -343,12 +360,15 @@ namespace PericonAPI.Hubs
         {
             Console.WriteLine($"GetListPlayers. Cliente: {Context.ConnectionId}");
             List<Player> listuser = new List<Player>();
-            foreach (GamePlayer x in users)
+            lock (users)
             {
-                if (x.Id.Equals(Context.ConnectionId) == false)
+                foreach (GamePlayer x in users)
                 {
-                    Player w = new Player(x.Name, x.Id);
-                    listuser.Add(w);
+                    if (x.Id.Equals(Context.ConnectionId) == false)
+                    {
+                        Player w = new Player(x.Name, x.Id);
+                        listuser.Add(w);
+                    }
                 }
             }
             await Clients.Client(Context.ConnectionId).SendAsync("RetListPlayers", listuser);
@@ -569,14 +589,10 @@ namespace PericonAPI.Hubs
 
         public GamePlayer GetPlayerData(string _id)
         {
-            GamePlayer x = new GamePlayer();
-            foreach(GamePlayer w in users)
-                if (w.Id == _id)
-                {
-                    x = w;
-                    break;
-                }
-            return x;
+            lock (users)
+            {
+                return users.FirstOrDefault(w => w.Id == _id) ?? new GamePlayer();
+            }
         }
 
         // Se define el juego
@@ -3830,6 +3846,11 @@ namespace PericonAPI.Hubs
         public override async Task OnDisconnectedAsync(Exception? exception)
         {
             string callerId = Context.ConnectionId;
+            lock (users)
+            {
+                users.RemoveAll(u => u.Id == callerId);
+            }
+
             lock (queueLock)
             {
                 matchmakingQueue.RemoveAll(q => q.ConnectionId == callerId);
