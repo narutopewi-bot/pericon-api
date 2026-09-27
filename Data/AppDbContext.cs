@@ -18,6 +18,7 @@ namespace PericonAPI.Data
         public DbSet<PromoCodeRedemption> PromoCodeRedemptions { get; set; }
         public DbSet<AppErrorLog> AppErrorLogs { get; set; }
         public DbSet<SystemAnnouncement> SystemAnnouncements { get; set; }
+        public DbSet<PlayerFeedback> PlayerFeedbacks { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

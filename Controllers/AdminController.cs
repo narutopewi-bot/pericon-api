@@ -1151,6 +1151,75 @@ namespace PericonAPI.Controllers
                 }
             });
         }
+
+        [HttpGet("feedbacks")]
+        public async Task<IActionResult> GetFeedbacks([FromQuery] string? category, [FromQuery] int? rating)
+        {
+            var query = _context.PlayerFeedbacks.AsQueryable();
+
+            if (!string.IsNullOrWhiteSpace(category) && category != "ALL")
+            {
+                query = query.Where(f => f.Category.ToLower() == category.ToLower());
+            }
+
+            if (rating.HasValue && rating.Value > 0)
+            {
+                query = query.Where(f => f.Rating == rating.Value);
+            }
+
+            var feedbacks = await query
+                .OrderByDescending(f => f.CreatedAt)
+                .Select(f => new
+                {
+                    id = f.Id,
+                    userId = f.UserId,
+                    username = f.Username,
+                    userEmail = f.UserEmail,
+                    userPhone = f.UserPhone,
+                    rating = f.Rating,
+                    category = f.Category,
+                    message = f.Message,
+                    canPublish = f.CanPublish,
+                    isFeatured = f.IsFeatured,
+                    createdAt = f.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")
+                })
+                .ToListAsync();
+
+            var total = await _context.PlayerFeedbacks.CountAsync();
+            var avg = total > 0 ? await _context.PlayerFeedbacks.AverageAsync(f => f.Rating) : 5.0;
+
+            return Ok(new
+            {
+                success = true,
+                total,
+                averageRating = Math.Round(avg, 1),
+                feedbacks
+            });
+        }
+
+        [HttpPost("feedback/{id}/toggle-featured")]
+        public async Task<IActionResult> ToggleFeaturedFeedback(int id)
+        {
+            var feedback = await _context.PlayerFeedbacks.FindAsync(id);
+            if (feedback == null) return NotFound(new { success = false, message = "Opinión no encontrada." });
+
+            feedback.IsFeatured = !feedback.IsFeatured;
+            await _context.SaveChangesAsync();
+
+            return Ok(new { success = true, isFeatured = feedback.IsFeatured, message = feedback.IsFeatured ? "Opinión destacada como testimonio." : "Opinión removida de destacados." });
+        }
+
+        [HttpDelete("feedback/{id}")]
+        public async Task<IActionResult> DeleteFeedback(int id)
+        {
+            var feedback = await _context.PlayerFeedbacks.FindAsync(id);
+            if (feedback == null) return NotFound(new { success = false, message = "Opinión no encontrada." });
+
+            _context.PlayerFeedbacks.Remove(feedback);
+            await _context.SaveChangesAsync();
+
+            return Ok(new { success = true, message = "Opinión eliminada correctamente." });
+        }
     }
 
     public class ResetSeasonDto
