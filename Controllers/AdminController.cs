@@ -232,6 +232,7 @@ namespace PericonAPI.Controllers
                     userId = r.UserId,
                     username = r.User != null ? r.User.Username : "Desconocido",
                     userEmail = r.User != null ? r.User.Email : "",
+                    userPhone = r.User != null ? r.User.PhoneNumber : "",
                     userCoins = r.User != null ? r.User.Coins : 0,
                     amountBs = r.AmountBs,
                     coinsAmount = r.CoinsAmount,
