@@ -87,7 +87,6 @@ namespace PericonAPI.Controllers
         {
             var matches = await _context.MatchBetRecords
                 .OrderByDescending(m => m.CreatedAt)
-                .Take(100)
                 .Select(m => new
                 {
                     id = m.Id,
@@ -138,7 +137,6 @@ namespace PericonAPI.Controllers
 
             var matches = await query
                 .OrderByDescending(m => m.CreatedAt)
-                .Take(200)
                 .Select(m => new
                 {
                     id = m.Id,

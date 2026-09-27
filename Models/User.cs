@@ -52,6 +52,17 @@ namespace PericonAPI.Models
         [MaxLength(50)]
         public string? InstagramHandle { get; set; }
 
+        [MaxLength(20)]
+        public string? Cedula { get; set; }
+
+        [MaxLength(100)]
+        public string? BankName { get; set; }
+
+        [MaxLength(128)]
+        public string? DeviceFingerprint { get; set; }
+
+        public DateTime? BirthDate { get; set; }
+
         public string GetCalculatedLevel()
         {
             if (Wins <= 10) return "Peón de Casona";

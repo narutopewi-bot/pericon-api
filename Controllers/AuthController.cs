@@ -28,6 +28,20 @@ namespace PericonAPI.Controllers
             var cleanEmail = dto.Email.Trim().ToLowerInvariant();
             var cleanUsername = dto.Username.Trim();
 
+            // 1. Bloqueo de correos temporales / desechables
+            var disposableDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "tempmail.com", "temp-mail.org", "guerrillamail.com", "yopmail.com", "10minutemail.com",
+                "mailinator.com", "throwawaymail.com", "trashmail.com", "getairmail.com", "dispostable.com",
+                "sharklasers.com", "fakeinbox.com", "mohmal.com", "burnermail.io", "mytemp.email", "tempmail.net",
+                "crazymailing.com", "armyspy.com", "cuvox.de", "dayrep.com", "fleckens.hu", "gustr.com"
+            };
+            var emailParts = cleanEmail.Split('@');
+            if (emailParts.Length == 2 && disposableDomains.Contains(emailParts[1]))
+            {
+                return BadRequest(new { message = "No se permiten correos electrónicos temporales o desechables. Por favor usa un correo personal válido (Gmail, Outlook, Yahoo, etc.)." });
+            }
+
             if (await _context.Users.AnyAsync(u => u.Email.ToLower() == cleanEmail))
             {
                 return BadRequest(new { message = "El correo ya se encuentra registrado." });
@@ -38,14 +52,99 @@ namespace PericonAPI.Controllers
                 return BadRequest(new { message = "El nombre de usuario ya está en uso." });
             }
 
-            var passwordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password);
+            // 2. Validación de Mayor de Edad (Fecha de Nacimiento >= 18 años)
+            DateTime? parsedBirthDate = null;
+            if (!string.IsNullOrWhiteSpace(dto.BirthDate))
+            {
+                if (DateTime.TryParse(dto.BirthDate, out var bDate))
+                {
+                    parsedBirthDate = DateTime.SpecifyKind(bDate, DateTimeKind.Utc);
+                    var today = DateTime.UtcNow;
+                    var age = today.Year - bDate.Year;
+                    if (bDate.Date > today.AddYears(-age)) age--;
+                    if (age < 18)
+                    {
+                        return BadRequest(new { message = "Debes tener al menos 18 años cumplidos para registrarte y jugar en El Pericón." });
+                    }
+                }
+                else
+                {
+                    return BadRequest(new { message = "Formato de fecha de nacimiento inválido." });
+                }
+            }
+            else
+            {
+                return BadRequest(new { message = "La fecha de nacimiento es obligatoria para verificar que seas mayor de edad." });
+            }
+
+            // 3. Validación de Cédula de Identidad (Única)
+            var cleanCedula = dto.Cedula?.Trim().ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(cleanCedula))
+            {
+                return BadRequest(new { message = "La cédula de identidad es requerida para el registro." });
+            }
+            cleanCedula = System.Text.RegularExpressions.Regex.Replace(cleanCedula, @"\s+", "");
+            if (!cleanCedula.StartsWith("V-") && !cleanCedula.StartsWith("E-"))
+            {
+                if (cleanCedula.StartsWith("V") || cleanCedula.StartsWith("E"))
+                {
+                    cleanCedula = cleanCedula.Substring(0, 1) + "-" + cleanCedula.Substring(1);
+                }
+                else
+                {
+                    cleanCedula = "V-" + cleanCedula;
+                }
+            }
+            if (await _context.Users.AnyAsync(u => u.Cedula != null && u.Cedula.ToLower() == cleanCedula.ToLower()))
+            {
+                return BadRequest(new { message = "Esta cédula de identidad ya se encuentra registrada con otra cuenta en El Pericón." });
+            }
+
+            // 4. Validación de Banco
+            var cleanBank = dto.BankName?.Trim();
+            if (string.IsNullOrWhiteSpace(cleanBank))
+            {
+                return BadRequest(new { message = "Debes seleccionar tu banco para Pago Móvil." });
+            }
+
+            // 5. Validación de Teléfono / WhatsApp (Único)
             string? rawPhone = !string.IsNullOrWhiteSpace(dto.PhoneNumber) ? dto.PhoneNumber.Trim() : (!string.IsNullOrWhiteSpace(dto.Phone) ? dto.Phone.Trim() : null);
+            if (string.IsNullOrWhiteSpace(rawPhone))
+            {
+                return BadRequest(new { message = "El número de teléfono de Pago Móvil es requerido." });
+            }
+            var digitsOnly = System.Text.RegularExpressions.Regex.Replace(rawPhone, @"\D", "");
+            if (digitsOnly.Length < 10 || digitsOnly.Length > 12)
+            {
+                return BadRequest(new { message = "Ingresa un número telefónico venezolano válido (ej: 04121234567)." });
+            }
+            if (await _context.Users.AnyAsync(u => u.PhoneNumber != null && (u.PhoneNumber == rawPhone || u.PhoneNumber == digitsOnly)))
+            {
+                return BadRequest(new { message = "Este número de teléfono ya se encuentra registrado con otra cuenta." });
+            }
+
+            // 6. Validación de Huella Digital del Dispositivo (Device Fingerprint)
+            var cleanFingerprint = dto.DeviceFingerprint?.Trim();
+            if (!string.IsNullOrWhiteSpace(cleanFingerprint))
+            {
+                bool deviceAlreadyRegistered = await _context.Users.AnyAsync(u => u.DeviceFingerprint == cleanFingerprint);
+                if (deviceAlreadyRegistered)
+                {
+                    return BadRequest(new { message = "🚫 Este dispositivo ya tiene una cuenta registrada en El Pericón. No está permitido registrar múltiples cuentas desde el mismo teléfono o equipo." });
+                }
+            }
+
+            var passwordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password);
 
             var user = new User
             {
                 Username = cleanUsername,
                 Email = cleanEmail,
                 PhoneNumber = rawPhone,
+                Cedula = cleanCedula,
+                BankName = cleanBank,
+                DeviceFingerprint = cleanFingerprint,
+                BirthDate = parsedBirthDate,
                 PasswordHash = passwordHash,
                 Coins = 200,
                 BonusCoins = 200,
@@ -64,6 +163,8 @@ namespace PericonAPI.Controllers
                 Username = user.Username,
                 Email = user.Email,
                 PhoneNumber = user.PhoneNumber,
+                Cedula = user.Cedula,
+                BankName = user.BankName,
                 Coins = user.Coins,
                 BonusCoins = user.BonusCoins,
                 RetirableCoins = user.GetRetirableCoins(),
@@ -136,6 +237,8 @@ namespace PericonAPI.Controllers
                 Username = user.Username,
                 Email = user.Email,
                 PhoneNumber = user.PhoneNumber,
+                Cedula = user.Cedula,
+                BankName = user.BankName,
                 Coins = user.Coins,
                 BonusCoins = user.BonusCoins,
                 RetirableCoins = user.GetRetirableCoins(),

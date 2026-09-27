@@ -19,6 +19,17 @@ namespace PericonAPI.Models
         [MaxLength(30)]
         public string? PhoneNumber { get; set; }
         public string? Phone { get; set; }
+
+        [MaxLength(20)]
+        public string? Cedula { get; set; }
+
+        [MaxLength(100)]
+        public string? BankName { get; set; }
+
+        [MaxLength(128)]
+        public string? DeviceFingerprint { get; set; }
+
+        public string? BirthDate { get; set; }
     }
 
     public class LoginDto
@@ -53,6 +64,8 @@ namespace PericonAPI.Models
         public int Experience { get; set; }
         public string? AvatarUrl { get; set; }
         public string? PhoneNumber { get; set; }
+        public string? Cedula { get; set; }
+        public string? BankName { get; set; }
         public string Message { get; set; } = string.Empty;
     }
 
