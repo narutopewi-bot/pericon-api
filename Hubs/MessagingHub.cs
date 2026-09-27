@@ -231,6 +231,11 @@ namespace PericonAPI.Hubs
             await base.OnConnectedAsync();
         }
 
+        public Task<string> Ping()
+        {
+            return Task.FromResult("pong");
+        }
+
         public static object GetLiveActivityStatus()
         {
             int sol = 0;
@@ -873,6 +878,12 @@ namespace PericonAPI.Hubs
             int numg = FindGame1vs1(gameId);
             if (numg < 0 || numg >= games.Count) return;
 
+            // 1. Asegurar que la partida continúe activa si no ha terminado
+            if (games[numg].PointsOne < 9 && games[numg].PointsTwo < 9)
+            {
+                games[numg].IsActive = true;
+            }
+
             if (isPlayerOne) games[numg].IdPOne = Context.ConnectionId;
             else games[numg].IdPTwo = Context.ConnectionId;
 
@@ -887,6 +898,30 @@ namespace PericonAPI.Hubs
                     isPlayerOne = isPlayerOne
                 });
             }
+
+            // Sincronización autoritativa completa de la partida al reconectado
+            int myPoints = isPlayerOne ? games[numg].PointsOne : games[numg].PointsTwo;
+            int oppPoints = isPlayerOne ? games[numg].PointsTwo : games[numg].PointsOne;
+            int myRounds = isPlayerOne ? games[numg].RoundOne : games[numg].RoundTwo;
+            int oppRounds = isPlayerOne ? games[numg].RoundTwo : games[numg].RoundOne;
+            bool isMyTurn = isPlayerOne ? games[numg].PlayerTurn : !games[numg].PlayerTurn;
+
+            await Clients.Client(Context.ConnectionId).SendAsync("GameStateSync1vs1", new
+            {
+                gameId = gameId,
+                isPlayerOne = isPlayerOne,
+                pointsOwn = myPoints,
+                pointsOpp = oppPoints,
+                roundsOwn = myRounds,
+                roundsOpp = oppRounds,
+                isMyTurn = isMyTurn,
+                currentStake = games[numg].CurrentStake > 0 ? games[numg].CurrentStake : 1,
+                lastStakeAsker = games[numg].LastStakeAsker,
+                handCount = games[numg].HandCount,
+                hasLeadMove = games[numg].CurrentLeadMove != null,
+                leadMove = games[numg].CurrentLeadMove,
+                pendingAsk = games[numg].PendingAsk369Message
+            });
 
             // Sincronización proactiva: si hay una carta de salida (orden 84) en la mesa, entregársela al reconectado
             if (games[numg].CurrentLeadMove != null)
@@ -910,9 +945,41 @@ namespace PericonAPI.Hubs
         {
             int numg = FindGame1vs1(gameId);
             if (numg < 0 || numg >= games.Count) return;
-            if (!games[numg].IsActive) return;
+            if (!games[numg].IsActive)
+            {
+                if (games[numg].PointsOne < 9 && games[numg].PointsTwo < 9)
+                {
+                    games[numg].IsActive = true;
+                }
+                else
+                {
+                    return;
+                }
+            }
 
             await Groups.AddToGroupAsync(Context.ConnectionId, $"game1vs1_{gameId}");
+
+            bool isP1 = (Context.ConnectionId == games[numg].IdPOne);
+            bool isP2 = (Context.ConnectionId == games[numg].IdPTwo);
+            bool isCallerP1 = isP1 || (!isP2 && games[numg].NamePOne == SearchPlayer(Context.ConnectionId)?.Name);
+
+            int myPoints = isCallerP1 ? games[numg].PointsOne : games[numg].PointsTwo;
+            int oppPoints = isCallerP1 ? games[numg].PointsTwo : games[numg].PointsOne;
+            bool isMyTurn = isCallerP1 ? games[numg].PlayerTurn : !games[numg].PlayerTurn;
+
+            await Clients.Client(Context.ConnectionId).SendAsync("GameStateSync1vs1", new
+            {
+                gameId = gameId,
+                isPlayerOne = isCallerP1,
+                pointsOwn = myPoints,
+                pointsOpp = oppPoints,
+                isMyTurn = isMyTurn,
+                currentStake = games[numg].CurrentStake > 0 ? games[numg].CurrentStake : 1,
+                lastStakeAsker = games[numg].LastStakeAsker,
+                hasLeadMove = games[numg].CurrentLeadMove != null,
+                leadMove = games[numg].CurrentLeadMove,
+                pendingAsk = games[numg].PendingAsk369Message
+            });
 
             if (games[numg].CurrentLeadMove != null)
             {
@@ -922,7 +989,6 @@ namespace PericonAPI.Hubs
 
             if (games[numg].PendingAsk369Message != null)
             {
-                bool isCallerP1 = (Context.ConnectionId == games[numg].IdPOne);
                 if (games[numg].LastStakeAsker != (isCallerP1 ? 1 : 2))
                 {
                     await Clients.Client(Context.ConnectionId).SendAsync("Asked369Game", games[numg].PendingAsk369Message);
@@ -1276,10 +1342,7 @@ namespace PericonAPI.Hubs
                 {
                     await Clients.Client(targetOpp).SendAsync("ResponseCard1vs1", sentence);
                 }
-                else
-                {
-                    await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("ResponseCard1vs1", sentence);
-                }
+                await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("ResponseCard1vs1", sentence);
             }
             else if (move.order == 83) // Juego del que responde
             {
@@ -1459,10 +1522,7 @@ namespace PericonAPI.Hubs
                 {
                     await Clients.Client(targetOpp).SendAsync("ResponseCard1vs1", sentence);
                 }
-                else
-                {
-                    await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("ResponseCard1vs1", sentence);
-                }
+                await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("ResponseCard1vs1", sentence);
                 await Clients.Client(Context.ConnectionId).SendAsync("ReasonRound1vs1", rdef);
             }
         }
@@ -2218,7 +2278,13 @@ namespace PericonAPI.Hubs
                 List<MatchQueueItem> matchedFour = new List<MatchQueueItem>();
                 lock (queueLock)
                 {
-                    matchmakingQueue.RemoveAll(q => q.ConnectionId == callerId);
+                    // Limpiar sockets desconectados de users o vencidos (> 120s)
+                    lock (users)
+                    {
+                        matchmakingQueue.RemoveAll(q => !users.Any(u => u.Id == q.ConnectionId) || (DateTime.UtcNow - q.EnqueuedAt).TotalSeconds > 120);
+                    }
+
+                    matchmakingQueue.RemoveAll(q => q.ConnectionId == callerId || (!string.IsNullOrEmpty(userId) && q.UserId == userId));
                     matchmakingQueue.Add(new MatchQueueItem
                     {
                         ConnectionId = callerId,
@@ -2336,8 +2402,14 @@ namespace PericonAPI.Hubs
 
             lock (queueLock)
             {
+                // Limpiar sockets desconectados de users o vencidos (> 120s)
+                lock (users)
+                {
+                    matchmakingQueue.RemoveAll(q => !users.Any(u => u.Id == q.ConnectionId) || (DateTime.UtcNow - q.EnqueuedAt).TotalSeconds > 120);
+                }
+
                 // Limpiar entradas previas del mismo jugador
-                matchmakingQueue.RemoveAll(q => q.ConnectionId == callerId);
+                matchmakingQueue.RemoveAll(q => q.ConnectionId == callerId || (!string.IsNullOrEmpty(userId) && q.UserId == userId));
 
                 // Buscar un contrincante que espere el mismo modo y apuesta
                 matchedPlayer = matchmakingQueue.FirstOrDefault(q => q.Mode == mode && q.Bet == bet && q.ConnectionId != callerId);
@@ -3957,18 +4029,6 @@ namespace PericonAPI.Hubs
                     {
                         string oppId = (g.IdPOne == callerId) ? g.IdPTwo : g.IdPOne;
                         string discName = (g.IdPOne == callerId) ? g.NamePOne : g.NamePTwo;
-
-                        // Si el oponente no existe o tampoco está conectado, la partida queda inactiva
-                        bool oppConnected = false;
-                        lock (users)
-                        {
-                            oppConnected = !string.IsNullOrEmpty(oppId) && users.Any(u => u.Id == oppId);
-                        }
-
-                        if (!oppConnected)
-                        {
-                            g.IsActive = false;
-                        }
 
                         if (!string.IsNullOrEmpty(oppId))
                         {
