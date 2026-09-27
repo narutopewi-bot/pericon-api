@@ -236,7 +236,15 @@ namespace PericonAPI.Hubs
             int sol = 0;
             lock (solitaireLock) { sol = solitaireSessions.Count; }
             int pvp1v1 = 0;
-            lock (games) { pvp1v1 = games.Count(g => !g.IsSolitaire && g.IsActive); }
+            lock (games)
+            {
+                lock (users)
+                {
+                    pvp1v1 = games.Count(g => !g.IsSolitaire && g.IsActive && 
+                        users.Any(u => u.Id == g.IdPOne) && 
+                        users.Any(u => u.Id == g.IdPTwo));
+                }
+            }
             int pvp2v2 = 0;
             lock (games2vs2) { pvp2v2 = games2vs2.Count(g => g.IsActive); }
             int queue = 0;
@@ -3871,6 +3879,19 @@ namespace PericonAPI.Hubs
                     {
                         string oppId = (g.IdPOne == callerId) ? g.IdPTwo : g.IdPOne;
                         string discName = (g.IdPOne == callerId) ? g.NamePOne : g.NamePTwo;
+
+                        // Si el oponente no existe o tampoco está conectado, la partida queda inactiva
+                        bool oppConnected = false;
+                        lock (users)
+                        {
+                            oppConnected = !string.IsNullOrEmpty(oppId) && users.Any(u => u.Id == oppId);
+                        }
+
+                        if (!oppConnected)
+                        {
+                            g.IsActive = false;
+                        }
+
                         if (!string.IsNullOrEmpty(oppId))
                         {
                             _ = Clients.Client(oppId).SendAsync("OpponentDisconnectedNotice1vs1", new
