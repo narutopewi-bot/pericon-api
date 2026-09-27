@@ -357,6 +357,47 @@ using (var scope = app.Services.CreateScope())
 
         try
         {
+            if (db.Database.IsSqlite())
+            {
+                db.Database.ExecuteSqlRaw(@"
+                    CREATE TABLE IF NOT EXISTS PlayerFeedbacks (
+                        Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        UserId INTEGER NULL,
+                        Username TEXT NOT NULL,
+                        UserEmail TEXT NULL,
+                        UserPhone TEXT NULL,
+                        Rating INTEGER NOT NULL DEFAULT 5,
+                        Category TEXT NOT NULL DEFAULT 'General',
+                        Message TEXT NOT NULL,
+                        CanPublish BOOLEAN NOT NULL DEFAULT 1,
+                        IsFeatured BOOLEAN NOT NULL DEFAULT 0,
+                        CreatedAt TEXT NOT NULL
+                    );
+                ");
+            }
+            else
+            {
+                db.Database.ExecuteSqlRaw(@"
+                    CREATE TABLE IF NOT EXISTS ""PlayerFeedbacks"" (
+                        ""Id"" SERIAL PRIMARY KEY,
+                        ""UserId"" INT NULL,
+                        ""Username"" VARCHAR(100) NOT NULL,
+                        ""UserEmail"" VARCHAR(150) NULL,
+                        ""UserPhone"" VARCHAR(30) NULL,
+                        ""Rating"" INT NOT NULL DEFAULT 5,
+                        ""Category"" VARCHAR(50) NOT NULL DEFAULT 'General',
+                        ""Message"" TEXT NOT NULL,
+                        ""CanPublish"" BOOLEAN NOT NULL DEFAULT TRUE,
+                        ""IsFeatured"" BOOLEAN NOT NULL DEFAULT FALSE,
+                        ""CreatedAt"" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+                    );
+                ");
+            }
+        }
+        catch { }
+
+        try
+        {
             // Limpieza de partidas de prueba históricas para el reinicio oficial del panel a cero
             db.Database.ExecuteSqlRaw(@"DELETE FROM ""MatchBetRecords"" WHERE ""CreatedAt"" < '2026-09-26 12:00:00+00';");
         }
