@@ -27,20 +27,46 @@ namespace PericonAPI.Controllers
         [Consumes("multipart/form-data")]
         public async Task<IActionResult> ReportPayment([FromForm] PaymentReportFormDto dto)
         {
+            if (dto.AmountBs <= 0)
+            {
+                return BadRequest(new { message = "El monto de recarga debe ser un número positivo mayor a 0." });
+            }
+
             if (dto.AmountBs < MIN_RECHARGE_BS)
             {
                 return BadRequest(new { message = $"El monto mínimo de recarga es de {MIN_RECHARGE_BS:N0} Bs. ({MIN_RECHARGE_BS:N0} monedas)." });
             }
 
-            if (string.IsNullOrWhiteSpace(dto.Reference))
+            var cleanRef = (dto.Reference ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(cleanRef) || cleanRef.Length < 4)
             {
-                return BadRequest(new { message = "Debes ingresar el número de referencia del pago." });
+                return BadRequest(new { message = "Debes ingresar el número de referencia del pago (al menos 4 dígitos)." });
+            }
+
+            var duplicateRef = await _context.PaymentRecharges
+                .FirstOrDefaultAsync(r => r.Reference == cleanRef && r.Status != "RECHAZADO");
+
+            if (duplicateRef != null)
+            {
+                if (duplicateRef.Status == "APROBADO")
+                {
+                    return BadRequest(new { message = "Esta referencia de pago móvil ya fue aprobada y acreditada anteriormente. No se puede reutilizar." });
+                }
+                else
+                {
+                    return BadRequest(new { message = "Ya tienes una solicitud de recarga pendiente con esta misma referencia. Por favor espera su revisión por el administrador." });
+                }
             }
 
             var user = await _context.Users.FindAsync(dto.UserId);
             if (user == null)
             {
                 return NotFound(new { message = "Usuario no encontrado." });
+            }
+
+            if (!user.IsActive)
+            {
+                return BadRequest(new { message = "Esta cuenta de usuario se encuentra suspendida o inactiva." });
             }
 
             string receiptUrl = "";
@@ -104,20 +130,46 @@ namespace PericonAPI.Controllers
         [HttpPost("report-json")]
         public async Task<IActionResult> ReportPaymentJson([FromBody] PaymentReportJsonDto dto)
         {
+            if (dto.AmountBs <= 0)
+            {
+                return BadRequest(new { message = "El monto de recarga debe ser un número positivo mayor a 0." });
+            }
+
             if (dto.AmountBs < MIN_RECHARGE_BS)
             {
                 return BadRequest(new { message = $"El monto mínimo de recarga es de {MIN_RECHARGE_BS:N0} Bs. ({MIN_RECHARGE_BS:N0} monedas)." });
             }
 
-            if (string.IsNullOrWhiteSpace(dto.Reference))
+            var cleanRef = (dto.Reference ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(cleanRef) || cleanRef.Length < 4)
             {
-                return BadRequest(new { message = "Debes ingresar el número de referencia del pago." });
+                return BadRequest(new { message = "Debes ingresar el número de referencia del pago (al menos 4 dígitos)." });
+            }
+
+            var duplicateRef = await _context.PaymentRecharges
+                .FirstOrDefaultAsync(r => r.Reference == cleanRef && r.Status != "RECHAZADO");
+
+            if (duplicateRef != null)
+            {
+                if (duplicateRef.Status == "APROBADO")
+                {
+                    return BadRequest(new { message = "Esta referencia de pago móvil ya fue aprobada y acreditada anteriormente. No se puede reutilizar." });
+                }
+                else
+                {
+                    return BadRequest(new { message = "Ya tienes una solicitud de recarga pendiente con esta misma referencia. Por favor espera su revisión por el administrador." });
+                }
             }
 
             var user = await _context.Users.FindAsync(dto.UserId);
             if (user == null)
             {
                 return NotFound(new { message = "Usuario no encontrado." });
+            }
+
+            if (!user.IsActive)
+            {
+                return BadRequest(new { message = "Esta cuenta de usuario se encuentra suspendida o inactiva." });
             }
 
             string receiptUrl = "";

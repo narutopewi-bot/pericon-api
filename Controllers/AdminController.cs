@@ -26,7 +26,13 @@ namespace PericonAPI.Controllers
         public async Task<IActionResult> GetStats()
         {
             var totalUsers = await _context.Users.CountAsync();
-            var pendingRecharges = await _context.PaymentRecharges.CountAsync(r => r.Status == "PENDIENTE");
+            var pendingRechargesList = await _context.PaymentRecharges
+                .Where(r => r.Status == "PENDIENTE")
+                .ToListAsync();
+            var pendingRecharges = pendingRechargesList.Count;
+            var totalBsPending = pendingRechargesList.Sum(r => r.AmountBs);
+            var totalCoinsPending = pendingRechargesList.Sum(r => r.CoinsAmount);
+
             var approvedRecharges = await _context.PaymentRecharges
                 .Where(r => r.Status == "APROBADO")
                 .ToListAsync();
@@ -34,7 +40,21 @@ namespace PericonAPI.Controllers
             var totalBsApproved = approvedRecharges.Sum(r => r.AmountBs);
             var totalCoinsApproved = approvedRecharges.Sum(r => r.CoinsAmount);
 
-            var pendingWithdrawals = await _context.PaymentWithdrawals.CountAsync(w => w.Status == "PENDIENTE");
+            var todayUtc = DateTime.UtcNow.Date;
+            var todayRechargesList = await _context.PaymentRecharges
+                .Where(r => r.CreatedAt.Date == todayUtc)
+                .ToListAsync();
+            var todayRechargesCount = todayRechargesList.Count;
+            var todayRechargesBs = todayRechargesList.Sum(r => r.AmountBs);
+            var todayApprovedBs = todayRechargesList.Where(r => r.Status == "APROBADO").Sum(r => r.AmountBs);
+            var todayPendingBs = todayRechargesList.Where(r => r.Status == "PENDIENTE").Sum(r => r.AmountBs);
+
+            var pendingWithdrawalsList = await _context.PaymentWithdrawals
+                .Where(w => w.Status == "PENDIENTE")
+                .ToListAsync();
+            var pendingWithdrawals = pendingWithdrawalsList.Count;
+            var totalBsPendingWithdrawals = pendingWithdrawalsList.Sum(w => w.AmountBs);
+
             var paidWithdrawals = await _context.PaymentWithdrawals
                 .Where(w => w.Status == "PAGADO")
                 .ToListAsync();
@@ -64,9 +84,16 @@ namespace PericonAPI.Controllers
                 totalApprovedCount = approvedRecharges.Count,
                 totalBsApproved,
                 totalCoinsApproved,
+                totalBsPending,
+                totalCoinsPending,
+                todayRechargesCount,
+                todayRechargesBs,
+                todayApprovedBs,
+                todayPendingBs,
                 pendingWithdrawals,
                 totalPaidWithdrawalsCount = paidWithdrawals.Count,
                 totalBsWithdrawn,
+                totalBsPendingWithdrawals,
                 totalHouseCommissions,
                 totalMatchesFinished,
                 totalCoinsWagered,
@@ -639,11 +666,22 @@ namespace PericonAPI.Controllers
             var totalBsRecharges = recharges.Where(r => r.Status == "APROBADO").Sum(r => r.AmountBs);
             var totalCoinsRecharges = recharges.Where(r => r.Status == "APROBADO").Sum(r => r.CoinsAmount);
             var pendingRechargesCount = recharges.Count(r => r.Status == "PENDIENTE");
+            var pendingBsRecharges = recharges.Where(r => r.Status == "PENDIENTE").Sum(r => r.AmountBs);
+            var approvedRechargesCount = recharges.Count(r => r.Status == "APROBADO");
+
+            var todayUtc = DateTime.UtcNow.Date;
+            var todayRechargesList = recharges.Where(r => r.CreatedAt.Date == todayUtc).ToList();
+            var todayRechargesCount = todayRechargesList.Count;
+            var todayRechargesBs = todayRechargesList.Sum(r => r.AmountBs);
+            var todayApprovedBs = todayRechargesList.Where(r => r.Status == "APROBADO").Sum(r => r.AmountBs);
+            var todayPendingBs = todayRechargesList.Where(r => r.Status == "PENDIENTE").Sum(r => r.AmountBs);
 
             var withdrawals = await _context.PaymentWithdrawals.ToListAsync();
             var totalBsWithdrawals = withdrawals.Where(w => w.Status == "PAGADO").Sum(w => w.AmountBs);
             var totalCoinsWithdrawals = withdrawals.Where(w => w.Status == "PAGADO").Sum(w => w.CoinsAmount);
             var pendingWithdrawalsCount = withdrawals.Count(w => w.Status == "PENDIENTE");
+            var pendingBsWithdrawals = withdrawals.Where(w => w.Status == "PENDIENTE").Sum(w => w.AmountBs);
+            var paidWithdrawalsCount = withdrawals.Count(w => w.Status == "PAGADO");
 
             var matches = await _context.MatchBetRecords.ToListAsync();
             var totalCommissions = matches.Sum(m => m.HouseCommission);
@@ -664,8 +702,19 @@ namespace PericonAPI.Controllers
                 financial = new
                 {
                     totalBsDeposited = totalBsRecharges,
+                    approvedRechargesCount,
+                    pendingBsDeposited = pendingBsRecharges,
+                    pendingRechargesCount,
+                    todayRechargesCount,
+                    todayRechargesBs,
+                    todayApprovedBs,
+                    todayPendingBs,
                     totalBsPaid = totalBsWithdrawals,
+                    paidWithdrawalsCount,
+                    pendingBsPaid = pendingBsWithdrawals,
+                    pendingWithdrawalsCount,
                     netBsBalance = totalBsRecharges - totalBsWithdrawals,
+                    netBsBalanceWithPending = (totalBsRecharges + pendingBsRecharges) - (totalBsWithdrawals + pendingBsWithdrawals),
                     totalCoinsCirculating = userCoinsInCirculation,
                     totalCommissionsCollected = totalCommissions,
                     totalMatchesPlayed = totalMatches,
@@ -673,9 +722,7 @@ namespace PericonAPI.Controllers
                     totalBotMatchesPlayed = totalBotMatches,
                     totalBotCoinsWagered = totalBotWagered,
                     totalBotHouseProfit = totalBotHouseProfit,
-                    totalCombinedProfit = totalCommissions + totalBotHouseProfit,
-                    pendingRechargesCount,
-                    pendingWithdrawalsCount
+                    totalCombinedProfit = totalCommissions + totalBotHouseProfit
                 }
             });
         }
