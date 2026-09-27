@@ -481,15 +481,69 @@ namespace PericonAPI.Models
             Ask369 = 0;
             UpdateTumbaStatus();
 
-            string response = String.Empty;
-            Card t = Deck.OutCard(); CardsOne.Add(t);
-            Card u = Deck.OutCard(); CardsTwo.Add(u);
-            Card v = Deck.OutCard(); CardsOne.Add(v);
-            Card w = Deck.OutCard(); CardsTwo.Add(w);
-            Card x = Deck.OutCard(); CardsOne.Add(x);
-            Card y = Deck.OutCard(); CardsTwo.Add(y);
-            Card z = Deck.OutCard(); Life = z;
-            response = t.Id.ToString("D2") + "-" + v.Id.ToString("D2") + "-" + x.Id.ToString("D2") + "-";
+            // 1. Extraer La Vida al azar puro de las 40 cartas de la baraja
+            int lifeIndex = System.Security.Cryptography.RandomNumberGenerator.GetInt32(Deck.Package.Count);
+            Card z = Deck.OutCard(lifeIndex);
+            Life = z;
+
+            // 2. Extraer las 6 cartas (3 para P1, 3 para P2) con sorteo ponderado probabilístico
+            // Las cartas de triunfo o figuras tienen un peso relativo superior (~1.65x)
+            // de modo que aumentan naturalmente las posibilidades de ligar triunfos y jugadas de valor,
+            // pero siempre manteniendo la posibilidad real de que a un jugador no le caiga nada (blancas).
+            Card OutWeightedCard()
+            {
+                if (Deck.Package.Count == 0) Deck.Reload();
+                if (Deck.Package.Count == 1) return Deck.OutCard(0);
+
+                double totalWeight = 0;
+                double[] cumulativeWeights = new double[Deck.Package.Count];
+
+                for (int i = 0; i < Deck.Package.Count; i++)
+                {
+                    int cardId = Deck.Package[i].Id;
+                    int power = EvaluateCard(cardId, Life.Id);
+
+                    // Peso base = 1.0 para cartas blancas comunes
+                    double weight = 1.0;
+                    if (power >= 11) // Triunfo (Perico, Perica, palo de la Vida, Golleros)
+                    {
+                        weight = 1.65; // ~65% más de probabilidad de salir en las manos
+                    }
+                    else if (SpanishCards.GetFaceValue(cardId) >= 10) // Figuras mayores blancas (Sota, Caballo, Rey)
+                    {
+                        weight = 1.25;
+                    }
+
+                    totalWeight += weight;
+                    cumulativeWeights[i] = totalWeight;
+                }
+
+                byte[] randomBytes = new byte[8];
+                System.Security.Cryptography.RandomNumberGenerator.Fill(randomBytes);
+                ulong randomULong = BitConverter.ToUInt64(randomBytes, 0);
+                double randomValue = (randomULong >> 11) * (1.0 / (1UL << 53)) * totalWeight;
+
+                int chosenIndex = 0;
+                for (int i = 0; i < cumulativeWeights.Length; i++)
+                {
+                    if (randomValue < cumulativeWeights[i])
+                    {
+                        chosenIndex = i;
+                        break;
+                    }
+                }
+
+                return Deck.OutCard(chosenIndex);
+            }
+
+            Card t = OutWeightedCard(); CardsOne.Add(t);
+            Card u = OutWeightedCard(); CardsTwo.Add(u);
+            Card v = OutWeightedCard(); CardsOne.Add(v);
+            Card w = OutWeightedCard(); CardsTwo.Add(w);
+            Card x = OutWeightedCard(); CardsOne.Add(x);
+            Card y = OutWeightedCard(); CardsTwo.Add(y);
+
+            string response = t.Id.ToString("D2") + "-" + v.Id.ToString("D2") + "-" + x.Id.ToString("D2") + "-";
             response += u.Id.ToString("D2") + "-" + w.Id.ToString("D2") + "-" + y.Id.ToString("D2") + "-";
             response += z.Id.ToString("D2");
             InitHand = response;
