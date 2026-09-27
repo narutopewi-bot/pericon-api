@@ -83,9 +83,21 @@ namespace PericonAPI.Controllers
         }
 
         [HttpGet("matches")]
-        public async Task<IActionResult> GetMatches()
+        public async Task<IActionResult> GetMatches([FromQuery] string? player)
         {
-            var matches = await _context.MatchBetRecords
+            var query = _context.MatchBetRecords.AsQueryable();
+
+            if (!string.IsNullOrWhiteSpace(player))
+            {
+                var clean = player.Trim().ToLowerInvariant();
+                query = query.Where(m =>
+                    m.PlayerOneName.ToLower().Contains(clean) ||
+                    m.PlayerTwoName.ToLower().Contains(clean) ||
+                    m.WinnerUsername.ToLower().Contains(clean) ||
+                    m.LoserUsername.ToLower().Contains(clean));
+            }
+
+            var matches = await query
                 .OrderByDescending(m => m.CreatedAt)
                 .Select(m => new
                 {
