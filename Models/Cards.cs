@@ -74,11 +74,9 @@ namespace PericonAPI.Models
         {
             Package.Clear();
             Package = new List<Card>(OrderPack);
-            Cant = Package.Count;
-            Random rng = new Random();
             for (int i = Package.Count - 1; i > 0; i--)
             {
-                int j = rng.Next(i + 1);
+                int j = System.Security.Cryptography.RandomNumberGenerator.GetInt32(i + 1);
                 Card temp = Package[i];
                 Package[i] = Package[j];
                 Package[j] = temp;

@@ -688,30 +688,49 @@ namespace PericonAPI.Hubs
             string POne = games[numg].IdPOne;
             string PTwo = games[numg].IdPTwo;
             string PThree = games[numg].InitHand;
-            GameMessage sentence = new GameMessage();
-            sentence.game = move.game;
-            sentence.order = 87;
-            string previewcontent = PThree + "-";
             string PFour = (games[numg].HandStarter == 1 ? "1" : "0");
             string PFive = (games[numg].HandStarter == 2 ? "1" : "0");
             string PScore = $"-{games[numg].PointsOne}-{games[numg].PointsTwo}";
-            sentence.content = previewcontent + PFour + PScore;
-            Console.WriteLine($"[ChangeGame1vs1] Mano {games[numg].HandCount}: Salida corresponde a P{games[numg].HandStarter}. Enviando a POne ({POne})");
-            if (!string.IsNullOrEmpty(POne)) await Clients.Client(POne).SendAsync("setChangeHand", sentence);
 
-            sentence.content = previewcontent + PFive + PScore;
-            Console.WriteLine($"[ChangeGame1vs1] Mano {games[numg].HandCount}: Salida corresponde a P{games[numg].HandStarter}. Enviando a PTwo ({PTwo})");
-            if (!string.IsNullOrEmpty(PTwo)) await Clients.Client(PTwo).SendAsync("setChangeHand", sentence);
-
-            // Respaldo a la sala SignalR
-            await Clients.Group($"game1vs1_{move.game}").SendAsync("GameHandUpdated1vs1", new
+            if (!string.IsNullOrEmpty(POne))
             {
-                game = move.game,
-                handCards = PThree,
-                handStarter = games[numg].HandStarter,
-                pointsOne = games[numg].PointsOne,
-                pointsTwo = games[numg].PointsTwo
-            });
+                GameMessage sentencePOne = new GameMessage
+                {
+                    game = move.game,
+                    order = 87,
+                    content = MaskInitHand1vs1(PThree, true) + "-" + PFour + PScore
+                };
+                Console.WriteLine($"[ChangeGame1vs1] Mano {games[numg].HandCount}: Salida corresponde a P{games[numg].HandStarter}. Enviando a POne ({POne})");
+                await Clients.Client(POne).SendAsync("setChangeHand", sentencePOne);
+                await Clients.Client(POne).SendAsync("GameHandUpdated1vs1", new
+                {
+                    game = move.game,
+                    handCards = MaskInitHand1vs1(PThree, true),
+                    handStarter = games[numg].HandStarter,
+                    pointsOne = games[numg].PointsOne,
+                    pointsTwo = games[numg].PointsTwo
+                });
+            }
+
+            if (!string.IsNullOrEmpty(PTwo))
+            {
+                GameMessage sentencePTwo = new GameMessage
+                {
+                    game = move.game,
+                    order = 87,
+                    content = MaskInitHand1vs1(PThree, false) + "-" + PFive + PScore
+                };
+                Console.WriteLine($"[ChangeGame1vs1] Mano {games[numg].HandCount}: Salida corresponde a P{games[numg].HandStarter}. Enviando a PTwo ({PTwo})");
+                await Clients.Client(PTwo).SendAsync("setChangeHand", sentencePTwo);
+                await Clients.Client(PTwo).SendAsync("GameHandUpdated1vs1", new
+                {
+                    game = move.game,
+                    handCards = MaskInitHand1vs1(PThree, false),
+                    handStarter = games[numg].HandStarter,
+                    pointsOne = games[numg].PointsOne,
+                    pointsTwo = games[numg].PointsTwo
+                });
+            }
         }
 
         public async Task RequestNewHand1vs1(int gameId)
@@ -805,28 +824,47 @@ namespace PericonAPI.Hubs
             string POne = games[numg].IdPOne;
             string PTwo = games[numg].IdPTwo;
             string PThree = games[numg].InitHand;
-            GameMessage sentence = new GameMessage();
-            sentence.game = gameId;
-            sentence.order = 87;
-            string previewcontent = PThree + "-";
             string PFour = "1";
             string PFive = "0";
             string PScore = "-0-0";
 
-            sentence.content = previewcontent + PFour + PScore;
-            if (!string.IsNullOrEmpty(POne)) await Clients.Client(POne).SendAsync("setChangeHand", sentence);
-
-            sentence.content = previewcontent + PFive + PScore;
-            if (!string.IsNullOrEmpty(PTwo)) await Clients.Client(PTwo).SendAsync("setChangeHand", sentence);
-
-            await Clients.Group($"game1vs1_{gameId}").SendAsync("GameHandUpdated1vs1", new
+            if (!string.IsNullOrEmpty(POne))
             {
-                game = gameId,
-                handCards = PThree,
-                handStarter = 1,
-                pointsOne = 0,
-                pointsTwo = 0
-            });
+                GameMessage sentencePOne = new GameMessage
+                {
+                    game = gameId,
+                    order = 87,
+                    content = MaskInitHand1vs1(PThree, true) + "-" + PFour + PScore
+                };
+                await Clients.Client(POne).SendAsync("setChangeHand", sentencePOne);
+                await Clients.Client(POne).SendAsync("GameHandUpdated1vs1", new
+                {
+                    game = gameId,
+                    handCards = MaskInitHand1vs1(PThree, true),
+                    handStarter = 1,
+                    pointsOne = 0,
+                    pointsTwo = 0
+                });
+            }
+
+            if (!string.IsNullOrEmpty(PTwo))
+            {
+                GameMessage sentencePTwo = new GameMessage
+                {
+                    game = gameId,
+                    order = 87,
+                    content = MaskInitHand1vs1(PThree, false) + "-" + PFive + PScore
+                };
+                await Clients.Client(PTwo).SendAsync("setChangeHand", sentencePTwo);
+                await Clients.Client(PTwo).SendAsync("GameHandUpdated1vs1", new
+                {
+                    game = gameId,
+                    handCards = MaskInitHand1vs1(PThree, false),
+                    handStarter = 1,
+                    pointsOne = 0,
+                    pointsTwo = 0
+                });
+            }
         }
 
         public async Task RejoinGame1vs1(int gameId, bool isPlayerOne)
@@ -950,28 +988,47 @@ namespace PericonAPI.Hubs
             string POne = games[numg].IdPOne;
             string PTwo = games[numg].IdPTwo;
             string PThree = games[numg].InitHand;
-            GameMessage sentence = new GameMessage();
-            sentence.game = move.game;
-            sentence.order = 87;
-            string previewcontent = PThree + "-";
             string PFour = (games[numg].HandStarter == 1 ? "1" : "0");
             string PFive = (games[numg].HandStarter == 2 ? "1" : "0");
             string PScore = $"-{games[numg].PointsOne}-{games[numg].PointsTwo}";
 
-            sentence.content = previewcontent + PFour + PScore;
-            await Clients.Client(POne).SendAsync("setChangeHand", sentence);
-            sentence.content = previewcontent + PFive + PScore;
-            await Clients.Client(PTwo).SendAsync("setChangeHand", sentence);
-
-            // Respaldo de mano por grupo SignalR para garantizar entrega si un socket reconectó
-            await Clients.Group($"game1vs1_{move.game}").SendAsync("GameHandUpdated1vs1", new
+            if (!string.IsNullOrEmpty(POne))
             {
-                game = move.game,
-                handCards = PThree,
-                handStarter = games[numg].HandStarter,
-                pointsOne = games[numg].PointsOne,
-                pointsTwo = games[numg].PointsTwo
-            });
+                GameMessage sentencePOne = new GameMessage
+                {
+                    game = move.game,
+                    order = 87,
+                    content = MaskInitHand1vs1(PThree, true) + "-" + PFour + PScore
+                };
+                await Clients.Client(POne).SendAsync("setChangeHand", sentencePOne);
+                await Clients.Client(POne).SendAsync("GameHandUpdated1vs1", new
+                {
+                    game = move.game,
+                    handCards = MaskInitHand1vs1(PThree, true),
+                    handStarter = games[numg].HandStarter,
+                    pointsOne = games[numg].PointsOne,
+                    pointsTwo = games[numg].PointsTwo
+                });
+            }
+
+            if (!string.IsNullOrEmpty(PTwo))
+            {
+                GameMessage sentencePTwo = new GameMessage
+                {
+                    game = move.game,
+                    order = 87,
+                    content = MaskInitHand1vs1(PThree, false) + "-" + PFive + PScore
+                };
+                await Clients.Client(PTwo).SendAsync("setChangeHand", sentencePTwo);
+                await Clients.Client(PTwo).SendAsync("GameHandUpdated1vs1", new
+                {
+                    game = move.game,
+                    handCards = MaskInitHand1vs1(PThree, false),
+                    handStarter = games[numg].HandStarter,
+                    pointsOne = games[numg].PointsOne,
+                    pointsTwo = games[numg].PointsTwo
+                });
+            }
         }
 
         public async Task AcceptTumba1vs1(GameMessage move)
@@ -1041,7 +1098,7 @@ namespace PericonAPI.Hubs
             GameMessage sentence = new GameMessage();
             sentence.game = id;
             sentence.order = 81;
-            sentence.content = PZero + "-" + (isMyTurn ? "1" : "0") + $"-{p1}-{p2}";
+            sentence.content = MaskInitHand1vs1(PZero, flag) + "-" + (isMyTurn ? "1" : "0") + $"-{p1}-{p2}";
             await Clients.Client(Context.ConnectionId).SendAsync("SetInitHand", sentence);
         }
 
@@ -1099,6 +1156,27 @@ namespace PericonAPI.Hubs
                 }
             }
             return mano;
+        }
+
+        private static string MaskInitHand1vs1(string fullHand, bool isPlayerOne)
+        {
+            if (string.IsNullOrWhiteSpace(fullHand)) return fullHand;
+            var parts = fullHand.Split('-');
+            if (parts.Length < 7) return fullHand;
+
+            // En 1vs1 el formato estándar de InitHand es:
+            // parts[0], parts[1], parts[2] = 3 cartas del Jugador 1
+            // parts[3], parts[4], parts[5] = 3 cartas del Jugador 2
+            // parts[6] = Carta de La Vida (triunfo visible para ambos)
+            // Masking anti-trampas: el oponente ve 99 para cartas que no le pertenecen
+            if (isPlayerOne)
+            {
+                return $"{parts[0]}-{parts[1]}-{parts[2]}-99-99-99-{parts[6]}";
+            }
+            else
+            {
+                return $"99-99-99-{parts[3]}-{parts[4]}-{parts[5]}-{parts[6]}";
+            }
         }
 
         public async Task RequestCard1vs1(GameMessage move)
