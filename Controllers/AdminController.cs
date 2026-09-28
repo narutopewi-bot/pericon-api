@@ -105,7 +105,76 @@ namespace PericonAPI.Controllers
                 combinedTotalMatches,
                 combinedCoinsWagered,
                 combinedHouseProfit,
-                live = Hubs.MessagingHub.GetLiveActivityStatus()
+                live = Hubs.MessagingHub.GetLiveActivityStatus(),
+                botDifficulty = new
+                {
+                    mode = GamePlayOneVsOne.BotDifficultyMode,
+                    housePercent = Math.Round(GamePlayOneVsOne.BotAdvantageProbability * 100),
+                    userPercent = Math.Round((1.0 - GamePlayOneVsOne.BotAdvantageProbability) * 100)
+                }
+            });
+        }
+
+        [HttpGet("bot-difficulty")]
+        public IActionResult GetBotDifficulty()
+        {
+            string mode = GamePlayOneVsOne.BotDifficultyMode ?? "medio";
+            double houseAdvantage = GamePlayOneVsOne.BotAdvantageProbability;
+            double userAdvantage = Math.Round(1.0 - houseAdvantage, 2);
+
+            string description = mode switch
+            {
+                "facil" => "Modo Fácil (50% Casa / 50% Jugador - 5 de cada 10 para los jugadores)",
+                "dificil" => "Modo Difícil (65% Casa / 35% Jugador - Mayor dificultad)",
+                _ => "Modo Medio (60% Casa / 40% Jugador - Balance estándar)"
+            };
+
+            return Ok(new
+            {
+                mode,
+                houseAdvantage,
+                userAdvantage,
+                housePercent = Math.Round(houseAdvantage * 100),
+                userPercent = Math.Round(userAdvantage * 100),
+                description
+            });
+        }
+
+        public class SetBotDifficultyRequest
+        {
+            public string Mode { get; set; } = "medio";
+        }
+
+        [HttpPost("bot-difficulty")]
+        public IActionResult SetBotDifficulty([FromBody] SetBotDifficultyRequest request)
+        {
+            if (request == null || string.IsNullOrWhiteSpace(request.Mode))
+            {
+                return BadRequest(new { message = "El modo de dificultad es requerido ('facil', 'medio' o 'dificil')." });
+            }
+
+            string cleanMode = request.Mode.Trim().ToLowerInvariant();
+            if (cleanMode != "facil" && cleanMode != "medio" && cleanMode != "dificil")
+            {
+                return BadRequest(new { message = "Modo inválido. Debe ser 'facil', 'medio' o 'dificil'." });
+            }
+
+            GamePlayOneVsOne.SetBotDifficulty(cleanMode);
+
+            string description = cleanMode switch
+            {
+                "facil" => "Modo Fácil activado (50% Casa / 50% Jugador)",
+                "dificil" => "Modo Difícil activado (65% Casa / 35% Jugador)",
+                _ => "Modo Medio activado (60% Casa / 40% Jugador)"
+            };
+
+            return Ok(new
+            {
+                success = true,
+                mode = cleanMode,
+                houseAdvantage = GamePlayOneVsOne.BotAdvantageProbability,
+                description,
+                message = $"Dificultad del Bot actualizada a {description}."
             });
         }
 
@@ -276,7 +345,9 @@ namespace PericonAPI.Controllers
                     amountBs = r.AmountBs,
                     coinsAmount = r.CoinsAmount,
                     reference = r.Reference,
-                    receiptImageUrl = r.ReceiptImageUrl,
+                    receiptImageUrl = !string.IsNullOrWhiteSpace(r.ReceiptImageUrl) && !r.ReceiptImageUrl.StartsWith("/uploads/")
+                        ? r.ReceiptImageUrl
+                        : $"/api/payment/receipt/{r.Id}",
                     status = r.Status,
                     adminNotes = r.AdminNotes,
                     createdAt = r.CreatedAt,

@@ -70,26 +70,43 @@ namespace PericonAPI.Controllers
             }
 
             string receiptUrl = "";
+            string? receiptBase64 = null;
 
             if (dto.ReceiptImage != null && dto.ReceiptImage.Length > 0)
             {
-                var uploadsFolder = Path.Combine(_env.ContentRootPath, "wwwroot", "uploads", "receipts");
-                if (!Directory.Exists(uploadsFolder))
+                try
                 {
-                    Directory.CreateDirectory(uploadsFolder);
+                    using (var ms = new MemoryStream())
+                    {
+                        await dto.ReceiptImage.CopyToAsync(ms);
+                        var bytes = ms.ToArray();
+                        var mime = dto.ReceiptImage.ContentType ?? "image/jpeg";
+                        receiptBase64 = $"data:{mime};base64,{Convert.ToBase64String(bytes)}";
+                    }
                 }
+                catch { }
 
-                var ext = Path.GetExtension(dto.ReceiptImage.FileName);
-                if (string.IsNullOrEmpty(ext)) ext = ".jpg";
-                var uniqueFileName = $"{Guid.NewGuid():N}{ext}";
-                var filePath = Path.Combine(uploadsFolder, uniqueFileName);
-
-                using (var stream = new FileStream(filePath, FileMode.Create))
+                try
                 {
-                    await dto.ReceiptImage.CopyToAsync(stream);
-                }
+                    var uploadsFolder = Path.Combine(_env.ContentRootPath, "wwwroot", "uploads", "receipts");
+                    if (!Directory.Exists(uploadsFolder))
+                    {
+                        Directory.CreateDirectory(uploadsFolder);
+                    }
 
-                receiptUrl = $"/uploads/receipts/{uniqueFileName}";
+                    var ext = Path.GetExtension(dto.ReceiptImage.FileName);
+                    if (string.IsNullOrEmpty(ext)) ext = ".jpg";
+                    var uniqueFileName = $"{Guid.NewGuid():N}{ext}";
+                    var filePath = Path.Combine(uploadsFolder, uniqueFileName);
+
+                    using (var stream = new FileStream(filePath, FileMode.Create))
+                    {
+                        await dto.ReceiptImage.CopyToAsync(stream);
+                    }
+
+                    receiptUrl = $"/uploads/receipts/{uniqueFileName}";
+                }
+                catch { }
             }
 
             var recharge = new PaymentRecharge
@@ -99,11 +116,16 @@ namespace PericonAPI.Controllers
                 CoinsAmount = (int)Math.Floor(dto.AmountBs), // 1 Bs = 1 moneda
                 Reference = dto.Reference.Trim(),
                 ReceiptImageUrl = receiptUrl,
+                ReceiptBase64 = receiptBase64,
                 Status = "PENDIENTE",
                 CreatedAt = DateTime.UtcNow
             };
 
             _context.PaymentRecharges.Add(recharge);
+            await _context.SaveChangesAsync();
+
+            // Asignar ruta de visualización directa y garantizada por la API
+            recharge.ReceiptImageUrl = $"/api/payment/receipt/{recharge.Id}";
             await _context.SaveChangesAsync();
 
             _ = _notificationService.SendRechargeNotificationAsync(
@@ -173,9 +195,11 @@ namespace PericonAPI.Controllers
             }
 
             string receiptUrl = "";
+            string? receiptBase64 = null;
 
             if (!string.IsNullOrWhiteSpace(dto.Base64Image))
             {
+                receiptBase64 = dto.Base64Image.Trim();
                 try
                 {
                     var uploadsFolder = Path.Combine(_env.ContentRootPath, "wwwroot", "uploads", "receipts");
@@ -184,12 +208,13 @@ namespace PericonAPI.Controllers
                         Directory.CreateDirectory(uploadsFolder);
                     }
 
-                    var rawBase64 = dto.Base64Image;
+                    var rawBase64 = receiptBase64;
                     var ext = ".jpg";
                     if (rawBase64.Contains(";base64,"))
                     {
                         var parts = rawBase64.Split(";base64,");
                         if (parts[0].Contains("png")) ext = ".png";
+                        else if (parts[0].Contains("webp")) ext = ".webp";
                         rawBase64 = parts[1];
                     }
 
@@ -202,7 +227,7 @@ namespace PericonAPI.Controllers
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine("Error saving base64 image: " + ex.Message);
+                    Console.WriteLine("Error saving backup file to disk: " + ex.Message);
                 }
             }
 
@@ -213,11 +238,16 @@ namespace PericonAPI.Controllers
                 CoinsAmount = (int)Math.Floor(dto.AmountBs),
                 Reference = dto.Reference.Trim(),
                 ReceiptImageUrl = receiptUrl,
+                ReceiptBase64 = receiptBase64,
                 Status = "PENDIENTE",
                 CreatedAt = DateTime.UtcNow
             };
 
             _context.PaymentRecharges.Add(recharge);
+            await _context.SaveChangesAsync();
+
+            // Asignar ruta de visualización directa garantizada por la API
+            recharge.ReceiptImageUrl = $"/api/payment/receipt/{recharge.Id}";
             await _context.SaveChangesAsync();
 
             _ = _notificationService.SendRechargeNotificationAsync(
@@ -239,6 +269,70 @@ namespace PericonAPI.Controllers
                 createdAt = recharge.CreatedAt,
                 message = $"¡Comprobante de {recharge.CoinsAmount} monedas recibido! Tu pago está pendiente de aprobación por el administrador."
             });
+        }
+
+        [HttpGet("receipt/{id}")]
+        [ResponseCache(Duration = 3600, Location = ResponseCacheLocation.Any)]
+        public async Task<IActionResult> GetReceiptImage(int id)
+        {
+            var recharge = await _context.PaymentRecharges.FindAsync(id);
+            if (recharge == null)
+            {
+                return NotFound(new { message = "Comprobante no encontrado." });
+            }
+
+            // 1. Servir desde Base64 guardado en base de datos (100% persistente y a prueba de reinicios en Railway)
+            if (!string.IsNullOrWhiteSpace(recharge.ReceiptBase64))
+            {
+                try
+                {
+                    var raw = recharge.ReceiptBase64.Trim();
+                    var contentType = "image/jpeg";
+                    if (raw.StartsWith("data:"))
+                    {
+                        var semi = raw.IndexOf(';');
+                        if (semi > 5)
+                        {
+                            contentType = raw.Substring(5, semi - 5);
+                        }
+                        var comma = raw.IndexOf(',');
+                        if (comma >= 0)
+                        {
+                            raw = raw.Substring(comma + 1);
+                        }
+                    }
+                    var bytes = Convert.FromBase64String(raw);
+                    return File(bytes, contentType);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[Receipt Error] recharge #{id}: {ex.Message}");
+                }
+            }
+
+            // 2. Si es URL externa completa
+            if (!string.IsNullOrWhiteSpace(recharge.ReceiptImageUrl) &&
+                (recharge.ReceiptImageUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                 recharge.ReceiptImageUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase)))
+            {
+                return Redirect(recharge.ReceiptImageUrl);
+            }
+
+            // 3. Si hay archivo en disco físico (respaldo local)
+            if (!string.IsNullOrWhiteSpace(recharge.ReceiptImageUrl))
+            {
+                var clean = recharge.ReceiptImageUrl.TrimStart('/', '\\');
+                var filePath = Path.Combine(_env.ContentRootPath, "wwwroot", clean);
+                if (System.IO.File.Exists(filePath))
+                {
+                    var ext = Path.GetExtension(filePath).ToLowerInvariant();
+                    var mime = ext == ".png" ? "image/png" : ext == ".webp" ? "image/webp" : "image/jpeg";
+                    var bytes = await System.IO.File.ReadAllBytesAsync(filePath);
+                    return File(bytes, mime);
+                }
+            }
+
+            return NotFound(new { message = "La imagen del comprobante no está disponible." });
         }
 
         [HttpGet("user/{userId}")]

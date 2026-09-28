@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using PericonAPI.Classes;
 using PericonAPI.Data;
@@ -689,6 +690,7 @@ namespace PericonAPI.Hubs
             games[numg].RoundOne = 0;
             games[numg].RoundTwo = 0;
             games[numg].CurrentLeadMove = null;
+            games[numg].LeadPlayer = 0;
             games[numg].PendingAsk369Message = null;
             string POne = games[numg].IdPOne;
             string PTwo = games[numg].IdPTwo;
@@ -876,12 +878,33 @@ namespace PericonAPI.Hubs
         {
             Console.WriteLine($"[RejoinGame1vs1] Cliente: {Context.ConnectionId}, Juego: {gameId}, EsP1: {isPlayerOne}");
             int numg = FindGame1vs1(gameId);
-            if (numg < 0 || numg >= games.Count) return;
-
-            // 1. Asegurar que la partida continúe activa si no ha terminado
-            if (games[numg].PointsOne < 9 && games[numg].PointsTwo < 9)
+            if (numg < 0 || numg >= games.Count)
             {
-                games[numg].IsActive = true;
+                await Clients.Client(Context.ConnectionId).SendAsync("GameAlreadyFinished", new
+                {
+                    gameId = gameId,
+                    message = "La partida ya no existe o ha concluido.",
+                    redirectTo = "/desk"
+                });
+                return;
+            }
+
+            var targetGame = games[numg];
+            if (targetGame.HasPaidOut || targetGame.IsFinished || !targetGame.IsActive)
+            {
+                Console.WriteLine($"[RejoinGame1vs1] RECHAZADO: El juego {gameId} ya concluyó o fue liquidado.");
+                await Clients.Client(Context.ConnectionId).SendAsync("GameAlreadyFinished", new
+                {
+                    gameId = gameId,
+                    message = "Esta partida ya ha concluido y fue liquidada.",
+                    redirectTo = "/desk"
+                });
+                return;
+            }
+
+            if (targetGame.PointsOne < 9 && targetGame.PointsTwo < 9)
+            {
+                targetGame.IsActive = true;
             }
 
             if (isPlayerOne) games[numg].IdPOne = Context.ConnectionId;
@@ -945,11 +968,13 @@ namespace PericonAPI.Hubs
         {
             int numg = FindGame1vs1(gameId);
             if (numg < 0 || numg >= games.Count) return;
-            if (!games[numg].IsActive)
+            var targetGame = games[numg];
+            if (targetGame.HasPaidOut || targetGame.IsFinished) return;
+            if (!targetGame.IsActive)
             {
-                if (games[numg].PointsOne < 9 && games[numg].PointsTwo < 9)
+                if (targetGame.PointsOne < 9 && targetGame.PointsTwo < 9)
                 {
-                    games[numg].IsActive = true;
+                    targetGame.IsActive = true;
                 }
                 else
                 {
@@ -1136,24 +1161,47 @@ namespace PericonAPI.Hubs
         public async Task GetInitHand(int id, bool flag)
         {
             Console.WriteLine($"GetInitHandGame1vs1. Cliente: {Context.ConnectionId}, Juego: {id}, Flag: {flag}");
+            int numg = FindGame1vs1(id);
+            if (numg < 0 || numg >= games.Count)
+            {
+                Console.WriteLine($"[GetInitHand] Partida {id} no encontrada en memoria. Notificando GameAlreadyFinished al cliente {Context.ConnectionId}.");
+                await Clients.Client(Context.ConnectionId).SendAsync("GameAlreadyFinished", new
+                {
+                    gameId = id,
+                    message = "La partida no existe o ya ha concluido.",
+                    redirectTo = "/desk"
+                });
+                return;
+            }
+
+            var g = games[numg];
+            if (g.HasPaidOut || g.IsFinished || !g.IsActive)
+            {
+                Console.WriteLine($"[GetInitHand] Partida {id} ya finalizada o liquidada. Notificando GameAlreadyFinished al cliente {Context.ConnectionId}.");
+                await Clients.Client(Context.ConnectionId).SendAsync("GameAlreadyFinished", new
+                {
+                    gameId = id,
+                    message = "Esta partida ya ha concluido y fue liquidada.",
+                    redirectTo = "/desk"
+                });
+                return;
+            }
+
             await Groups.AddToGroupAsync(Context.ConnectionId, $"game1vs1_{id}");
             string PZero = FindInitHand(id);
-            int numg = FindGame1vs1(id);
-            if (numg >= 0 && numg < games.Count)
-            {
-                // Actualizar ConnectionId activo del cliente en la partida
-                if (flag) games[numg].IdPOne = Context.ConnectionId;
-                else games[numg].IdPTwo = Context.ConnectionId;
 
-                string targetOpp = flag ? games[numg].IdPTwo : games[numg].IdPOne;
-                if (!string.IsNullOrEmpty(targetOpp))
+            // Actualizar ConnectionId activo del cliente en la partida
+            if (flag) games[numg].IdPOne = Context.ConnectionId;
+            else games[numg].IdPTwo = Context.ConnectionId;
+
+            string targetOpp = flag ? games[numg].IdPTwo : games[numg].IdPOne;
+            if (!string.IsNullOrEmpty(targetOpp))
+            {
+                await Clients.Client(targetOpp).SendAsync("OpponentConnectionUpdated", new
                 {
-                    await Clients.Client(targetOpp).SendAsync("OpponentConnectionUpdated", new
-                    {
-                        newConnectionId = Context.ConnectionId,
-                        isPlayerOne = flag
-                    });
-                }
+                    newConnectionId = Context.ConnectionId,
+                    isPlayerOne = flag
+                });
             }
 
             int p1 = (numg >= 0 && numg < games.Count) ? games[numg].PointsOne : 0;
@@ -1247,13 +1295,15 @@ namespace PericonAPI.Hubs
 
         public async Task RequestCard1vs1(GameMessage move)
         {
-            GameLogger.Log(move.game, "RequestCard1vs1", $"Order:{move.order}, Cliente:{Context.ConnectionId}, Move:{move.content}");
-            int numg = FindGame1vs1(move.game);
-            if (numg < 0 || numg >= games.Count) return;
+            try
+            {
+                GameLogger.Log(move.game, "RequestCard1vs1", $"Order:{move.order}, Cliente:{Context.ConnectionId}, Move:{move.content}");
+                int numg = FindGame1vs1(move.game);
+                if (numg < 0 || numg >= games.Count) return;
 
-            string[] daticos = move.content.Split(" ");
-            bool isPlayerOne = (Context.ConnectionId == games[numg].IdPOne);
-            bool isPlayerTwo = (Context.ConnectionId == games[numg].IdPTwo);
+                string[] daticos = move.content.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                bool isPlayerOne = (Context.ConnectionId == games[numg].IdPOne);
+                bool isPlayerTwo = (Context.ConnectionId == games[numg].IdPTwo);
 
             if (!isPlayerOne && !isPlayerTwo)
             {
@@ -1331,24 +1381,93 @@ namespace PericonAPI.Hubs
             string targetOpp = isPlayerOne ? games[numg].IdPTwo : games[numg].IdPOne;
             GameMessage sentence = new GameMessage();
 
-            if (move.order == 82) // Juego del que lleva la mano
+            // DETERMINACIÓN AUTORITATIVA DEL SERVIDOR:
+            // Si CurrentLeadMove == null, la mesa está vacía: la jugada actual ES 100% de Salida (Lead / Mano).
+            // Si CurrentLeadMove != null, hay una carta en mesa: la jugada actual ES 100% de Respuesta (Response / Pie).
+            bool isLeadPlay = (games[numg].CurrentLeadMove == null);
+
+            if (isLeadPlay)
             {
+                // 1. JUEGO DEL QUE LLEVA LA MANO (Salida)
+                int leadCardId = -1;
+                if (move.order == 82 && daticos.Length > 2 && int.TryParse(daticos[2], out int p1))
+                {
+                    leadCardId = p1;
+                }
+                else if (move.order == 83 && daticos.Length > 3 && int.TryParse(daticos[3], out int p2))
+                {
+                    leadCardId = p2;
+                }
+                else if (daticos.Length > 2 && int.TryParse(daticos[2], out int p3))
+                {
+                    leadCardId = p3;
+                }
+                else if (daticos.Length > 1 && int.TryParse(daticos[1], out int p4))
+                {
+                    leadCardId = p4;
+                }
+                if (leadCardId < 0) leadCardId = 0;
+
                 sentence.game = move.game;
                 sentence.order = 84;
-                sentence.content = move.content;
+                sentence.content = $"{Context.ConnectionId} {targetOpp} {leadCardId} 0";
                 games[numg].CurrentLeadMove = sentence;
-                Console.WriteLine($"[RequestCard1vs1 82] Enviando a rival ({targetOpp}): 84 {sentence.content}");
+                games[numg].LeadPlayer = isPlayerOne ? 1 : 2;
+                games[numg].PlayerTurn = !isPlayerOne; // Pasa el turno al contrincante que responde
+
+                Console.WriteLine($"[RequestCard1vs1 LEAD] Jugador {(isPlayerOne ? 1 : 2)} lanzó carta {leadCardId}. Enviando 84 a rival ({targetOpp})");
+
                 if (!string.IsNullOrEmpty(targetOpp))
                 {
                     await Clients.Client(targetOpp).SendAsync("ResponseCard1vs1", sentence);
                 }
                 await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("ResponseCard1vs1", sentence);
             }
-            else if (move.order == 83) // Juego del que responde
+            else
             {
-                int cardone = Convert.ToInt16(daticos[1]);
-                int cardtwo = Convert.ToInt16(daticos[3]);
-                int cardzero = Convert.ToInt16(daticos[4]);
+                // 2. JUEGO DEL QUE RESPONDE A LA CARTA EN MESA (Pie)
+                int incomingPlayer = isPlayerOne ? 1 : 2;
+                if (games[numg].LeadPlayer == incomingPlayer)
+                {
+                    Console.WriteLine($"[RequestCard1vs1] Descartando jugada duplicada del jugador líder ({Context.ConnectionId})");
+                    return;
+                }
+
+                int cardone = -1;
+                if (games[numg].CurrentLeadMove != null && !string.IsNullOrEmpty(games[numg].CurrentLeadMove.content))
+                {
+                    var leadParts = games[numg].CurrentLeadMove.content.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (leadParts.Length > 2 && int.TryParse(leadParts[2], out int parsedLead))
+                    {
+                        cardone = parsedLead;
+                    }
+                }
+                if (cardone < 0 && daticos.Length > 1 && int.TryParse(daticos[1], out int parsedC1Fallback))
+                {
+                    cardone = parsedC1Fallback;
+                }
+                if (cardone < 0) cardone = 0;
+
+                int cardtwo = -1;
+                if (move.order == 83 && daticos.Length > 3 && int.TryParse(daticos[3], out int parsedResp83))
+                {
+                    cardtwo = parsedResp83;
+                }
+                else if (move.order == 82 && daticos.Length > 2 && int.TryParse(daticos[2], out int parsedResp82))
+                {
+                    cardtwo = parsedResp82;
+                }
+                else if (daticos.Length > 1 && int.TryParse(daticos[1], out int parsedC2Fallback))
+                {
+                    cardtwo = parsedC2Fallback;
+                }
+                if (cardtwo < 0) cardtwo = 0;
+
+                int cardzero = games[numg].Life?.Id ?? 0;
+                if (daticos.Length > 4 && int.TryParse(daticos[4], out int parsedLife))
+                {
+                    cardzero = parsedLife;
+                }
 
                 string rone = games[numg].RoundOne.ToString();
                 string rtwo = games[numg].RoundTwo.ToString();
@@ -1359,15 +1478,12 @@ namespace PericonAPI.Hubs
                 int leadCard = cardone;
                 int respCard = cardtwo;
 
-                // El llamador de la orden 83 es quien responde. Por tanto, el jugador que salió (lead) es el contrincante:
-                bool leadIsPlayerOne = !isPlayerOne;
+                bool leadIsPlayerOne = (games[numg].LeadPlayer == 1);
 
-                // Capturar el estado de Tumba al inicio de la baza: una mano normal nunca se transforma en mano de Tumba a mitad de baza
+                // Capturar el estado de Tumba al inicio de la baza:
                 bool wasInTumbaOne = games[numg].IsTumbaOne;
                 bool wasInTumbaTwo = games[numg].IsTumbaTwo;
 
-                // Verificación de "La Cogía": Si se juega el 10 de Oro (7) y el rival responde con el 1 de Oro (0)
-                // En tumba la cogía NO vale (innecesario adquirir 3 puntos)
                 bool isTumbaMulti = wasInTumbaOne || wasInTumbaTwo ||
                                    games[numg].PointsOne >= 9 || games[numg].PointsTwo >= 9 ||
                                    (games[numg].IsTumbaDeParaAtrasOne && games[numg].PointsOne == 8) ||
@@ -1378,7 +1494,6 @@ namespace PericonAPI.Hubs
                 if (!isTumbaMulti && ((leadCard == 7 && respCard == 0) || (leadCard == 0 && respCard == 7)))
                 {
                     isCogida = true;
-                    // El que tiene el 1 de Oro (0) siempre gana la cogía (+3 piedras), sea que salió o respondió
                     if (leadCard == 0)
                     {
                         cogidaWinner = leadIsPlayerOne ? 1 : 2;
@@ -1391,8 +1506,6 @@ namespace PericonAPI.Hubs
 
                 if (isCogida)
                 {
-                    // La Cogía suma +3 piedras inmediatamente al marcador (para cualquier puntaje inicial: 6, 7, 8, etc.).
-                    // NO actualizamos Tumba en este momento: la mano sigue su curso normal y Tumba se activará solo al finalizar la mano.
                     if (cogidaWinner == 1) games[numg].PointsOne += 3;
                     else games[numg].PointsTwo += 3;
                     Console.WriteLine($"[La Cogia] ¡Jugador {cogidaWinner} se acredita +3 piedras! (Puntos actuales: P1={games[numg].PointsOne}, P2={games[numg].PointsTwo})");
@@ -1403,6 +1516,9 @@ namespace PericonAPI.Hubs
                 mdef = cardwin;
 
                 bool trickWinnerIsPlayerOne = (cardwin == "1") ? leadIsPlayerOne : !leadIsPlayerOne;
+
+                // Sincronizar autoritativamente el turno para la siguiente baza:
+                games[numg].PlayerTurn = trickWinnerIsPlayerOne;
 
                 int stake = games[numg].CurrentStake > 0 ? games[numg].CurrentStake : 1;
 
@@ -1513,11 +1629,12 @@ namespace PericonAPI.Hubs
                 ptwo = games[numg].PointsTwo.ToString();
                 sentence.game = move.game;
                 sentence.order = 85;
-                sentence.content = daticos[1] + " " + daticos[3] + " " + daticos[4] + " ";
+                sentence.content = cardone + " " + cardtwo + " " + cardzero + " ";
                 rdef = cardwin + " " + mdef + " " + rone + " " + rtwo + " " + pone + " " + ptwo;
                 sentence.content += rdef;
                 games[numg].CurrentLeadMove = null;
-                Console.WriteLine($"[RequestCard1vs1 83] Enviando a rival ({targetOpp}): 85 {sentence.content}");
+                games[numg].LeadPlayer = 0;
+                Console.WriteLine($"[RequestCard1vs1 85/RESP] Enviando a rival ({targetOpp}): 85 {sentence.content}");
                 if (!string.IsNullOrEmpty(targetOpp))
                 {
                     await Clients.Client(targetOpp).SendAsync("ResponseCard1vs1", sentence);
@@ -1526,6 +1643,12 @@ namespace PericonAPI.Hubs
                 await Clients.Client(Context.ConnectionId).SendAsync("ReasonRound1vs1", rdef);
             }
         }
+        catch (Exception ex)
+        {
+            GameLogger.Log(move.game, "RequestCard1vs1_Exception", $"Error en RequestCard1vs1 orden {move.order}: {ex.Message}");
+            Console.WriteLine($"[RequestCard1vs1 EXCEPTION] {ex.Message}\n{ex.StackTrace}");
+        }
+    }
 
         public async Task TimeoutRound1vs1(GameMessage move)
         {
@@ -1659,9 +1782,18 @@ namespace PericonAPI.Hubs
         {
             Console.WriteLine($"[ClaimOpponentTimeout1vs1] Cliente: {Context.ConnectionId}, Juego: {gameId}");
             int numg = FindGame1vs1(gameId);
-            if (numg < 0 || numg >= games.Count) return;
+            if (numg < 0 || numg >= games.Count)
+            {
+                await Clients.Caller.SendAsync("ClaimRejected", new { message = "La partida no existe o ya ha concluido." });
+                return;
+            }
             var game = games[numg];
-            if (!game.IsActive) return;
+            if (!game.IsActive || game.HasPaidOut || game.IsFinished)
+            {
+                Console.WriteLine($"[ClaimOpponentTimeout1vs1] RECHAZADO para {Context.ConnectionId}: El juego {gameId} ya ha finalizado o fue pagado.");
+                await Clients.Caller.SendAsync("ClaimRejected", new { message = "Esta partida ya ha concluido y no admite más reclamos." });
+                return;
+            }
 
             string caller = Context.ConnectionId;
             bool callerIsP1 = (caller == game.IdPOne);
@@ -1713,8 +1845,25 @@ namespace PericonAPI.Hubs
         {
             if (gameIndex < 0 || gameIndex >= games.Count) return;
             var game = games[gameIndex];
-            if (!game.IsActive) return; // Evitar doble liquidación si ya se procesó
+            if (!game.IsActive || game.HasPaidOut || game.IsFinished)
+            {
+                Console.WriteLine($"[ProcessMatchPayout] RECHAZADO: El juego {game.Id} ya fue liquidado o está inactivo.");
+                return;
+            }
             game.IsActive = false;
+            game.HasPaidOut = true;
+            game.IsFinished = true;
+            game.FinishedAt = DateTime.UtcNow;
+
+            // Limpieza inmediata de sala privada en memoria si aplica
+            lock (rooms1v1Lock)
+            {
+                var keysToRemove = rooms1v1.Where(kv => kv.Value.GameId == game.Id).Select(kv => kv.Key).ToList();
+                foreach (var k in keysToRemove)
+                {
+                    rooms1v1.Remove(k);
+                }
+            }
 
             bool isSala = game.IsFriendlyRoom 
                 || (!string.IsNullOrEmpty(game.RoomName) && game.RoomName.StartsWith("sala-", StringComparison.OrdinalIgnoreCase));
@@ -1758,6 +1907,14 @@ namespace PericonAPI.Hubs
                 using (var scope = _scopeFactory.CreateScope())
                 {
                     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+                    // Blindaje de base de datos contra cobros duplicados (idempotencia absoluta)
+                    bool alreadyPaidInDb = await db.MatchBetRecords.AnyAsync(m => m.GameId == game.Id);
+                    if (alreadyPaidInDb)
+                    {
+                        Console.WriteLine($"[ProcessMatchPayout DB Guard] Ya existe registro en base de datos para GameId {game.Id}. Payout abortado para evitar duplicados.");
+                        return;
+                    }
 
                     var winnerPlayer = SearchPlayer(winnerConnectionId);
                     var loserPlayer = SearchPlayer(loserConnectionId);

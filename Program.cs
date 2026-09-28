@@ -220,6 +220,7 @@ using (var scope = app.Services.CreateScope())
         try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN BirthDate TEXT NULL;"); } catch { }
         try { db.Database.ExecuteSqlRaw("CREATE UNIQUE INDEX IF NOT EXISTS IX_Users_Cedula ON Users(Cedula) WHERE Cedula IS NOT NULL;"); } catch { }
         try { db.Database.ExecuteSqlRaw("CREATE UNIQUE INDEX IF NOT EXISTS IX_Users_PhoneNumber ON Users(PhoneNumber) WHERE PhoneNumber IS NOT NULL;"); } catch { }
+        try { db.Database.ExecuteSqlRaw("ALTER TABLE PaymentRecharges ADD COLUMN ReceiptBase64 TEXT NULL;"); } catch { }
         try
         {
             db.Database.ExecuteSqlRaw(@"
@@ -296,6 +297,12 @@ using (var scope = app.Services.CreateScope())
             db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""BirthDate"" TIMESTAMP WITH TIME ZONE NULL;");
             db.Database.ExecuteSqlRaw(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_Users_Cedula"" ON ""Users""(""Cedula"") WHERE ""Cedula"" IS NOT NULL;");
             db.Database.ExecuteSqlRaw(@"CREATE UNIQUE INDEX IF NOT EXISTS ""IX_Users_PhoneNumber"" ON ""Users""(""PhoneNumber"") WHERE ""PhoneNumber"" IS NOT NULL;");
+        }
+        catch { }
+
+        try
+        {
+            db.Database.ExecuteSqlRaw(@"ALTER TABLE ""PaymentRecharges"" ADD COLUMN IF NOT EXISTS ""ReceiptBase64"" TEXT NULL;");
         }
         catch { }
 

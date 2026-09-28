@@ -29,6 +29,8 @@ namespace PericonAPI.Models
         [MaxLength(500)]
         public string ReceiptImageUrl { get; set; } = string.Empty;
 
+        public string? ReceiptBase64 { get; set; }
+
         [Required]
         [MaxLength(20)]
         public string Status { get; set; } = "PENDIENTE"; // PENDIENTE, APROBADO, RECHAZADO

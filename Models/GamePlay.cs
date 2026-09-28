@@ -17,7 +17,87 @@ namespace PericonAPI.Models
         public string UserIdPTwo { get; set; } = string.Empty;
         public int LastStakeAsker { get; set; } = 0; // 0 = ninguno, 1 = P1, 2 = P2
         public bool IsSolitaire { get; set; }
-        public static double BotAdvantageProbability { get; set; } = 0.72;
+        public static double BotAdvantageProbability { get; set; } = 0.60;
+        public static string BotDifficultyMode { get; set; } = "medio"; // "facil", "medio", "dificil"
+
+        private static readonly string SettingsFilePath = Path.Combine(AppContext.BaseDirectory, "bot_settings.json");
+
+        static GamePlayOneVsOne()
+        {
+            LoadBotSettingsFromFile();
+        }
+
+        public static void SetBotDifficulty(string mode)
+        {
+            mode = (mode ?? "").Trim().ToLowerInvariant();
+            if (mode == "facil")
+            {
+                BotDifficultyMode = "facil";
+                BotAdvantageProbability = 0.50;
+            }
+            else if (mode == "dificil")
+            {
+                BotDifficultyMode = "dificil";
+                BotAdvantageProbability = 0.65;
+            }
+            else // "medio"
+            {
+                BotDifficultyMode = "medio";
+                BotAdvantageProbability = 0.60;
+            }
+
+            SaveBotSettingsToFile();
+        }
+
+        public static void LoadBotSettingsFromFile()
+        {
+            try
+            {
+                if (File.Exists(SettingsFilePath))
+                {
+                    var json = File.ReadAllText(SettingsFilePath);
+                    var config = System.Text.Json.JsonSerializer.Deserialize<BotSettingsData>(json);
+                    if (config != null && !string.IsNullOrEmpty(config.Mode))
+                    {
+                        BotDifficultyMode = config.Mode;
+                        BotAdvantageProbability = config.Advantage;
+                        Console.WriteLine($"[BotSettings] Configuración cargada: Modo {BotDifficultyMode} ({BotAdvantageProbability * 100}%)");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[BotSettings] Error cargando bot_settings.json: {ex.Message}");
+            }
+        }
+
+        public static void SaveBotSettingsToFile()
+        {
+            try
+            {
+                var data = new BotSettingsData
+                {
+                    Mode = BotDifficultyMode,
+                    Advantage = BotAdvantageProbability,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                var json = System.Text.Json.JsonSerializer.Serialize(data, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(SettingsFilePath, json);
+                Console.WriteLine($"[BotSettings] Configuración guardada en archivo: Modo {BotDifficultyMode} ({BotAdvantageProbability * 100}%)");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[BotSettings] Error guardando bot_settings.json: {ex.Message}");
+            }
+        }
+
+        public class BotSettingsData
+        {
+            public string Mode { get; set; } = "medio";
+            public double Advantage { get; set; } = 0.60;
+            public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+        }
+
         public string PlayerLevel { get; set; } = "Peón de Casona";
         public Boolean IsActive { get; set; }
         public List<Card> CardsOne { get; set; }
@@ -44,12 +124,16 @@ namespace PericonAPI.Models
         public bool IsFriendlyRoom { get; set; } = false;
         public GameMessage? CurrentLeadMove { get; set; } = null;
         public GameMessage? PendingAsk369Message { get; set; } = null;
+        public int LeadPlayer { get; set; } = 0;
+        public bool HasPaidOut { get; set; } = false;
+        public bool IsFinished { get; set; } = false;
+        public DateTime? FinishedAt { get; set; } = null;
 
         public GamePlayOneVsOne()
         {
             Id = 0; Deck = new SpanishCards(); PlayerOne = 0; PlayerTwo = 0; IsSolitaire = true; 
             IdPOne = ""; IdPTwo = ""; CardsOne = []; CardsTwo = []; PlayerTurn = true;
-            HandStarter = 1; HandCount = 1;
+            HandStarter = 1; HandCount = 1; LeadPlayer = 0;
             Life = new Card(); CardPlayed = new Card(); ChoiceTurn = true; IsActive = true;
             InitHand = ""; Ask369 = 0; CurrentStake = 1;
             IsTumbaOne = false; IsTumbaTwo = false;
@@ -336,58 +420,43 @@ namespace PericonAPI.Models
             Card y = Deck.OutCard(); CardsTwo.Add(y);
             Card z = Deck.OutCard(); Life = z;
 
-            // Algoritmo House-Edge Definitivo con Dificultad Dinámica por Rango/Nivel:
+            // Algoritmo House-Edge Configurable por Administrador (Fácil 50-50, Medio 60-40, Difícil 65-35):
             if (IsSolitaire)
             {
-                double baseProb = GetLevelAdvantageBase();
-                double favorProb = baseProb;
-                bool isBeginner = (baseProb <= 0.55);
+                double favorProb = BotAdvantageProbability;
+                bool isEasy = (BotDifficultyMode == "facil" || favorProb <= 0.52);
 
-                // Si el bot a nivel global necesita recuperación (menos del 55% de victorias globales),
-                // aplicamos un boost moderado a niveles intermedios y altos
-                if (BotAdvantageProbability > 0.70 && !isBeginner)
+                if (isEasy)
                 {
-                    favorProb = Math.Min(0.88, favorProb + 0.05);
+                    // Modo Fácil: 50% Casa / 50% Jugador (50-50 ESTRICTO)
+                    // Si se juegan 10 partidas, el bot gana 5 y el jugador gana 5
+                    favorProb = 0.50;
                 }
-
-                // Defensa táctica de la Casa (Rubberbanding):
-                if (PointsOne >= 7)
+                else if (BotDifficultyMode == "dificil")
                 {
-                    // Si el jugador está cerca de ganar (7, 8 o 9 puntos):
-                    // Para principiantes la defensa es más suave (70%), para avanzados es estricta (85%)
-                    favorProb = isBeginner ? Math.Max(favorProb, 0.70) : Math.Max(favorProb, 0.85);
+                    // Modo Difícil: 65% Casa / 35% Jugador
+                    favorProb = 0.65;
+                    if (IsTumbaTwo) favorProb = 0.80;
                 }
-
-                if (IsTumbaTwo)
+                else
                 {
-                    // Si el Bot está en Tumba, perder cuesta 6 piedras (-3 bot, +3 jugador). ¡Obligatorio blindar!
-                    favorProb = 1.0;
-                }
-                else if (IsTumbaOne)
-                {
-                    // Si el jugador está en Tumba, el Bot busca rematarlo (+3 bot, -3 jugador)
-                    favorProb = isBeginner ? Math.Max(favorProb, 0.65) : Math.Max(favorProb, 0.85);
-                }
-                else if (PointsTwo >= 7 && PointsTwo > PointsOne)
-                {
-                    // Si el Bot va ganando en la recta final (7, 8 o 9 puntos)
-                    favorProb = isBeginner ? Math.Max(favorProb, 0.65) : Math.Max(favorProb, 0.80);
+                    // Modo Medio (Por defecto): 60% Casa / 40% Jugador
+                    favorProb = 0.60;
+                    if (IsTumbaTwo) favorProb = 0.75;
                 }
 
                 bool favorBot = Random.Shared.NextDouble() < favorProb;
 
                 if (favorBot)
                 {
-                    EnsureBotSuperiorHand(isBeginner);
+                    EnsureBotSuperiorHand(isEasy);
                 }
                 else
                 {
-                    // Mano orgánica para el usuario: permitir el flujo natural
-                    // Si el bot tenía cartas demasiado superiores, damos oportunidad competitiva al usuario
+                    // Mano favorable o justa para el usuario:
                     double scoreUser = ScoreHand(CardsOne, Life.Id);
                     double scoreBot = ScoreHand(CardsTwo, Life.Id);
-                    double swapChance = isBeginner ? 0.80 : 0.60;
-                    if (scoreBot > scoreUser && Random.Shared.NextDouble() < swapChance)
+                    if (scoreBot > scoreUser)
                     {
                         var temp = new List<Card>(CardsOne);
                         CardsOne = new List<Card>(CardsTwo);
