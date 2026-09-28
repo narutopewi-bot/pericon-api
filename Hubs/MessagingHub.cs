@@ -2297,30 +2297,37 @@ namespace PericonAPI.Hubs
                             }
                         }
 
-                        // Verificar si el usuario está bajo estabilización selectiva de la casa (ej: Memo)
-                        if (GamePlayOneVsOne.IsUserTargetedForStabilization(uId, newgame.NamePOne))
-                        {
-                            var botMatches = db.BotMatchRecords.Where(m => m.UserId == uId).ToList();
-                            int totalBotMatches = botMatches.Count;
-                            int houseWins = botMatches.Count(m => !m.UserWon);
-                            double houseWinRate = totalBotMatches > 0 ? (double)houseWins / totalBotMatches : 0.0;
+                        // SISTEMA DE EQUILIBRIO FINANCIERO CONTRA EL BOT (OPCIÓN 2 APROBADA)
+                        // Calcula las monedas ganadas vs perdidas por el usuario contra la máquina
+                        var botMatches = db.BotMatchRecords
+                            .Where(m => m.UserId == uId || (m.Username != null && m.Username.ToLower() == newgame.NamePOne.ToLower()))
+                            .ToList();
 
-                            if (houseWinRate < GamePlayOneVsOne.StabilizationTargetHouseWinRate)
-                            {
-                                newgame.IsTargetedForStabilization = true;
-                                Console.WriteLine($"[Stabilization] Defensa de casa ACTIVADA para {newgame.NamePOne} (ID {uId}). Victorias casa: {houseWins}/{totalBotMatches} ({houseWinRate:P1}) < Meta {GamePlayOneVsOne.StabilizationTargetHouseWinRate:P1}.");
-                            }
-                            else
-                            {
-                                newgame.IsTargetedForStabilization = false;
-                                Console.WriteLine($"[Stabilization] Usuario {newgame.NamePOne} (ID {uId}) estabilizado ({houseWinRate:P1}). Se aplica margen estándar.");
-                            }
+                        int userCoinsWonAgainstBot = botMatches.Sum(m => m.CoinsWon);
+                        int userCoinsLostAgainstBot = botMatches.Sum(m => m.CoinsLost);
+                        int userNetProfitAgainstBot = userCoinsWonAgainstBot - userCoinsLostAgainstBot;
+                        int totalBotMatches = botMatches.Count;
+                        int houseWins = botMatches.Count(m => !m.UserWon);
+                        double houseWinRate = totalBotMatches > 0 ? (double)houseWins / totalBotMatches : 0.0;
+
+                        bool isManuallyTargeted = GamePlayOneVsOne.IsUserTargetedForStabilization(uId, newgame.NamePOne);
+
+                        // Si el usuario va con ganancia neta positiva contra el bot (> 0 monedas) o está marcado en la lista:
+                        if (isManuallyTargeted || userNetProfitAgainstBot > 0)
+                        {
+                            newgame.IsTargetedForStabilization = true;
+                            Console.WriteLine($"[BotFinancialBalance] Usuario {newgame.NamePOne} (ID {uId}) va GANANDO dinero al Bot (Ganancia Neta: +{userNetProfitAgainstBot} 🪙, WinRate Casa: {houseWinRate:P1}). Modo defensivo discreto ACTIVADO para estabilizar rentabilidad de la casa.");
+                        }
+                        else
+                        {
+                            newgame.IsTargetedForStabilization = false;
+                            Console.WriteLine($"[BotFinancialBalance] Usuario {newgame.NamePOne} (ID {uId}) en balance normal/negativo contra el Bot (Balance: {userNetProfitAgainstBot} 🪙). Juego estándar permitido para que pueda ganar.");
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[Stabilization] Error al verificar métricas: {ex.Message}");
+                    Console.WriteLine($"[BotFinancialBalance] Error al verificar métricas: {ex.Message}");
                 }
             }
 

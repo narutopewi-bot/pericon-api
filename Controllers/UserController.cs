@@ -416,6 +416,100 @@ namespace PericonAPI.Controllers
                 message = "¡Recompensa activada con éxito! Te hemos acreditado 300 monedas por apoyar a @pericon.lat en Instagram. 🐐📸🪙"
             });
         }
+
+        [HttpGet("{id}/matches")]
+        public async Task<IActionResult> GetUserMatchHistory(int id, [FromQuery] int limit = 40)
+        {
+            var user = await _context.Users.FindAsync(id);
+            if (user == null)
+            {
+                return NotFound(new { message = "Usuario no encontrado." });
+            }
+
+            string uname = user.Username.ToLower();
+
+            // 1. Partidas contra el Bot
+            var botMatches = await _context.BotMatchRecords
+                .Where(m => m.UserId == id || (m.Username != null && m.Username.ToLower() == uname))
+                .OrderByDescending(m => m.CreatedAt)
+                .Take(limit)
+                .Select(m => new
+                {
+                    id = m.Id,
+                    type = "BOT",
+                    rival = m.BotName ?? "Pericón (Bot IA)",
+                    betAmount = m.BetAmount,
+                    won = m.UserWon,
+                    coinsDelta = m.UserWon ? m.CoinsWon : -m.CoinsLost,
+                    userCoinsBefore = m.UserCoinsBefore,
+                    userCoinsAfter = m.UserCoinsAfter,
+                    endReason = m.EndReason,
+                    createdAt = m.CreatedAt
+                })
+                .ToListAsync();
+
+            // 2. Partidas PvP (Multijugador)
+            var pvpMatches = await _context.MatchBetRecords
+                .Where(m =>
+                    (m.WinnerUsername != null && m.WinnerUsername.ToLower() == uname) ||
+                    (m.LoserUsername != null && m.LoserUsername.ToLower() == uname) ||
+                    (m.PlayerOneName != null && m.PlayerOneName.ToLower() == uname) ||
+                    (m.PlayerTwoName != null && m.PlayerTwoName.ToLower() == uname))
+                .OrderByDescending(m => m.CreatedAt)
+                .Take(limit)
+                .Select(m => new
+                {
+                    id = m.Id,
+                    type = "PVP",
+                    rival = ((m.PlayerOneName != null && m.PlayerOneName.ToLower() == uname) ? m.PlayerTwoName : m.PlayerOneName) ?? "Rival",
+                    betAmount = m.BetPerPlayer,
+                    won = (m.WinnerUsername != null && m.WinnerUsername.ToLower() == uname),
+                    coinsDelta = (m.WinnerUsername != null && m.WinnerUsername.ToLower() == uname) ? (m.WinnerPrize - m.BetPerPlayer) : -m.BetPerPlayer,
+                    userCoinsBefore = 0,
+                    userCoinsAfter = 0,
+                    endReason = m.EndReason,
+                    createdAt = m.CreatedAt
+                })
+                .ToListAsync();
+
+            // Combinar y ordenar por fecha descendente
+            var combined = botMatches.Concat(pvpMatches)
+                .OrderByDescending(m => m.createdAt)
+                .Take(limit)
+                .Select(m => new
+                {
+                    id = m.id,
+                    type = m.type,
+                    rival = m.rival ?? "Rival",
+                    betAmount = m.betAmount,
+                    won = m.won,
+                    coinsDelta = m.coinsDelta,
+                    userCoinsBefore = m.userCoinsBefore,
+                    userCoinsAfter = m.userCoinsAfter,
+                    endReason = m.endReason ?? "",
+                    createdAt = m.createdAt.ToString("yyyy-MM-dd HH:mm:ss")
+                })
+                .ToList();
+
+            int totalWins = combined.Count(m => m.won);
+            int totalLosses = combined.Count(m => !m.won);
+            int netCoinsGained = combined.Sum(m => m.coinsDelta);
+
+            return Ok(new
+            {
+                userId = user.Id,
+                username = user.Username,
+                summary = new
+                {
+                    totalMatches = combined.Count,
+                    totalWins,
+                    totalLosses,
+                    winRate = combined.Count > 0 ? Math.Round((double)totalWins / combined.Count * 100, 1) : 0,
+                    netCoinsGained
+                },
+                matches = combined
+            });
+        }
     }
 
     public class ClaimInstagramRewardDto
