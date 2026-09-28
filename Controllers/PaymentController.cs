@@ -27,6 +27,17 @@ namespace PericonAPI.Controllers
         [Consumes("multipart/form-data")]
         public async Task<IActionResult> ReportPayment([FromForm] PaymentReportFormDto dto)
         {
+            if (!VenezuelaTime.IsWithinOperatingHours())
+            {
+                return BadRequest(new
+                {
+                    message = VenezuelaTime.OperatingHoursMessage,
+                    isOutsideHours = true,
+                    currentTimeVenezuela = VenezuelaTime.Now.ToString("hh:mm tt"),
+                    operatingHours = "6:00 AM a 9:30 PM (Hora de Venezuela)"
+                });
+            }
+
             if (dto.AmountBs <= 0)
             {
                 return BadRequest(new { message = "El monto de recarga debe ser un número positivo mayor a 0." });
@@ -118,7 +129,7 @@ namespace PericonAPI.Controllers
                 ReceiptImageUrl = receiptUrl,
                 ReceiptBase64 = receiptBase64,
                 Status = "PENDIENTE",
-                CreatedAt = DateTime.UtcNow
+                CreatedAt = VenezuelaTime.Now
             };
 
             _context.PaymentRecharges.Add(recharge);
@@ -152,6 +163,17 @@ namespace PericonAPI.Controllers
         [HttpPost("report-json")]
         public async Task<IActionResult> ReportPaymentJson([FromBody] PaymentReportJsonDto dto)
         {
+            if (!VenezuelaTime.IsWithinOperatingHours())
+            {
+                return BadRequest(new
+                {
+                    message = VenezuelaTime.OperatingHoursMessage,
+                    isOutsideHours = true,
+                    currentTimeVenezuela = VenezuelaTime.Now.ToString("hh:mm tt"),
+                    operatingHours = "6:00 AM a 9:30 PM (Hora de Venezuela)"
+                });
+            }
+
             if (dto.AmountBs <= 0)
             {
                 return BadRequest(new { message = "El monto de recarga debe ser un número positivo mayor a 0." });
@@ -240,7 +262,7 @@ namespace PericonAPI.Controllers
                 ReceiptImageUrl = receiptUrl,
                 ReceiptBase64 = receiptBase64,
                 Status = "PENDIENTE",
-                CreatedAt = DateTime.UtcNow
+                CreatedAt = VenezuelaTime.Now
             };
 
             _context.PaymentRecharges.Add(recharge);
@@ -363,6 +385,17 @@ namespace PericonAPI.Controllers
         [HttpPost("withdraw")]
         public async Task<IActionResult> RequestWithdrawal([FromBody] PaymentWithdrawDto dto)
         {
+            if (!VenezuelaTime.IsWithinOperatingHours())
+            {
+                return BadRequest(new
+                {
+                    message = VenezuelaTime.OperatingHoursMessage,
+                    isOutsideHours = true,
+                    currentTimeVenezuela = VenezuelaTime.Now.ToString("hh:mm tt"),
+                    operatingHours = "6:00 AM a 9:30 PM (Hora de Venezuela)"
+                });
+            }
+
             if (dto.CoinsAmount < MIN_WITHDRAWAL_COINS)
             {
                 return BadRequest(new { message = $"El monto mínimo de retiro es de {MIN_WITHDRAWAL_COINS:N0} monedas." });
@@ -443,7 +476,7 @@ namespace PericonAPI.Controllers
                 PhoneNumber = dto.PhoneNumber.Trim(),
                 IdCard = dto.IdCard.Trim(),
                 Status = "PENDIENTE",
-                CreatedAt = DateTime.UtcNow
+                CreatedAt = VenezuelaTime.Now
             };
 
             _context.PaymentWithdrawals.Add(withdrawal);
@@ -496,6 +529,26 @@ namespace PericonAPI.Controllers
                 .ToListAsync();
 
             return Ok(list);
+        }
+
+        [HttpGet("operating-hours")]
+        public IActionResult GetOperatingHours()
+        {
+            var now = VenezuelaTime.Now;
+            bool isOpen = VenezuelaTime.IsWithinOperatingHours();
+
+            return Ok(new
+            {
+                isOpen,
+                currentTimeVenezuela = now.ToString("yyyy-MM-dd HH:mm:ss"),
+                currentTimeFormatted = now.ToString("hh:mm tt"),
+                openTime = "06:00 AM",
+                closeTime = "09:30 PM",
+                operatingHours = "6:00 AM a 9:30 PM (Hora de Venezuela)",
+                message = isOpen
+                    ? "Servicio de recargas y retiros disponible (6:00 AM a 9:30 PM)."
+                    : VenezuelaTime.OperatingHoursMessage
+            });
         }
     }
 

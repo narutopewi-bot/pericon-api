@@ -40,9 +40,9 @@ namespace PericonAPI.Controllers
             var totalBsApproved = approvedRecharges.Sum(r => r.AmountBs);
             var totalCoinsApproved = approvedRecharges.Sum(r => r.CoinsAmount);
 
-            var todayUtc = DateTime.UtcNow.Date;
+            var todayVzla = VenezuelaTime.Now.Date;
             var todayRechargesList = await _context.PaymentRecharges
-                .Where(r => r.CreatedAt.Date == todayUtc)
+                .Where(r => r.CreatedAt.Date == todayVzla)
                 .ToListAsync();
             var todayRechargesCount = todayRechargesList.Count;
             var todayRechargesBs = todayRechargesList.Sum(r => r.AmountBs);
@@ -507,7 +507,7 @@ namespace PericonAPI.Controllers
             // Acreditar monedas al monedero del usuario
             recharge.User.Coins += recharge.CoinsAmount;
             recharge.Status = "APROBADO";
-            recharge.ProcessedAt = DateTime.UtcNow;
+            recharge.ProcessedAt = VenezuelaTime.Now;
 
             await _context.SaveChangesAsync();
 
@@ -539,7 +539,7 @@ namespace PericonAPI.Controllers
 
             recharge.Status = "RECHAZADO";
             recharge.AdminNotes = dto?.Reason ?? "Comprobante inválido o no verificado en banco.";
-            recharge.ProcessedAt = DateTime.UtcNow;
+            recharge.ProcessedAt = VenezuelaTime.Now;
 
             await _context.SaveChangesAsync();
 
@@ -679,7 +679,7 @@ namespace PericonAPI.Controllers
 
             withdrawal.Status = "PAGADO";
             withdrawal.AdminReference = dto.Reference?.Trim() ?? "PAGO_MOVIL_OK";
-            withdrawal.ProcessedAt = DateTime.UtcNow;
+            withdrawal.ProcessedAt = VenezuelaTime.Now;
 
             await _context.SaveChangesAsync();
 
@@ -718,7 +718,7 @@ namespace PericonAPI.Controllers
 
             withdrawal.Status = "RECHAZADO";
             withdrawal.AdminNotes = dto?.Reason ?? "Datos de pago móvil no válidos.";
-            withdrawal.ProcessedAt = DateTime.UtcNow;
+            withdrawal.ProcessedAt = VenezuelaTime.Now;
 
             // Reembolsar monedas al usuario
             if (withdrawal.User != null)
@@ -864,8 +864,8 @@ namespace PericonAPI.Controllers
             var pendingBsRecharges = recharges.Where(r => r.Status == "PENDIENTE").Sum(r => r.AmountBs);
             var approvedRechargesCount = recharges.Count(r => r.Status == "APROBADO");
 
-            var todayUtc = DateTime.UtcNow.Date;
-            var todayRechargesList = recharges.Where(r => r.CreatedAt.Date == todayUtc).ToList();
+            var todayVzla = VenezuelaTime.Now.Date;
+            var todayRechargesList = recharges.Where(r => r.CreatedAt.Date == todayVzla).ToList();
             var todayRechargesCount = todayRechargesList.Count;
             var todayRechargesBs = todayRechargesList.Sum(r => r.AmountBs);
             var todayApprovedBs = todayRechargesList.Where(r => r.Status == "APROBADO").Sum(r => r.AmountBs);
