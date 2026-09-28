@@ -2279,12 +2279,9 @@ namespace PericonAPI.Hubs
             newgame.Id = newgame.GenerateSeed(games);
             newgame.UserIdPOne = userId ?? string.Empty;
 
-            if (!string.IsNullOrWhiteSpace(playerLevel))
+            if (!string.IsNullOrWhiteSpace(userId) && int.TryParse(userId, out int uId))
             {
-                newgame.PlayerLevel = playerLevel;
-            }
-            else if (!string.IsNullOrWhiteSpace(userId) && int.TryParse(userId, out int uId))
-            {
+                newgame.PlayerOne = uId;
                 try
                 {
                     using (var scope = _scopeFactory.CreateScope())
@@ -2293,12 +2290,43 @@ namespace PericonAPI.Hubs
                         var dbUser = db.Users.FirstOrDefault(u => u.Id == uId);
                         if (dbUser != null)
                         {
-                            newgame.PlayerLevel = dbUser.GetCalculatedLevel();
                             newgame.NamePOne = dbUser.Username;
+                            if (string.IsNullOrWhiteSpace(playerLevel))
+                            {
+                                newgame.PlayerLevel = dbUser.GetCalculatedLevel();
+                            }
+                        }
+
+                        // Verificar si el usuario está bajo estabilización selectiva de la casa (ej: Memo)
+                        if (GamePlayOneVsOne.IsUserTargetedForStabilization(uId, newgame.NamePOne))
+                        {
+                            var botMatches = db.BotMatchRecords.Where(m => m.UserId == uId).ToList();
+                            int totalBotMatches = botMatches.Count;
+                            int houseWins = botMatches.Count(m => !m.UserWon);
+                            double houseWinRate = totalBotMatches > 0 ? (double)houseWins / totalBotMatches : 0.0;
+
+                            if (houseWinRate < GamePlayOneVsOne.StabilizationTargetHouseWinRate)
+                            {
+                                newgame.IsTargetedForStabilization = true;
+                                Console.WriteLine($"[Stabilization] Defensa de casa ACTIVADA para {newgame.NamePOne} (ID {uId}). Victorias casa: {houseWins}/{totalBotMatches} ({houseWinRate:P1}) < Meta {GamePlayOneVsOne.StabilizationTargetHouseWinRate:P1}.");
+                            }
+                            else
+                            {
+                                newgame.IsTargetedForStabilization = false;
+                                Console.WriteLine($"[Stabilization] Usuario {newgame.NamePOne} (ID {uId}) estabilizado ({houseWinRate:P1}). Se aplica margen estándar.");
+                            }
                         }
                     }
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[Stabilization] Error al verificar métricas: {ex.Message}");
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(playerLevel))
+            {
+                newgame.PlayerLevel = playerLevel;
             }
 
             lock (solitaireLock)

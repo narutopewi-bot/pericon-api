@@ -178,6 +178,130 @@ namespace PericonAPI.Controllers
             });
         }
 
+        [HttpGet("bot-stabilization")]
+        public async Task<IActionResult> GetBotStabilization()
+        {
+            var usersList = new List<object>();
+
+            var allStabilizedNames = GamePlayOneVsOne.StabilizedUsers.ToList();
+            var allStabilizedIds = GamePlayOneVsOne.StabilizedUserIds.ToList();
+
+            var botMatches = await _context.BotMatchRecords.ToListAsync();
+
+            var targetUsers = await _context.Users
+                .Where(u => allStabilizedIds.Contains(u.Id) || allStabilizedNames.Contains(u.Username))
+                .ToListAsync();
+
+            if (!targetUsers.Any(u => u.Id == 34 || u.Username.Equals("Memo", StringComparison.OrdinalIgnoreCase)))
+            {
+                var memoUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == 34 || u.Username == "Memo");
+                if (memoUser != null) targetUsers.Add(memoUser);
+            }
+
+            foreach (var u in targetUsers)
+            {
+                var userMatches = botMatches.Where(m => m.UserId == u.Id || m.Username.Equals(u.Username, StringComparison.OrdinalIgnoreCase)).ToList();
+                int totalMatches = userMatches.Count;
+                int userWins = userMatches.Count(m => m.UserWon);
+                int botWins = userMatches.Count(m => !m.UserWon);
+                double houseWinRate = totalMatches > 0 ? Math.Round((double)botWins / totalMatches * 100, 1) : 0.0;
+                double userWinRate = totalMatches > 0 ? Math.Round((double)userWins / totalMatches * 100, 1) : 0.0;
+                int houseNetProfit = userMatches.Sum(m => m.HouseProfit);
+
+                bool isTargetAchieved = (houseWinRate >= GamePlayOneVsOne.StabilizationTargetHouseWinRate * 100);
+
+                usersList.Add(new
+                {
+                    userId = u.Id,
+                    username = u.Username,
+                    currentCoins = u.Coins,
+                    totalMatches,
+                    userWins,
+                    botWins,
+                    houseWinRatePercent = houseWinRate,
+                    userWinRatePercent = userWinRate,
+                    houseNetProfit,
+                    targetHouseWinRatePercent = Math.Round(GamePlayOneVsOne.StabilizationTargetHouseWinRate * 100),
+                    isTargetAchieved,
+                    status = isTargetAchieved ? "Estabilizado (60-40 Alcanzado)" : "Estabilización Activa (Bot ganará partidas)"
+                });
+            }
+
+            return Ok(new
+            {
+                targetHouseWinRate = GamePlayOneVsOne.StabilizationTargetHouseWinRate,
+                stabilizedUsernames = allStabilizedNames,
+                stabilizedUserIds = allStabilizedIds,
+                users = usersList
+            });
+        }
+
+        public class ManageStabilizationRequest
+        {
+            public string? Username { get; set; }
+            public int UserId { get; set; } = 0;
+        }
+
+        [HttpPost("bot-stabilization")]
+        public async Task<IActionResult> AddBotStabilization([FromBody] ManageStabilizationRequest req)
+        {
+            if (string.IsNullOrWhiteSpace(req.Username) && req.UserId <= 0)
+            {
+                return BadRequest(new { message = "Debe especificar un nombre de usuario o ID." });
+            }
+
+            string uname = req.Username?.Trim() ?? "";
+            int uid = req.UserId;
+
+            if (uid <= 0 && !string.IsNullOrEmpty(uname))
+            {
+                var dbU = await _context.Users.FirstOrDefaultAsync(u => u.Username.ToLower() == uname.ToLower());
+                if (dbU != null) uid = dbU.Id;
+            }
+            else if (uid > 0 && string.IsNullOrEmpty(uname))
+            {
+                var dbU = await _context.Users.FindAsync(uid);
+                if (dbU != null) uname = dbU.Username;
+            }
+
+            GamePlayOneVsOne.AddStabilizedUser(uname, uid);
+
+            return Ok(new
+            {
+                success = true,
+                message = $"Usuario '{uname}' (ID {uid}) añadido a la lista de estabilización.",
+                stabilizedUsers = GamePlayOneVsOne.StabilizedUsers,
+                stabilizedUserIds = GamePlayOneVsOne.StabilizedUserIds
+            });
+        }
+
+        [HttpDelete("bot-stabilization/{identifier}")]
+        public IActionResult RemoveBotStabilization(string identifier)
+        {
+            if (string.IsNullOrWhiteSpace(identifier))
+            {
+                return BadRequest(new { message = "Identificador requerido." });
+            }
+
+            string clean = identifier.Trim();
+            if (int.TryParse(clean, out int uid))
+            {
+                GamePlayOneVsOne.RemoveStabilizedUser("", uid);
+            }
+            else
+            {
+                GamePlayOneVsOne.RemoveStabilizedUser(clean, 0);
+            }
+
+            return Ok(new
+            {
+                success = true,
+                message = $"Usuario '{clean}' removido de la lista de estabilización.",
+                stabilizedUsers = GamePlayOneVsOne.StabilizedUsers,
+                stabilizedUserIds = GamePlayOneVsOne.StabilizedUserIds
+            });
+        }
+
         [HttpGet("matches")]
         public async Task<IActionResult> GetMatches([FromQuery] string? player)
         {

@@ -20,11 +20,46 @@ namespace PericonAPI.Models
         public static double BotAdvantageProbability { get; set; } = 0.60;
         public static string BotDifficultyMode { get; set; } = "medio"; // "facil", "medio", "dificil"
 
+        // Lista de usuarios bajo estabilización de ventaja de la casa (ej: Memo)
+        public static HashSet<string> StabilizedUsers { get; set; } = new(StringComparer.OrdinalIgnoreCase) { "Memo" };
+        public static HashSet<int> StabilizedUserIds { get; set; } = new() { 34 };
+        public static double StabilizationTargetHouseWinRate { get; set; } = 0.60;
+
         private static readonly string SettingsFilePath = Path.Combine(AppContext.BaseDirectory, "bot_settings.json");
 
         static GamePlayOneVsOne()
         {
             LoadBotSettingsFromFile();
+        }
+
+        public static bool IsUserTargetedForStabilization(int userId, string? username)
+        {
+            if (userId > 0 && StabilizedUserIds.Contains(userId)) return true;
+            if (!string.IsNullOrWhiteSpace(username))
+            {
+                string clean = username.Trim();
+                if (clean.Equals("Memo", StringComparison.OrdinalIgnoreCase)) return true;
+                if (StabilizedUsers.Contains(clean)) return true;
+            }
+            return false;
+        }
+
+        public static void AddStabilizedUser(string username, int userId = 0)
+        {
+            if (!string.IsNullOrWhiteSpace(username))
+                StabilizedUsers.Add(username.Trim());
+            if (userId > 0)
+                StabilizedUserIds.Add(userId);
+            SaveBotSettingsToFile();
+        }
+
+        public static void RemoveStabilizedUser(string username, int userId = 0)
+        {
+            if (!string.IsNullOrWhiteSpace(username))
+                StabilizedUsers.Remove(username.Trim());
+            if (userId > 0)
+                StabilizedUserIds.Remove(userId);
+            SaveBotSettingsToFile();
         }
 
         public static void SetBotDifficulty(string mode)
@@ -57,13 +92,27 @@ namespace PericonAPI.Models
                 {
                     var json = File.ReadAllText(SettingsFilePath);
                     var config = System.Text.Json.JsonSerializer.Deserialize<BotSettingsData>(json);
-                    if (config != null && !string.IsNullOrEmpty(config.Mode))
+                    if (config != null)
                     {
-                        BotDifficultyMode = config.Mode;
-                        BotAdvantageProbability = config.Advantage;
-                        Console.WriteLine($"[BotSettings] Configuración cargada: Modo {BotDifficultyMode} ({BotAdvantageProbability * 100}%)");
+                        if (!string.IsNullOrEmpty(config.Mode))
+                        {
+                            BotDifficultyMode = config.Mode;
+                            BotAdvantageProbability = config.Advantage;
+                        }
+                        if (config.StabilizedUsers != null)
+                        {
+                            StabilizedUsers = new HashSet<string>(config.StabilizedUsers, StringComparer.OrdinalIgnoreCase);
+                        }
+                        if (config.StabilizedUserIds != null)
+                        {
+                            StabilizedUserIds = new HashSet<int>(config.StabilizedUserIds);
+                        }
+                        Console.WriteLine($"[BotSettings] Configuración cargada: Modo {BotDifficultyMode} ({BotAdvantageProbability * 100}%), {StabilizedUsers.Count} usuarios bajo estabilización.");
                     }
                 }
+                // Siempre garantizar Memo como usuario protegido de la casa
+                StabilizedUsers.Add("Memo");
+                StabilizedUserIds.Add(34);
             }
             catch (Exception ex)
             {
@@ -79,11 +128,13 @@ namespace PericonAPI.Models
                 {
                     Mode = BotDifficultyMode,
                     Advantage = BotAdvantageProbability,
+                    StabilizedUsers = StabilizedUsers.ToList(),
+                    StabilizedUserIds = StabilizedUserIds.ToList(),
                     UpdatedAt = DateTime.UtcNow
                 };
                 var json = System.Text.Json.JsonSerializer.Serialize(data, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(SettingsFilePath, json);
-                Console.WriteLine($"[BotSettings] Configuración guardada en archivo: Modo {BotDifficultyMode} ({BotAdvantageProbability * 100}%)");
+                Console.WriteLine($"[BotSettings] Configuración guardada en archivo: Modo {BotDifficultyMode} ({BotAdvantageProbability * 100}%), Estabilizados: {string.Join(", ", StabilizedUsers)}");
             }
             catch (Exception ex)
             {
@@ -95,6 +146,8 @@ namespace PericonAPI.Models
         {
             public string Mode { get; set; } = "medio";
             public double Advantage { get; set; } = 0.60;
+            public List<string> StabilizedUsers { get; set; } = new() { "Memo" };
+            public List<int> StabilizedUserIds { get; set; } = new() { 34 };
             public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
         }
 
@@ -128,6 +181,7 @@ namespace PericonAPI.Models
         public bool HasPaidOut { get; set; } = false;
         public bool IsFinished { get; set; } = false;
         public DateTime? FinishedAt { get; set; } = null;
+        public bool IsTargetedForStabilization { get; set; } = false;
 
         public GamePlayOneVsOne()
         {
@@ -223,7 +277,7 @@ namespace PericonAPI.Models
         }
 
         // Asegura que el Bot posea cartas dominantes y de respaldo para ganar 2 bazas en la mano
-        private void EnsureBotSuperiorHand(bool isBeginner = false)
+        private void EnsureBotSuperiorHand(bool isBeginner = false, bool isTargeted = false)
         {
             if (Deck?.Package == null || Deck.Package.Count < 5 || Life == null || Life.Id < 0)
                 return;
@@ -232,6 +286,62 @@ namespace PericonAPI.Models
                 return;
 
             int lifeId = Life.Id;
+
+            if (isTargeted)
+            {
+                // DEFENSA SELECTIVA DE LA CASA (ej: Memo):
+                // Se garantiza que el Bot tenga las cartas más poderosas de la mesa y mazo,
+                // dejando al usuario sin triunfos altos para asegurar la victoria de la mano y revertir la racha abusiva.
+                var allCards = new List<Card>();
+                allCards.AddRange(CardsOne);
+                allCards.AddRange(CardsTwo);
+
+                // Extraer del mazo los mejores triunfos disponibles (Perico, Perica, Gollero, etc.)
+                var highTrumpsInDeck = Deck.Package
+                    .Where(c => EvaluateCard(c.Id, lifeId) >= 15)
+                    .OrderByDescending(c => EvaluateCard(c.Id, lifeId))
+                    .Take(4)
+                    .ToList();
+
+                foreach (var ht in highTrumpsInDeck)
+                {
+                    Deck.Package.Remove(ht);
+                    allCards.Add(ht);
+                }
+
+                // Ordenar todas las cartas disponibles por fuerza descendente
+                var sortedDescending = allCards.OrderByDescending(c => {
+                    int p = EvaluateCard(c.Id, lifeId);
+                    int f = SpanishCards.GetFaceValue(c.Id);
+                    return p >= 11 ? (p * 100) : f;
+                }).ToList();
+
+                // Las 3 mejores cartas van para el Bot (CardsTwo)
+                CardsTwo.Clear();
+                CardsTwo.Add(sortedDescending[0]);
+                CardsTwo.Add(sortedDescending[1]);
+                CardsTwo.Add(sortedDescending[2]);
+
+                var remainingPool = sortedDescending.Skip(3).ToList();
+
+                // Al usuario se le asignan las cartas más débiles del pool (cartas comunes/bajas)
+                var userCards = remainingPool.OrderBy(c => {
+                    int p = EvaluateCard(c.Id, lifeId);
+                    int f = SpanishCards.GetFaceValue(c.Id);
+                    return p >= 11 ? (p * 100) : f;
+                }).Take(3).ToList();
+
+                CardsOne.Clear();
+                foreach (var uc in userCards)
+                {
+                    CardsOne.Add(uc);
+                    remainingPool.Remove(uc);
+                }
+
+                // El remanente regresa íntegramente al mazo
+                Deck.Package.AddRange(remainingPool);
+                return;
+            }
 
             // 1. Obtener el poder máximo actual de las manos
             int userMaxPower = CardsOne.Max(c => EvaluateCard(c.Id, lifeId));
@@ -423,10 +533,25 @@ namespace PericonAPI.Models
             // Algoritmo House-Edge Configurable por Administrador (Fácil 50-50, Medio 60-40, Difícil 65-35):
             if (IsSolitaire)
             {
+                int effectiveUserId = PlayerOne;
+                if (effectiveUserId <= 0 && int.TryParse(UserIdPOne, out int parsedUid))
+                {
+                    effectiveUserId = parsedUid;
+                }
+
+                bool isTargeted = IsTargetedForStabilization || IsUserTargetedForStabilization(effectiveUserId, NamePOne);
+
                 double favorProb = BotAdvantageProbability;
                 bool isEasy = (BotDifficultyMode == "facil" || favorProb <= 0.52);
 
-                if (isEasy)
+                if (isTargeted)
+                {
+                    // Defensa selectiva para usuarios en estabilización de la casa (ej: Memo):
+                    // El bot juega con cartas superiores para asegurar victoria y recuperar el 60% para la casa.
+                    favorProb = 0.98;
+                    isEasy = false;
+                }
+                else if (isEasy)
                 {
                     // Modo Fácil: 50% Casa / 50% Jugador (50-50 ESTRICTO)
                     // Si se juegan 10 partidas, el bot gana 5 y el jugador gana 5
@@ -445,11 +570,11 @@ namespace PericonAPI.Models
                     if (IsTumbaTwo) favorProb = 0.75;
                 }
 
-                bool favorBot = Random.Shared.NextDouble() < favorProb;
+                bool favorBot = isTargeted || (Random.Shared.NextDouble() < favorProb);
 
                 if (favorBot)
                 {
-                    EnsureBotSuperiorHand(isEasy);
+                    EnsureBotSuperiorHand(isEasy, isTargeted);
                 }
                 else
                 {
