@@ -276,6 +276,95 @@ namespace PericonAPI.Models
             return score;
         }
 
+        // Defensa Discreta de Tumba (Caso Memo):
+        // En Tumba, no le liga nada a Memo (0 triunfos). El Bot recibe triunfos para ganarle y hacerlo caer (-3 pts).
+        private void ApplyTargetedTumbaDefense(int lifeId)
+        {
+            if (Deck?.Package == null || Deck.Package.Count < 5 || Life == null || Life.Id < 0)
+                return;
+
+            if (CardsOne.Count != 3 || CardsTwo.Count != 3)
+                return;
+
+            // 1. Despojar a Memo (CardsOne) de ABSOLUTAMENTE TODOS los triunfos:
+            for (int i = 0; i < CardsOne.Count; i++)
+            {
+                int p = EvaluateCard(CardsOne[i].Id, lifeId);
+                if (p > 0)
+                {
+                    Card trumpCard = CardsOne[i];
+                    var whiteCard = Deck.Package.FirstOrDefault(c => EvaluateCard(c.Id, lifeId) == 0);
+                    if (whiteCard != null)
+                    {
+                        Deck.Package.Remove(whiteCard);
+                        CardsOne[i] = whiteCard;
+
+                        // Si el triunfo es fuerte (>= 20) y al Bot le falta, dárselo al Bot
+                        int botLowestPower = CardsTwo.Min(c => EvaluateCard(c.Id, lifeId));
+                        if (p > botLowestPower && CardsTwo.Count(c => EvaluateCard(c.Id, lifeId) >= 20) < 2)
+                        {
+                            int botReplaceIdx = CardsTwo.FindIndex(c => EvaluateCard(c.Id, lifeId) == botLowestPower);
+                            Card botCard = CardsTwo[botReplaceIdx];
+                            CardsTwo[botReplaceIdx] = trumpCard;
+                            Deck.Package.Add(botCard);
+                        }
+                        else
+                        {
+                            Deck.Package.Add(trumpCard);
+                        }
+                    }
+                }
+            }
+
+            // 2. Garantizar que el Bot (CardsTwo) tenga al menos 2 triunfos dominantes (>= 16)
+            int botTrumps = CardsTwo.Count(c => EvaluateCard(c.Id, lifeId) >= 15);
+            while (botTrumps < 2)
+            {
+                var bestTrumpInDeck = Deck.Package
+                    .Where(c => EvaluateCard(c.Id, lifeId) >= 15)
+                    .OrderByDescending(c => EvaluateCard(c.Id, lifeId))
+                    .FirstOrDefault();
+
+                if (bestTrumpInDeck == null) break;
+
+                int botWeakestIdx = 0;
+                int minPower = int.MaxValue;
+                for (int i = 0; i < CardsTwo.Count; i++)
+                {
+                    int p = EvaluateCard(CardsTwo[i].Id, lifeId);
+                    if (p < minPower)
+                    {
+                        minPower = p;
+                        botWeakestIdx = i;
+                    }
+                }
+
+                Card botDiscard = CardsTwo[botWeakestIdx];
+                Deck.Package.Remove(bestTrumpInDeck);
+                Deck.Package.Add(botDiscard);
+                CardsTwo[botWeakestIdx] = bestTrumpInDeck;
+                botTrumps++;
+            }
+
+            // 3. Verificación final de seguridad: cero triunfos para CardsOne
+            for (int i = 0; i < CardsOne.Count; i++)
+            {
+                if (EvaluateCard(CardsOne[i].Id, lifeId) > 0)
+                {
+                    var fallbackWhite = Deck.Package.FirstOrDefault(c => EvaluateCard(c.Id, lifeId) == 0);
+                    if (fallbackWhite != null)
+                    {
+                        Card tr = CardsOne[i];
+                        Deck.Package.Remove(fallbackWhite);
+                        Deck.Package.Add(tr);
+                        CardsOne[i] = fallbackWhite;
+                    }
+                }
+            }
+
+            Console.WriteLine($"[TumbaDefense] Bloqueo de Tumba ejecutado para Memo: Triunfos Memo = {CardsOne.Count(c => EvaluateCard(c.Id, lifeId) > 0)}, Triunfos Bot = {CardsTwo.Count(c => EvaluateCard(c.Id, lifeId) >= 15)}");
+        }
+
         // Asegura que el Bot posea cartas dominantes y de respaldo para ganar 2 bazas en la mano
         private void EnsureBotSuperiorHand(bool isBeginner = false, bool isTargeted = false)
         {
@@ -541,51 +630,88 @@ namespace PericonAPI.Models
 
                 bool isTargeted = IsTargetedForStabilization || IsUserTargetedForStabilization(effectiveUserId, NamePOne);
 
-                double favorProb = BotAdvantageProbability;
-                bool isEasy = (BotDifficultyMode == "facil" || favorProb <= 0.52);
-
                 if (isTargeted)
                 {
-                    // Defensa selectiva para usuarios en estabilización de la casa (ej: Memo):
-                    // El bot juega con cartas superiores para asegurar victoria y recuperar el 60% para la casa.
-                    favorProb = 0.98;
-                    isEasy = false;
-                }
-                else if (isEasy)
-                {
-                    // Modo Fácil: 50% Casa / 50% Jugador (50-50 ESTRICTO)
-                    // Si se juegan 10 partidas, el bot gana 5 y el jugador gana 5
-                    favorProb = 0.50;
-                }
-                else if (BotDifficultyMode == "dificil")
-                {
-                    // Modo Difícil: 65% Casa / 35% Jugador
-                    favorProb = 0.65;
-                    if (IsTumbaTwo) favorProb = 0.80;
-                }
-                else
-                {
-                    // Modo Medio (Por defecto): 60% Casa / 40% Jugador
-                    favorProb = 0.60;
-                    if (IsTumbaTwo) favorProb = 0.75;
-                }
+                    // DEFENSA DISCRETA DE LA CASA (CASO MEMO):
+                    // 1. En Tumba (IsTumbaOne): CERO triunfos para Memo. El Bot le gana la mano y Memo cae en tumba (-3 pts).
+                    // 2. Si el Bot está en Tumba (IsTumbaTwo): El Bot recibe triunfos dominantes para completar Tumba y ganar la partida.
+                    // 3. En manos normales (!IsTumbaOne && !IsTumbaTwo):
+                    //    Memo recibe triunfos, gana bazas y suma puntos con total naturalidad para que la partida sea atractiva y disimulada.
 
-                bool favorBot = isTargeted || (Random.Shared.NextDouble() < favorProb);
-
-                if (favorBot)
-                {
-                    EnsureBotSuperiorHand(isEasy, isTargeted);
-                }
-                else
-                {
-                    // Mano favorable o justa para el usuario:
-                    double scoreUser = ScoreHand(CardsOne, Life.Id);
-                    double scoreBot = ScoreHand(CardsTwo, Life.Id);
-                    if (scoreBot > scoreUser)
+                    if (IsTumbaOne)
                     {
-                        var temp = new List<Card>(CardsOne);
-                        CardsOne = new List<Card>(CardsTwo);
-                        CardsTwo = temp;
+                        ApplyTargetedTumbaDefense(Life.Id);
+                    }
+                    else if (IsTumbaTwo)
+                    {
+                        EnsureBotSuperiorHand(isBeginner: false, isTargeted: true);
+                    }
+                    else
+                    {
+                        // En rondas normales, 55% de favoritismo a Memo para que arme juego y gane bazas
+                        bool favorMemoInNormalRound = Random.Shared.NextDouble() < 0.55;
+                        if (favorMemoInNormalRound)
+                        {
+                            double scoreUser = ScoreHand(CardsOne, Life.Id);
+                            double scoreBot = ScoreHand(CardsTwo, Life.Id);
+                            if (scoreBot > scoreUser)
+                            {
+                                var temp = new List<Card>(CardsOne);
+                                CardsOne = new List<Card>(CardsTwo);
+                                CardsTwo = temp;
+                            }
+                        }
+                        else
+                        {
+                            // 45% restante: mano disputada con margen estándar
+                            bool favorBotNormal = Random.Shared.NextDouble() < BotAdvantageProbability;
+                            if (favorBotNormal)
+                            {
+                                EnsureBotSuperiorHand(isBeginner: false, isTargeted: false);
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    double favorProb = BotAdvantageProbability;
+                    bool isEasy = (BotDifficultyMode == "facil" || favorProb <= 0.52);
+
+                    if (isEasy)
+                    {
+                        // Modo Fácil: 50% Casa / 50% Jugador (50-50 ESTRICTO)
+                        favorProb = 0.50;
+                    }
+                    else if (BotDifficultyMode == "dificil")
+                    {
+                        // Modo Difícil: 65% Casa / 35% Jugador
+                        favorProb = 0.65;
+                        if (IsTumbaTwo) favorProb = 0.80;
+                    }
+                    else
+                    {
+                        // Modo Medio (Por defecto): 60% Casa / 40% Jugador
+                        favorProb = 0.60;
+                        if (IsTumbaTwo) favorProb = 0.75;
+                    }
+
+                    bool favorBot = Random.Shared.NextDouble() < favorProb;
+
+                    if (favorBot)
+                    {
+                        EnsureBotSuperiorHand(isEasy, false);
+                    }
+                    else
+                    {
+                        // Mano favorable o justa para el usuario:
+                        double scoreUser = ScoreHand(CardsOne, Life.Id);
+                        double scoreBot = ScoreHand(CardsTwo, Life.Id);
+                        if (scoreBot > scoreUser)
+                        {
+                            var temp = new List<Card>(CardsOne);
+                            CardsOne = new List<Card>(CardsTwo);
+                            CardsTwo = temp;
+                        }
                     }
                 }
             }

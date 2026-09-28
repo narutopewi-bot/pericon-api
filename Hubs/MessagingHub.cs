@@ -2366,6 +2366,26 @@ namespace PericonAPI.Hubs
                     }
                 }
 
+                // Sincronizar puntajes de Tumba enviados por el cliente
+                if (!string.IsNullOrWhiteSpace(move.content))
+                {
+                    var parts = move.content.Split('-');
+                    if (parts.Length >= 2 && int.TryParse(parts[0], out int p1) && int.TryParse(parts[1], out int p2))
+                    {
+                        int oldP1 = actual.PointsOne;
+                        int oldP2 = actual.PointsTwo;
+                        actual.PointsOne = p1;
+                        actual.PointsTwo = p2;
+                        if (parts.Length >= 4 && int.TryParse(parts[2], out int part1) && int.TryParse(parts[3], out int part2))
+                        {
+                            actual.IsTumbaDeParaAtrasOne = (part1 == 1 && p1 == 8);
+                            actual.IsTumbaDeParaAtrasTwo = (part2 == 1 && p2 == 8);
+                        }
+                        actual.UpdateTumbaStatus(oldP1, oldP2);
+                        Console.WriteLine($"[Solitaire] Puntos sincronizados para juego {actual.Id}: P1={actual.PointsOne} (Tumba={actual.IsTumbaOne}), Bot={actual.PointsTwo} (Tumba={actual.IsTumbaTwo})");
+                    }
+                }
+
                 actual.Deck.RandomCards();
                 actual.PlayerTurn = !actual.PlayerTurn;
                 actual.ChoiceTurn = actual.PlayerTurn;
