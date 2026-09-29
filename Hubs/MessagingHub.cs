@@ -2366,8 +2366,8 @@ namespace PericonAPI.Hubs
                             }
                         }
 
-                        // SISTEMA DE EQUILIBRIO FINANCIERO CONTRA EL BOT (OPCIÓN 2 APROBADA)
-                        // Calcula las monedas ganadas vs perdidas por el usuario contra la máquina
+                        // SISTEMA DE EQUILIBRIO FINANCIERO Y CONTROL ANTIRACHAS CONTRA EL BOT
+                        // 1. Obtener historial del usuario contra el bot
                         var botMatches = db.BotMatchRecords
                             .Where(m => m.UserId == uId || (m.Username != null && m.Username.ToLower() == newgame.NamePOne.ToLower()))
                             .ToList();
@@ -2383,29 +2383,64 @@ namespace PericonAPI.Hubs
 
                         newgame.UserNetCoinsAgainstBot = userNetProfitAgainstBot;
 
+                        // 2. Calcular racha de derrotas consecutivas recientes del usuario (victorias seguidas del bot)
+                        var recentBotMatches = botMatches.OrderByDescending(m => m.CreatedAt).Take(10).ToList();
+                        int consecutiveBotWins = 0;
+                        foreach (var m in recentBotMatches)
+                        {
+                            if (!m.UserWon)
+                            {
+                                consecutiveBotWins++;
+                            }
+                            else
+                            {
+                                break;
+                            }
+                        }
+
                         bool isManuallyTargeted = GamePlayOneVsOne.IsUserTargetedForStabilization(uId, newgame.NamePOne);
                         bool isChe = (uId == 202 || (newgame.NamePOne != null && newgame.NamePOne.Trim().Equals("Che", StringComparison.OrdinalIgnoreCase)));
 
                         // CASO 1: Ganancia excesiva contra la casa (o usuario Memo) -> Modo Defensivo de Casa
-                        if (isManuallyTargeted || userNetProfitAgainstBot > 300)
+                        if (isManuallyTargeted || userNetProfitAgainstBot > 500)
                         {
                             newgame.UserBalanceMode = UserBotBalanceMode.DefendHouse;
                             newgame.IsTargetedForStabilization = true;
-                            Console.WriteLine($"[BotFinancialBalance] Usuario {newgame.NamePOne} (ID {uId}) va GANANDO al Bot (+{userNetProfitAgainstBot} 🪙, WinRate Casa: {houseWinRate:P1}). Modo defensivo discreto ACTIVADO para estabilizar rentabilidad de la casa.");
+                            newgame.MustFavorUserToBreakStreak = false;
+                            Console.WriteLine($"[BotFinancialBalance] Usuario {newgame.NamePOne} (ID {uId}) va GANANDO al Bot (+{userNetProfitAgainstBot} 🪙, WinRate Casa: {houseWinRate:P1}). Modo defensivo de casa ACTIVADO.");
                         }
-                        // CASO 2: Déficit severo / Usuario Che / WinRate bajo (< 38%) o pérdida neta acumulada -> Modo Recuperación / Balance Justo
-                        else if (isChe || userNetProfitAgainstBot <= -300 || (totalBotMatches >= 5 && userWinRate < 0.38))
-                        {
-                            newgame.UserBalanceMode = UserBotBalanceMode.FavorUserToRecover;
-                            newgame.IsTargetedForStabilization = false;
-                            Console.WriteLine($"[BotFinancialBalance] Usuario {newgame.NamePOne} (ID {uId}) en DÉFICIT SEVERO contra el Bot (Pérdidas acumuladas: {userNetProfitAgainstBot} 🪙, WinRate: {userWinRate:P1}). Modo RECUPERACIÓN / BALANCE JUSTO activado (65% favorable al usuario para evitar quiebra y mantener balance).");
-                        }
-                        // CASO 3: Juego en equilibrio estándar
+                        // CASO 2: Modo Equilibrado Sostenible con Control Antirachas (Che y usuarios regulares)
+                        // Instrucción del Administrador:
+                        // "No es que a partir de ahora lo vas a dejar ganar para que él se recupere, si él ya perdió, ya perdió.
+                        // Pero cuando él vuelva a jugar, no seas tan agresivo con él. No gánales tantas partidas seguidas:
+                        // gana una tú, una él, una tú, gana dos tú, una él. Vele quitando dinero pero gradualmente, no que te ganes todas las partidas tú y él las pierda todas."
                         else
                         {
-                            newgame.UserBalanceMode = UserBotBalanceMode.Normal;
+                            newgame.UserBalanceMode = UserBotBalanceMode.BalancedGradualEdge;
                             newgame.IsTargetedForStabilization = false;
-                            Console.WriteLine($"[BotFinancialBalance] Usuario {newgame.NamePOne} (ID {uId}) en equilibrio financiero ({userNetProfitAgainstBot} 🪙). Juego estándar según dificultad {GamePlayOneVsOne.BotDifficultyMode}.");
+
+                            // Regla Antiracha Estricta: Si el bot ya ganó 2 o más partidas seguidas,
+                            // OBLIGATORIAMENTE se favorece al usuario para romper la racha (el bot NUNCA gana 3 seguidas).
+                            if (consecutiveBotWins >= 2)
+                            {
+                                newgame.MustFavorUserToBreakStreak = true;
+                                Console.WriteLine($"[BotBalance] Usuario {newgame.NamePOne} (ID {uId}) venía de {consecutiveBotWins} derrotas seguidas ante el Bot. ¡ANTIRACHA ACTIVADA! Esta partida se favorece al usuario.");
+                            }
+                            // Regla de Ritmo 1-1 / 2-1: Si el bot ganó la partida anterior (1 victoria):
+                            // 50% de probabilidad de que el usuario gane ahora (ritmo 1 bot - 1 usuario)
+                            // 50% de probabilidad de que el bot gane su segunda partida (ritmo 2 bot - 1 usuario)
+                            else if (consecutiveBotWins == 1)
+                            {
+                                bool favorUserThisTime = Random.Shared.NextDouble() < 0.50;
+                                newgame.MustFavorUserToBreakStreak = favorUserThisTime;
+                                Console.WriteLine($"[BotBalance] Usuario {newgame.NamePOne} (ID {uId}) perdió 1 partida anterior. Ritmo alternado: FavorUser={favorUserThisTime}.");
+                            }
+                            // Si el usuario ganó la partida anterior (consecutiveBotWins == 0):
+                            else
+                            {
+                                newgame.MustFavorUserToBreakStreak = false;
+                                Console.WriteLine($"[BotBalance] Usuario {newgame.NamePOne} (ID {uId}) ganó su partida anterior. Juego competitivo estándar con ventaja gradual de la casa (55/45).");
+                            }
                         }
                     }
                 }

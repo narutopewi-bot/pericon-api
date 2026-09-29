@@ -145,8 +145,8 @@ namespace PericonAPI.Controllers
             string description = mode switch
             {
                 "facil" => "Modo Fácil (50% Casa / 50% Jugador - 5 de cada 10 para los jugadores)",
-                "dificil" => "Modo Difícil (65% Casa / 35% Jugador - Mayor dificultad)",
-                _ => "Modo Medio (60% Casa / 40% Jugador - Balance estándar)"
+                "dificil" => "Modo Difícil (62% Casa / 38% Jugador - Mayor dificultad)",
+                _ => "Modo Medio (55% Casa / 45% Jugador - Balance gradual y sostenible)"
             };
 
             return Ok(new

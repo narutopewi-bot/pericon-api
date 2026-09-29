@@ -6,7 +6,7 @@ namespace PericonAPI.Models
     public enum UserBotBalanceMode
     {
         Normal = 0,
-        FavorUserToRecover = 1, // Usuario con pérdidas severas (ej: Che): el bot equilibra dándole buenas cartas para evitar ruina
+        BalancedGradualEdge = 1, // Ritmo equilibrado 1-1 / 2-1 (antirachas: bot nunca gana 3 seguidas, casa gana gradualmente)
         DefendHouse = 2         // Usuario con alta ganancia (ej: Memo): la casa defiende discretamente
     }
 
@@ -24,7 +24,7 @@ namespace PericonAPI.Models
         public string UserIdPTwo { get; set; } = string.Empty;
         public int LastStakeAsker { get; set; } = 0; // 0 = ninguno, 1 = P1, 2 = P2
         public bool IsSolitaire { get; set; }
-        public static double BotAdvantageProbability { get; set; } = 0.60;
+        public static double BotAdvantageProbability { get; set; } = 0.55;
         public static string BotDifficultyMode { get; set; } = "medio"; // "facil", "medio", "dificil"
 
         // Lista de usuarios bajo estabilización de ventaja de la casa (ej: Memo)
@@ -80,12 +80,12 @@ namespace PericonAPI.Models
             else if (mode == "dificil")
             {
                 BotDifficultyMode = "dificil";
-                BotAdvantageProbability = 0.65;
+                BotAdvantageProbability = 0.62;
             }
             else // "medio"
             {
                 BotDifficultyMode = "medio";
-                BotAdvantageProbability = 0.60;
+                BotAdvantageProbability = 0.55;
             }
 
             SaveBotSettingsToFile();
@@ -191,6 +191,7 @@ namespace PericonAPI.Models
         public bool IsTargetedForStabilization { get; set; } = false;
         public UserBotBalanceMode UserBalanceMode { get; set; } = UserBotBalanceMode.Normal;
         public int UserNetCoinsAgainstBot { get; set; } = 0;
+        public bool MustFavorUserToBreakStreak { get; set; } = false;
         public DateTime? P1DisconnectedAt { get; set; } = null;
         public DateTime? P2DisconnectedAt { get; set; } = null;
         public DateTime LastTurnActionAt { get; set; } = DateTime.UtcNow;
@@ -535,42 +536,8 @@ namespace PericonAPI.Models
                 }
 
                 bool isTargetedHouse = IsTargetedForStabilization || UserBalanceMode == UserBotBalanceMode.DefendHouse || IsUserTargetedForStabilization(effectiveUserId, NamePOne);
-                bool isFavorUser = UserBalanceMode == UserBotBalanceMode.FavorUserToRecover || effectiveUserId == 202 || (!string.IsNullOrWhiteSpace(NamePOne) && NamePOne.Trim().Equals("Che", StringComparison.OrdinalIgnoreCase));
 
-                if (isFavorUser && !isTargetedHouse)
-                {
-                    // =========================================================================
-                    // MODO RECUPERACIÓN / BALANCE FINANCIERO (CASO CHE Y USUARIOS EN DÉFICIT)
-                    // "No lo vas a dejar en la mierda de una vez... Mantén un balance"
-                    // - El jugador recibe manos competitivas y favorables el 65% de las veces
-                    // - Si el jugador está en Tumba (IsTumbaOne), NO se le bloquea; puede hacer sus 3 puntos
-                    // - Si el bot está en Tumba (IsTumbaTwo), no se le inyectan cartas artificiales al bot
-                    // =========================================================================
-                    double favorUserProb = 0.65;
-                    bool favorUser = Random.Shared.NextDouble() < favorUserProb;
-
-                    if (favorUser)
-                    {
-                        // Asegurar mano favorable para el usuario:
-                        double scoreUser = ScoreHand(CardsOne, Life.Id);
-                        double scoreBot = ScoreHand(CardsTwo, Life.Id);
-                        if (scoreBot > scoreUser)
-                        {
-                            var temp = new List<Card>(CardsOne);
-                            CardsOne = new List<Card>(CardsTwo);
-                            CardsTwo = temp;
-                        }
-                    }
-                    else
-                    {
-                        // 35% restante: mano disputada normal sin ventajas forzadas excesivas
-                        if (Random.Shared.NextDouble() < 0.40)
-                        {
-                            EnsureBotSuperiorHand(isBeginner: true, isTargeted: false);
-                        }
-                    }
-                }
-                else if (isTargetedHouse)
+                if (isTargetedHouse)
                 {
                     // DEFENSA DISCRETA DE LA CASA (CASO MEMO):
                     // 1. En Tumba (IsTumbaOne): CERO triunfos para Memo. El Bot le gana la mano y Memo cae en tumba (-3 pts).
@@ -612,8 +579,28 @@ namespace PericonAPI.Models
                         }
                     }
                 }
+                else if (MustFavorUserToBreakStreak)
+                {
+                    // =========================================================================
+                    // MODO ANTIRACHA / EQUILIBRIO 1-1 Y 2-1 (CASO CHE Y JUGADORES REGULARES)
+                    // "No gánales tantas partidas seguidas: gana una tú, una él, una tú, gana dos tú, una él."
+                    // - El bot NUNCA gana 3 partidas seguidas.
+                    // - En esta partida se favorece al usuario otorgándole la mejor mano de forma natural.
+                    // - Si el bot está en tumba, NO se le asisten cartas superiores.
+                    // =========================================================================
+                    double scoreUser = ScoreHand(CardsOne, Life.Id);
+                    double scoreBot = ScoreHand(CardsTwo, Life.Id);
+                    if (scoreBot > scoreUser)
+                    {
+                        var temp = new List<Card>(CardsOne);
+                        CardsOne = new List<Card>(CardsTwo);
+                        CardsTwo = temp;
+                    }
+                }
                 else
                 {
+                    // MODO EQUILIBRADO CON VENTAJA GRADUAL DE LA CASA (55% Bot / 45% Usuario en Medio)
+                    // "Vele quitando dinero pero gradualmente, no que te ganes todas las partidas tú y él las pierda todas."
                     double favorProb = BotAdvantageProbability;
                     bool isEasy = (BotDifficultyMode == "facil" || favorProb <= 0.52);
 
@@ -624,15 +611,15 @@ namespace PericonAPI.Models
                     }
                     else if (BotDifficultyMode == "dificil")
                     {
-                        // Modo Difícil: 65% Casa / 35% Jugador
-                        favorProb = 0.65;
-                        if (IsTumbaTwo) favorProb = 0.80;
+                        // Modo Difícil: 62% Casa / 38% Jugador
+                        favorProb = 0.62;
+                        if (IsTumbaTwo) favorProb = 0.75;
                     }
                     else
                     {
-                        // Modo Medio (Por defecto): 60% Casa / 40% Jugador
-                        favorProb = 0.60;
-                        if (IsTumbaTwo) favorProb = 0.75;
+                        // Modo Medio (Por defecto): 55% Casa / 45% Jugador (ventaja sutil y gradual)
+                        favorProb = 0.55;
+                        if (IsTumbaTwo) favorProb = 0.70;
                     }
 
                     bool favorBot = Random.Shared.NextDouble() < favorProb;
