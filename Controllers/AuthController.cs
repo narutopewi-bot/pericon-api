@@ -124,17 +124,43 @@ namespace PericonAPI.Controllers
             }
 
             // 6. Validación de Huella Digital del Dispositivo (Device Fingerprint)
+            // Regla de Monedas de Cortesía / Regalo de Bienvenida:
+            // Se permite crear múltiples cuentas en un mismo teléfono/dispositivo.
+            // La PRIMERA cuenta creada en el dispositivo recibe las 200 monedas de cortesía.
+            // Las cuentas subsecuentes creadas en el mismo teléfono se registran con éxito pero inician con CERO (0) monedas.
             var cleanFingerprint = dto.DeviceFingerprint?.Trim();
+            bool isFirstAccountOnDevice = true;
+
             if (!string.IsNullOrWhiteSpace(cleanFingerprint))
             {
                 bool deviceAlreadyRegistered = await _context.Users.AnyAsync(u => u.DeviceFingerprint == cleanFingerprint);
                 if (deviceAlreadyRegistered)
                 {
-                    return BadRequest(new { message = "🚫 Este dispositivo ya tiene una cuenta registrada en El Pericón. No está permitido registrar múltiples cuentas desde el mismo teléfono o equipo." });
+                    isFirstAccountOnDevice = false;
+                }
+            }
+            else
+            {
+                // Fallback de huella por IP y User-Agent si el cliente no proporcionó huella
+                var clientIp = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown_ip";
+                var userAgent = Request.Headers["User-Agent"].ToString();
+                cleanFingerprint = "fp_srv_" + Convert.ToHexString(
+                    System.Security.Cryptography.SHA256.HashData(
+                        System.Text.Encoding.UTF8.GetBytes($"{clientIp}|{userAgent}")
+                    )
+                ).Substring(0, 24);
+
+                bool deviceAlreadyRegistered = await _context.Users.AnyAsync(u => u.DeviceFingerprint == cleanFingerprint);
+                if (deviceAlreadyRegistered)
+                {
+                    isFirstAccountOnDevice = false;
                 }
             }
 
             var passwordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password);
+
+            int welcomeCoins = isFirstAccountOnDevice ? 200 : 0;
+            int welcomeBonus = isFirstAccountOnDevice ? 200 : 0;
 
             var user = new User
             {
@@ -146,8 +172,8 @@ namespace PericonAPI.Controllers
                 DeviceFingerprint = cleanFingerprint,
                 BirthDate = parsedBirthDate,
                 PasswordHash = passwordHash,
-                Coins = 200,
-                BonusCoins = 200,
+                Coins = welcomeCoins,
+                BonusCoins = welcomeBonus,
                 Level = "Peón de Casona",
                 Experience = 0,
                 CreatedAt = DateTime.UtcNow,
@@ -231,6 +257,13 @@ namespace PericonAPI.Controllers
                 await _context.SaveChangesAsync();
             }
 
+            // Si el usuario no tenía huella digital registrada (cuentas creadas anteriormente), vinculamos su dispositivo actual
+            if (string.IsNullOrWhiteSpace(user.DeviceFingerprint) && !string.IsNullOrWhiteSpace(dto.DeviceFingerprint))
+            {
+                user.DeviceFingerprint = dto.DeviceFingerprint.Trim();
+                await _context.SaveChangesAsync();
+            }
+
             return Ok(new AuthResponseDto
             {
                 Id = user.Id,
@@ -291,6 +324,21 @@ namespace PericonAPI.Controllers
 
             if (user == null)
             {
+                var cleanFingerprint = dto.DeviceFingerprint?.Trim();
+                bool isFirstAccountOnDevice = true;
+
+                if (!string.IsNullOrWhiteSpace(cleanFingerprint))
+                {
+                    bool deviceAlreadyRegistered = await _context.Users.AnyAsync(u => u.DeviceFingerprint == cleanFingerprint);
+                    if (deviceAlreadyRegistered)
+                    {
+                        isFirstAccountOnDevice = false;
+                    }
+                }
+
+                int welcomeCoins = isFirstAccountOnDevice ? 200 : 0;
+                int welcomeBonus = isFirstAccountOnDevice ? 200 : 0;
+
                 // Generar un username único
                 var baseUsername = string.IsNullOrWhiteSpace(name) ? cleanEmail.Split('@')[0] : name.Trim();
                 baseUsername = System.Text.RegularExpressions.Regex.Replace(baseUsername, @"[^a-zA-Z0-9_]", "");
@@ -310,8 +358,9 @@ namespace PericonAPI.Controllers
                     Username = finalUsername,
                     Email = cleanEmail,
                     PasswordHash = "GOOGLE_OAUTH_" + Guid.NewGuid().ToString(),
-                    Coins = 200,
-                    BonusCoins = 200,
+                    DeviceFingerprint = cleanFingerprint,
+                    Coins = welcomeCoins,
+                    BonusCoins = welcomeBonus,
                     Level = "Peón de Casona",
                     Experience = 0,
                     CreatedAt = DateTime.UtcNow,
@@ -328,6 +377,11 @@ namespace PericonAPI.Controllers
                 if (!user.IsActive)
                 {
                     return BadRequest(new { message = "La cuenta se encuentra inactiva." });
+                }
+                if (string.IsNullOrWhiteSpace(user.DeviceFingerprint) && !string.IsNullOrWhiteSpace(dto.DeviceFingerprint))
+                {
+                    user.DeviceFingerprint = dto.DeviceFingerprint.Trim();
+                    await _context.SaveChangesAsync();
                 }
                 if (!string.IsNullOrEmpty(picture) && string.IsNullOrEmpty(user.AvatarUrl))
                 {

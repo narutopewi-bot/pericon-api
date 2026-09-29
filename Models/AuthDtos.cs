@@ -39,6 +39,9 @@ namespace PericonAPI.Models
 
         [Required(ErrorMessage = "La contraseña es requerida")]
         public string Password { get; set; } = string.Empty;
+
+        [MaxLength(128)]
+        public string? DeviceFingerprint { get; set; }
     }
 
     public class GoogleAuthDto
@@ -47,6 +50,9 @@ namespace PericonAPI.Models
         public string? Email { get; set; }
         public string? Name { get; set; }
         public string? Picture { get; set; }
+
+        [MaxLength(128)]
+        public string? DeviceFingerprint { get; set; }
     }
 
     public class AuthResponseDto
