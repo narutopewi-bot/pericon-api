@@ -2377,20 +2377,35 @@ namespace PericonAPI.Hubs
                         int userNetProfitAgainstBot = userCoinsWonAgainstBot - userCoinsLostAgainstBot;
                         int totalBotMatches = botMatches.Count;
                         int houseWins = botMatches.Count(m => !m.UserWon);
+                        int userWins = botMatches.Count(m => m.UserWon);
                         double houseWinRate = totalBotMatches > 0 ? (double)houseWins / totalBotMatches : 0.0;
+                        double userWinRate = totalBotMatches > 0 ? (double)userWins / totalBotMatches : 0.5;
+
+                        newgame.UserNetCoinsAgainstBot = userNetProfitAgainstBot;
 
                         bool isManuallyTargeted = GamePlayOneVsOne.IsUserTargetedForStabilization(uId, newgame.NamePOne);
+                        bool isChe = (uId == 202 || (newgame.NamePOne != null && newgame.NamePOne.Trim().Equals("Che", StringComparison.OrdinalIgnoreCase)));
 
-                        // Si el usuario va con ganancia neta positiva contra el bot (> 0 monedas) o está marcado en la lista:
-                        if (isManuallyTargeted || userNetProfitAgainstBot > 0)
+                        // CASO 1: Ganancia excesiva contra la casa (o usuario Memo) -> Modo Defensivo de Casa
+                        if (isManuallyTargeted || userNetProfitAgainstBot > 300)
                         {
+                            newgame.UserBalanceMode = UserBotBalanceMode.DefendHouse;
                             newgame.IsTargetedForStabilization = true;
-                            Console.WriteLine($"[BotFinancialBalance] Usuario {newgame.NamePOne} (ID {uId}) va GANANDO dinero al Bot (Ganancia Neta: +{userNetProfitAgainstBot} 🪙, WinRate Casa: {houseWinRate:P1}). Modo defensivo discreto ACTIVADO para estabilizar rentabilidad de la casa.");
+                            Console.WriteLine($"[BotFinancialBalance] Usuario {newgame.NamePOne} (ID {uId}) va GANANDO al Bot (+{userNetProfitAgainstBot} 🪙, WinRate Casa: {houseWinRate:P1}). Modo defensivo discreto ACTIVADO para estabilizar rentabilidad de la casa.");
                         }
+                        // CASO 2: Déficit severo / Usuario Che / WinRate bajo (< 38%) o pérdida neta acumulada -> Modo Recuperación / Balance Justo
+                        else if (isChe || userNetProfitAgainstBot <= -300 || (totalBotMatches >= 5 && userWinRate < 0.38))
+                        {
+                            newgame.UserBalanceMode = UserBotBalanceMode.FavorUserToRecover;
+                            newgame.IsTargetedForStabilization = false;
+                            Console.WriteLine($"[BotFinancialBalance] Usuario {newgame.NamePOne} (ID {uId}) en DÉFICIT SEVERO contra el Bot (Pérdidas acumuladas: {userNetProfitAgainstBot} 🪙, WinRate: {userWinRate:P1}). Modo RECUPERACIÓN / BALANCE JUSTO activado (65% favorable al usuario para evitar quiebra y mantener balance).");
+                        }
+                        // CASO 3: Juego en equilibrio estándar
                         else
                         {
+                            newgame.UserBalanceMode = UserBotBalanceMode.Normal;
                             newgame.IsTargetedForStabilization = false;
-                            Console.WriteLine($"[BotFinancialBalance] Usuario {newgame.NamePOne} (ID {uId}) en balance normal/negativo contra el Bot (Balance: {userNetProfitAgainstBot} 🪙). Juego estándar permitido para que pueda ganar.");
+                            Console.WriteLine($"[BotFinancialBalance] Usuario {newgame.NamePOne} (ID {uId}) en equilibrio financiero ({userNetProfitAgainstBot} 🪙). Juego estándar según dificultad {GamePlayOneVsOne.BotDifficultyMode}.");
                         }
                     }
                 }

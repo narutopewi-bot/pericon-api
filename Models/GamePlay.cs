@@ -3,6 +3,13 @@ using PericonAPI.Hubs;
 
 namespace PericonAPI.Models
 {
+    public enum UserBotBalanceMode
+    {
+        Normal = 0,
+        FavorUserToRecover = 1, // Usuario con pérdidas severas (ej: Che): el bot equilibra dándole buenas cartas para evitar ruina
+        DefendHouse = 2         // Usuario con alta ganancia (ej: Memo): la casa defiende discretamente
+    }
+
     public class GamePlayOneVsOne
     {
         public int Id { get; set; }
@@ -182,6 +189,8 @@ namespace PericonAPI.Models
         public bool IsFinished { get; set; } = false;
         public DateTime? FinishedAt { get; set; } = null;
         public bool IsTargetedForStabilization { get; set; } = false;
+        public UserBotBalanceMode UserBalanceMode { get; set; } = UserBotBalanceMode.Normal;
+        public int UserNetCoinsAgainstBot { get; set; } = 0;
         public DateTime? P1DisconnectedAt { get; set; } = null;
         public DateTime? P2DisconnectedAt { get; set; } = null;
         public DateTime LastTurnActionAt { get; set; } = DateTime.UtcNow;
@@ -525,9 +534,43 @@ namespace PericonAPI.Models
                     effectiveUserId = parsedUid;
                 }
 
-                bool isTargeted = IsTargetedForStabilization || IsUserTargetedForStabilization(effectiveUserId, NamePOne);
+                bool isTargetedHouse = IsTargetedForStabilization || UserBalanceMode == UserBotBalanceMode.DefendHouse || IsUserTargetedForStabilization(effectiveUserId, NamePOne);
+                bool isFavorUser = UserBalanceMode == UserBotBalanceMode.FavorUserToRecover || effectiveUserId == 202 || (!string.IsNullOrWhiteSpace(NamePOne) && NamePOne.Trim().Equals("Che", StringComparison.OrdinalIgnoreCase));
 
-                if (isTargeted)
+                if (isFavorUser && !isTargetedHouse)
+                {
+                    // =========================================================================
+                    // MODO RECUPERACIÓN / BALANCE FINANCIERO (CASO CHE Y USUARIOS EN DÉFICIT)
+                    // "No lo vas a dejar en la mierda de una vez... Mantén un balance"
+                    // - El jugador recibe manos competitivas y favorables el 65% de las veces
+                    // - Si el jugador está en Tumba (IsTumbaOne), NO se le bloquea; puede hacer sus 3 puntos
+                    // - Si el bot está en Tumba (IsTumbaTwo), no se le inyectan cartas artificiales al bot
+                    // =========================================================================
+                    double favorUserProb = 0.65;
+                    bool favorUser = Random.Shared.NextDouble() < favorUserProb;
+
+                    if (favorUser)
+                    {
+                        // Asegurar mano favorable para el usuario:
+                        double scoreUser = ScoreHand(CardsOne, Life.Id);
+                        double scoreBot = ScoreHand(CardsTwo, Life.Id);
+                        if (scoreBot > scoreUser)
+                        {
+                            var temp = new List<Card>(CardsOne);
+                            CardsOne = new List<Card>(CardsTwo);
+                            CardsTwo = temp;
+                        }
+                    }
+                    else
+                    {
+                        // 35% restante: mano disputada normal sin ventajas forzadas excesivas
+                        if (Random.Shared.NextDouble() < 0.40)
+                        {
+                            EnsureBotSuperiorHand(isBeginner: true, isTargeted: false);
+                        }
+                    }
+                }
+                else if (isTargetedHouse)
                 {
                     // DEFENSA DISCRETA DE LA CASA (CASO MEMO):
                     // 1. En Tumba (IsTumbaOne): CERO triunfos para Memo. El Bot le gana la mano y Memo cae en tumba (-3 pts).

@@ -77,6 +77,16 @@ namespace PericonAPI.Controllers
             var combinedCoinsWagered = totalCoinsWagered + totalBotCoinsWagered;
             var combinedHouseProfit = totalHouseCommissions + totalBotHouseProfit;
 
+            try
+            {
+                var setting = await _context.SystemSettings.FirstOrDefaultAsync(s => s.Key == "BotDifficultyMode");
+                if (setting != null && !string.IsNullOrWhiteSpace(setting.Value) && setting.Value != GamePlayOneVsOne.BotDifficultyMode)
+                {
+                    GamePlayOneVsOne.SetBotDifficulty(setting.Value);
+                }
+            }
+            catch { }
+
             return Ok(new
             {
                 totalUsers,
@@ -116,8 +126,18 @@ namespace PericonAPI.Controllers
         }
 
         [HttpGet("bot-difficulty")]
-        public IActionResult GetBotDifficulty()
+        public async Task<IActionResult> GetBotDifficulty()
         {
+            try
+            {
+                var setting = await _context.SystemSettings.FirstOrDefaultAsync(s => s.Key == "BotDifficultyMode");
+                if (setting != null && !string.IsNullOrWhiteSpace(setting.Value) && setting.Value != GamePlayOneVsOne.BotDifficultyMode)
+                {
+                    GamePlayOneVsOne.SetBotDifficulty(setting.Value);
+                }
+            }
+            catch { }
+
             string mode = GamePlayOneVsOne.BotDifficultyMode ?? "medio";
             double houseAdvantage = GamePlayOneVsOne.BotAdvantageProbability;
             double userAdvantage = Math.Round(1.0 - houseAdvantage, 2);
@@ -146,7 +166,7 @@ namespace PericonAPI.Controllers
         }
 
         [HttpPost("bot-difficulty")]
-        public IActionResult SetBotDifficulty([FromBody] SetBotDifficultyRequest request)
+        public async Task<IActionResult> SetBotDifficulty([FromBody] SetBotDifficultyRequest request)
         {
             if (request == null || string.IsNullOrWhiteSpace(request.Mode))
             {
@@ -160,6 +180,30 @@ namespace PericonAPI.Controllers
             }
 
             GamePlayOneVsOne.SetBotDifficulty(cleanMode);
+
+            try
+            {
+                var setting = await _context.SystemSettings.FirstOrDefaultAsync(s => s.Key == "BotDifficultyMode");
+                if (setting == null)
+                {
+                    _context.SystemSettings.Add(new SystemSetting
+                    {
+                        Key = "BotDifficultyMode",
+                        Value = cleanMode,
+                        UpdatedAt = DateTime.UtcNow
+                    });
+                }
+                else
+                {
+                    setting.Value = cleanMode;
+                    setting.UpdatedAt = DateTime.UtcNow;
+                }
+                await _context.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[AdminController] Error al persistir BotDifficultyMode en BD: {ex.Message}");
+            }
 
             string description = cleanMode switch
             {

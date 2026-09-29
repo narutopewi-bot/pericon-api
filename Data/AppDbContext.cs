@@ -19,6 +19,7 @@ namespace PericonAPI.Data
         public DbSet<AppErrorLog> AppErrorLogs { get; set; }
         public DbSet<SystemAnnouncement> SystemAnnouncements { get; set; }
         public DbSet<PlayerFeedback> PlayerFeedbacks { get; set; }
+        public DbSet<SystemSetting> SystemSettings { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

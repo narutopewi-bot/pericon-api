@@ -405,6 +405,38 @@ using (var scope = app.Services.CreateScope())
 
         try
         {
+            if (db.Database.IsSqlite())
+            {
+                db.Database.ExecuteSqlRaw(@"
+                    CREATE TABLE IF NOT EXISTS SystemSettings (
+                        Key TEXT PRIMARY KEY,
+                        Value TEXT NOT NULL,
+                        UpdatedAt TEXT NOT NULL
+                    );
+                ");
+            }
+            else
+            {
+                db.Database.ExecuteSqlRaw(@"
+                    CREATE TABLE IF NOT EXISTS ""SystemSettings"" (
+                        ""Key"" VARCHAR(100) PRIMARY KEY,
+                        ""Value"" TEXT NOT NULL,
+                        ""UpdatedAt"" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+                    );
+                ");
+            }
+
+            var botDiffSetting = db.SystemSettings.FirstOrDefault(s => s.Key == "BotDifficultyMode");
+            if (botDiffSetting != null && !string.IsNullOrWhiteSpace(botDiffSetting.Value))
+            {
+                GamePlayOneVsOne.SetBotDifficulty(botDiffSetting.Value);
+                Console.WriteLine($"[Startup] Dificultad del bot restaurada desde BD: Modo {GamePlayOneVsOne.BotDifficultyMode}");
+            }
+        }
+        catch { }
+
+        try
+        {
             // Limpieza de partidas de prueba históricas para el reinicio oficial del panel a cero
             db.Database.ExecuteSqlRaw(@"DELETE FROM ""MatchBetRecords"" WHERE ""CreatedAt"" < '2026-09-26 12:00:00+00';");
         }
