@@ -746,6 +746,22 @@ namespace PericonAPI.Hubs
             int numg = FindGame1vs1(gameId);
             if (numg < 0 || numg >= games.Count) return;
 
+            string caller = Context.ConnectionId;
+            var player = SearchPlayer(caller);
+            if (player != null)
+            {
+                if (games[numg].NamePOne == player.Name)
+                {
+                    games[numg].IdPOne = caller;
+                    games[numg].P1DisconnectedAt = null;
+                }
+                else if (games[numg].NamePTwo == player.Name)
+                {
+                    games[numg].IdPTwo = caller;
+                    games[numg].P2DisconnectedAt = null;
+                }
+            }
+
             var move = new GameMessage { game = gameId, order = 90, content = "" };
             await ChangeGame1vs1(move);
         }
@@ -987,6 +1003,29 @@ namespace PericonAPI.Hubs
             bool isP1 = (Context.ConnectionId == games[numg].IdPOne);
             bool isP2 = (Context.ConnectionId == games[numg].IdPTwo);
             bool isCallerP1 = isP1 || (!isP2 && games[numg].NamePOne == SearchPlayer(Context.ConnectionId)?.Name);
+
+            // Re-vincular socket activo y limpiar estado de desconexión
+            if (isCallerP1)
+            {
+                games[numg].IdPOne = Context.ConnectionId;
+                games[numg].P1DisconnectedAt = null;
+            }
+            else
+            {
+                games[numg].IdPTwo = Context.ConnectionId;
+                games[numg].P2DisconnectedAt = null;
+            }
+
+            // Notificar al oponente que su rival ha reconectado activamente para cerrar el modal de gracia
+            string otherPlayerSocket = isCallerP1 ? games[numg].IdPTwo : games[numg].IdPOne;
+            if (!string.IsNullOrEmpty(otherPlayerSocket))
+            {
+                _ = Clients.Client(otherPlayerSocket).SendAsync("OpponentReconnected1vs1", new
+                {
+                    gameId = gameId,
+                    opponentConnectionId = Context.ConnectionId
+                });
+            }
 
             int myPoints = isCallerP1 ? games[numg].PointsOne : games[numg].PointsTwo;
             int oppPoints = isCallerP1 ? games[numg].PointsTwo : games[numg].PointsOne;
@@ -1811,6 +1850,36 @@ namespace PericonAPI.Hubs
             {
                 Console.WriteLine($"[ClaimOpponentTimeout1vs1] RECHAZADO para {caller}: El juego {gameId} está en transición de reparto de manos.");
                 return;
+            }
+
+            // Blindaje temporal estricto: Validación del período de gracia (30s) y turno de 30s (60s total)
+            DateTime? rivalDisconnectedAt = callerIsP1 ? game.P2DisconnectedAt : game.P1DisconnectedAt;
+            if (rivalDisconnectedAt.HasValue)
+            {
+                var elapsedDisconnect = (DateTime.UtcNow - rivalDisconnectedAt.Value).TotalSeconds;
+                if (elapsedDisconnect < 28) // Tolerancia de 2s para latencia de red
+                {
+                    int remain = Math.Max(1, 30 - (int)elapsedDisconnect);
+                    Console.WriteLine($"[ClaimOpponentTimeout1vs1] RECHAZADO para {caller}: Período de gracia por desconexión activo ({remain}s restantes).");
+                    await Clients.Caller.SendAsync("ClaimRejected", new { 
+                        message = $"Tu rival perdió internet hace poco. Aún restan {remain} segundos de cortesía para su reconexión." 
+                    });
+                    return;
+                }
+            }
+            else
+            {
+                // Inactividad durante el turno regular: debe haber transcurrido al menos 55s (30s turno + 25s gracia)
+                var elapsedInactivity = (DateTime.UtcNow - game.LastTurnActionAt).TotalSeconds;
+                if (elapsedInactivity < 55)
+                {
+                    int remain = Math.Max(1, 60 - (int)elapsedInactivity);
+                    Console.WriteLine($"[ClaimOpponentTimeout1vs1] RECHAZADO para {caller}: Turno y gracia activos ({remain}s restantes).");
+                    await Clients.Caller.SendAsync("ClaimRejected", new { 
+                        message = $"Tu contrincante aún tiene tiempo de juego y gracia activo ({remain}s restantes)." 
+                    });
+                    return;
+                }
             }
 
             string winnerId = caller;
@@ -4239,6 +4308,9 @@ namespace PericonAPI.Hubs
                     var g = games[i];
                     if (g.IsActive && (g.IdPOne == callerId || g.IdPTwo == callerId))
                     {
+                        if (g.IdPOne == callerId) g.P1DisconnectedAt = DateTime.UtcNow;
+                        if (g.IdPTwo == callerId) g.P2DisconnectedAt = DateTime.UtcNow;
+
                         string oppId = (g.IdPOne == callerId) ? g.IdPTwo : g.IdPOne;
                         string discName = (g.IdPOne == callerId) ? g.NamePOne : g.NamePTwo;
 
