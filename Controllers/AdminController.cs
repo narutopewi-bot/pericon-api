@@ -1126,30 +1126,73 @@ namespace PericonAPI.Controllers
         }
 
         [HttpPost("announcements/{id}/toggle")]
+        [HttpPost("announcement/{id}/toggle")]
         public async Task<IActionResult> ToggleAnnouncement(int id)
         {
             var item = await _context.SystemAnnouncements.FindAsync(id);
             if (item == null) return NotFound(new { message = "Anuncio no encontrado." });
 
-            item.IsActive = !item.IsActive;
-            await _context.SaveChangesAsync();
+            bool newState = !item.IsActive;
 
-            return Ok(new { message = item.IsActive ? "Anuncio activado con éxito." : "Anuncio desactivado con éxito.", isActive = item.IsActive });
+            if (newState)
+            {
+                // Si se activa este aviso, desactivar los demás para mantener solo uno activo
+                var activeAnnouncements = await _context.SystemAnnouncements
+                    .Where(a => a.Id != id && a.IsActive)
+                    .ToListAsync();
+                foreach (var a in activeAnnouncements)
+                {
+                    a.IsActive = false;
+                }
+                item.IsActive = true;
+                await _context.SaveChangesAsync();
+
+                // Transmitir en vivo a todos los jugadores conectados en la sala
+                await _hubContext.Clients.All.SendAsync("GlobalAnnouncement", new
+                {
+                    id = item.Id,
+                    title = item.Title,
+                    message = item.Message,
+                    type = item.Type,
+                    createdAt = item.CreatedAt.ToString("yyyy-MM-dd HH:mm")
+                });
+
+                return Ok(new { message = "Anuncio activado y transmitido con éxito.", isActive = true });
+            }
+            else
+            {
+                // Si se pausa / desactiva, retirar el aviso de las pantallas en vivo inmediatamente
+                item.IsActive = false;
+                await _context.SaveChangesAsync();
+
+                await _hubContext.Clients.All.SendAsync("GlobalAnnouncement", null);
+
+                return Ok(new { message = "Anuncio pausado y retirado de las pantallas con éxito.", isActive = false });
+            }
         }
 
         [HttpDelete("announcements/{id}")]
+        [HttpDelete("announcement/{id}")]
         public async Task<IActionResult> DeleteAnnouncement(int id)
         {
             var item = await _context.SystemAnnouncements.FindAsync(id);
             if (item == null) return NotFound(new { message = "Anuncio no encontrado." });
 
+            bool wasActive = item.IsActive;
             _context.SystemAnnouncements.Remove(item);
             await _context.SaveChangesAsync();
+
+            if (wasActive)
+            {
+                // Si el anuncio estaba visible en pantalla, retirarlo en vivo
+                await _hubContext.Clients.All.SendAsync("GlobalAnnouncement", null);
+            }
 
             return Ok(new { message = "Anuncio eliminado exitosamente." });
         }
 
         [HttpGet("announcement/active")]
+        [HttpGet("announcements/active")]
         public async Task<IActionResult> GetActiveAnnouncement()
         {
             var item = await _context.SystemAnnouncements

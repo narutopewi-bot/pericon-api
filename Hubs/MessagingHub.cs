@@ -240,7 +240,13 @@ namespace PericonAPI.Hubs
         public static object GetLiveActivityStatus()
         {
             int sol = 0;
-            lock (solitaireLock) { sol = solitaireSessions.Count; }
+            lock (solitaireLock)
+            {
+                lock (users)
+                {
+                    sol = solitaireSessions.Values.Count(g => g.IsActive && !g.IsFinished && users.Any(u => u.Id == g.IdPOne));
+                }
+            }
             int pvp1v1 = 0;
             lock (games)
             {

@@ -74,9 +74,9 @@ namespace PericonAPI.Classes
 
             // Endpoints públicos dentro de AdminController:
             // 1. /api/admin/login (para autenticarse y recibir el token firmado)
-            // 2. /api/admin/announcement/active (para que los jugadores en /desk lean el aviso activo)
+            // 2. /api/admin/announcement/active o /api/admin/announcements/active (para que los jugadores en /desk lean el aviso activo)
             // 3. /api/admin/errors/report (para que los clientes reporten incidencias y errores en tiempo real)
-            if (path.EndsWith("/login") || path.EndsWith("/announcement/active") || path.EndsWith("/errors/report"))
+            if (path.EndsWith("/login") || path.EndsWith("/announcement/active") || path.EndsWith("/announcements/active") || path.EndsWith("/errors/report"))
             {
                 base.OnActionExecuting(context);
                 return;
