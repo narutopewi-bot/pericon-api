@@ -735,6 +735,22 @@ namespace PericonAPI.Hubs
             games[numg].CurrentLeadMove = null;
             games[numg].LeadPlayer = 0;
             games[numg].PendingAsk369Message = null;
+
+            // Asegurar que IdPOne e IdPTwo tengan las conexiones vivas más recientes de cada jugador
+            lock (users)
+            {
+                var p1Active = users.FirstOrDefault(u => u.Name == games[numg].NamePOne);
+                if (p1Active != null && !string.IsNullOrEmpty(p1Active.Id))
+                {
+                    games[numg].IdPOne = p1Active.Id;
+                }
+                var p2Active = users.FirstOrDefault(u => u.Name == games[numg].NamePTwo);
+                if (p2Active != null && !string.IsNullOrEmpty(p2Active.Id))
+                {
+                    games[numg].IdPTwo = p2Active.Id;
+                }
+            }
+
             string POne = games[numg].IdPOne;
             string PTwo = games[numg].IdPTwo;
             string PThree = games[numg].InitHand;
@@ -1580,6 +1596,7 @@ namespace PericonAPI.Hubs
                 if (games[numg].LeadPlayer == incomingPlayer)
                 {
                     Console.WriteLine($"[RequestCard1vs1] Descartando jugada duplicada del jugador líder ({Context.ConnectionId})");
+                    await SyncTable1vs1(move.game);
                     return;
                 }
 
