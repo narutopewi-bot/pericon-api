@@ -465,6 +465,51 @@ namespace PericonAPI.Models
             // IMPORTANTE: Al usuario humano (CardsOne) NUNCA se le confiscan sus cartas.
         }
 
+        /// <summary>
+        /// Garantiza que el bot NUNCA posea ni juegue los triunfos supremos (5 de Oros - Perico [Id 4] ni 4 de Bastos - Perica [Id 33]).
+        /// Si le salen en el reparto inicial o tras balanceos, se purgan de su mano y se reemplazan por triunfos pequeños/medianos
+        /// (como la malilla [2 de vida], la hueva [rey/caballo de vida], golleros o cartas del palo de la vida intermedias),
+        /// permitiendo al bot ganar rondas con maña y sutileza sin que gane con cinco y cuatro.
+        /// </summary>
+        private void SanitizeBotCards(int lifeId)
+        {
+            if (CardsTwo == null || CardsTwo.Count == 0 || Deck?.Package == null)
+                return;
+
+            for (int i = 0; i < CardsTwo.Count; i++)
+            {
+                int cardId = CardsTwo[i].Id;
+                if (cardId == 4 || cardId == 33) // 5 de Oros o 4 de Bastos
+                {
+                    Card botCard = CardsTwo[i];
+
+                    // Buscar en el mazo un triunfo sutil/mediano disponible (poder entre 15 y 24: malilla, hueva, 7, 6, 5, 4 de vida, As de vida)
+                    // Excluyendo terminantemente el 4 y el 33
+                    Card? subtleTrump = Deck.Package
+                        .Where(c => c.Id != 4 && c.Id != 33 && EvaluateCard(c.Id, lifeId) >= 15 && EvaluateCard(c.Id, lifeId) <= 24)
+                        .OrderByDescending(c => EvaluateCard(c.Id, lifeId))
+                        .FirstOrDefault();
+
+                    // Si no hay triunfos en ese rango, buscar una figura o carta común que no sea 4 ni 33
+                    if (subtleTrump == null)
+                    {
+                        subtleTrump = Deck.Package
+                            .Where(c => c.Id != 4 && c.Id != 33)
+                            .OrderByDescending(c => EvaluateCard(c.Id, lifeId))
+                            .FirstOrDefault();
+                    }
+
+                    if (subtleTrump != null)
+                    {
+                        Deck.Package.Remove(subtleTrump);
+                        Deck.Package.Add(botCard); // Devolver el 5 o 4 al mazo restante
+                        CardsTwo[i] = subtleTrump;
+                        Console.WriteLine($"[SanitizeBotCards] Purga de triunfo supremo del Bot: Se retiró carta {cardId} y se asignó triunfo sutil {subtleTrump.Id} (Poder: {EvaluateCard(subtleTrump.Id, lifeId)})");
+                    }
+                }
+            }
+        }
+
         // Retorna la probabilidad base de ventaja de la Casa según el nivel y experiencia del jugador
         public double GetLevelAdvantageBase()
         {
@@ -643,6 +688,11 @@ namespace PericonAPI.Models
                 }
             }
 
+            if (IsSolitaire)
+            {
+                SanitizeBotCards(Life.Id);
+            }
+
             string response = String.Empty;
             response = CardsOne[0].Id.ToString("D2") + "-" + CardsOne[1].Id.ToString("D2") + "-" + CardsOne[2].Id.ToString("D2") + "-";
             response += CardsTwo[0].Id.ToString("D2") + "-" + CardsTwo[1].Id.ToString("D2") + "-" + CardsTwo[2].Id.ToString("D2") + "-";
@@ -790,8 +840,33 @@ namespace PericonAPI.Models
             Card x = OutWeightedCard(); CardsOne.Add(x);
             Card y = OutWeightedCard(); CardsTwo.Add(y);
 
-            string response = t.Id.ToString("D2") + "-" + v.Id.ToString("D2") + "-" + x.Id.ToString("D2") + "-";
-            response += u.Id.ToString("D2") + "-" + w.Id.ToString("D2") + "-" + y.Id.ToString("D2") + "-";
+            if (NamePTwo?.Equals("Pericon", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                SanitizeBotCards(Life.Id);
+            }
+            else if (NamePOne?.Equals("Pericon", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                for (int i = 0; i < CardsOne.Count; i++)
+                {
+                    int cId = CardsOne[i].Id;
+                    if (cId == 4 || cId == 33)
+                    {
+                        var subtle = Deck.Package
+                            .Where(c => c.Id != 4 && c.Id != 33 && EvaluateCard(c.Id, Life.Id) >= 15 && EvaluateCard(c.Id, Life.Id) <= 24)
+                            .OrderByDescending(c => EvaluateCard(c.Id, Life.Id))
+                            .FirstOrDefault();
+                        if (subtle != null)
+                        {
+                            Deck.Package.Remove(subtle);
+                            Deck.Package.Add(CardsOne[i]);
+                            CardsOne[i] = subtle;
+                        }
+                    }
+                }
+            }
+
+            string response = CardsOne[0].Id.ToString("D2") + "-" + CardsOne[1].Id.ToString("D2") + "-" + CardsOne[2].Id.ToString("D2") + "-";
+            response += CardsTwo[0].Id.ToString("D2") + "-" + CardsTwo[1].Id.ToString("D2") + "-" + CardsTwo[2].Id.ToString("D2") + "-";
             response += z.Id.ToString("D2");
             InitHand = response;
         }
