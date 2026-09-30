@@ -406,7 +406,16 @@ namespace PericonAPI.Hubs
             Console.WriteLine($"Ask369Game. Cliente: {Context.ConnectionId}, Orden: {move}");
             GamePlayer dataplay = SearchPlayer(Context.ConnectionId);
             int numg = FindGame1vs1(move.game);
-            if (numg < 0 || numg >= games.Count) return;
+            if (numg < 0 || numg >= games.Count || games[numg].HasPaidOut || games[numg].IsFinished || !games[numg].IsActive)
+            {
+                await Clients.Caller.SendAsync("GameAlreadyFinished", new
+                {
+                    gameId = move.game,
+                    message = "La partida ya ha concluido y fue liquidada.",
+                    redirectTo = "/desk"
+                });
+                return;
+            }
 
             // En Tumba no está permitido pedir
             if (games[numg].IsTumbaOne || games[numg].IsTumbaTwo || games[numg].PointsOne >= 9 || games[numg].PointsTwo >= 9 ||
@@ -460,7 +469,16 @@ namespace PericonAPI.Hubs
         {
             Console.WriteLine($"Answer369Game. Cliente: {Context.ConnectionId}, Orden: {move}");
             int numg = FindGame1vs1(move.game);
-            if (numg < 0 || numg >= games.Count) return;
+            if (numg < 0 || numg >= games.Count || games[numg].HasPaidOut || games[numg].IsFinished || !games[numg].IsActive)
+            {
+                await Clients.Caller.SendAsync("GameAlreadyFinished", new
+                {
+                    gameId = move.game,
+                    message = "La partida ya ha concluido y fue liquidada.",
+                    redirectTo = "/desk"
+                });
+                return;
+            }
 
             string[] daticos = move.content.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
             if (daticos.Length < 2) return;
@@ -667,7 +685,26 @@ namespace PericonAPI.Hubs
             int numg = FindGame1vs1(move.game);
             if (numg < 0 || numg >= games.Count)
             {
-                GameLogger.Log(move.game, "ChangeGame1vs1", $"WARNING: Juego {move.game} no encontrado o inactivo.");
+                GameLogger.Log(move.game, "ChangeGame1vs1", $"WARNING: Juego {move.game} no encontrado.");
+                await Clients.Caller.SendAsync("GameAlreadyFinished", new
+                {
+                    gameId = move.game,
+                    message = "La partida ya ha concluido.",
+                    redirectTo = "/desk"
+                });
+                return;
+            }
+
+            var targetGame = games[numg];
+            if (targetGame.HasPaidOut || targetGame.IsFinished || !targetGame.IsActive)
+            {
+                Console.WriteLine($"[ChangeGame1vs1] El juego {move.game} ya concluyó o fue liquidado. Notificando a {Context.ConnectionId}");
+                await Clients.Caller.SendAsync("GameAlreadyFinished", new
+                {
+                    gameId = move.game,
+                    message = "Esta partida ya ha concluido y fue liquidada.",
+                    redirectTo = "/desk"
+                });
                 return;
             }
 
@@ -750,7 +787,28 @@ namespace PericonAPI.Hubs
         {
             GameLogger.Log(gameId, "RequestNewHand1vs1", $"Invocado por Cliente: {Context.ConnectionId}");
             int numg = FindGame1vs1(gameId);
-            if (numg < 0 || numg >= games.Count) return;
+            if (numg < 0 || numg >= games.Count)
+            {
+                await Clients.Caller.SendAsync("GameAlreadyFinished", new
+                {
+                    gameId = gameId,
+                    message = "La partida ya ha concluido.",
+                    redirectTo = "/desk"
+                });
+                return;
+            }
+
+            var targetGame = games[numg];
+            if (targetGame.HasPaidOut || targetGame.IsFinished || !targetGame.IsActive)
+            {
+                await Clients.Caller.SendAsync("GameAlreadyFinished", new
+                {
+                    gameId = gameId,
+                    message = "Esta partida ya ha concluido y fue liquidada.",
+                    redirectTo = "/desk"
+                });
+                return;
+            }
 
             string caller = Context.ConnectionId;
             var player = SearchPlayer(caller);
@@ -989,9 +1047,27 @@ namespace PericonAPI.Hubs
         public async Task SyncTable1vs1(int gameId)
         {
             int numg = FindGame1vs1(gameId);
-            if (numg < 0 || numg >= games.Count) return;
+            if (numg < 0 || numg >= games.Count)
+            {
+                await Clients.Caller.SendAsync("GameAlreadyFinished", new
+                {
+                    gameId = gameId,
+                    message = "La partida ya ha concluido.",
+                    redirectTo = "/desk"
+                });
+                return;
+            }
             var targetGame = games[numg];
-            if (targetGame.HasPaidOut || targetGame.IsFinished) return;
+            if (targetGame.HasPaidOut || targetGame.IsFinished)
+            {
+                await Clients.Caller.SendAsync("GameAlreadyFinished", new
+                {
+                    gameId = gameId,
+                    message = "Esta partida ya ha concluido y fue liquidada.",
+                    redirectTo = "/desk"
+                });
+                return;
+            }
             if (!targetGame.IsActive)
             {
                 if (targetGame.PointsOne < 9 && targetGame.PointsTwo < 9)
@@ -1000,6 +1076,12 @@ namespace PericonAPI.Hubs
                 }
                 else
                 {
+                    await Clients.Caller.SendAsync("GameAlreadyFinished", new
+                    {
+                        gameId = gameId,
+                        message = "Esta partida ya ha concluido y fue liquidada.",
+                        redirectTo = "/desk"
+                    });
                     return;
                 }
             }
@@ -1344,7 +1426,30 @@ namespace PericonAPI.Hubs
             {
                 GameLogger.Log(move.game, "RequestCard1vs1", $"Order:{move.order}, Cliente:{Context.ConnectionId}, Move:{move.content}");
                 int numg = FindGame1vs1(move.game);
-                if (numg < 0 || numg >= games.Count) return;
+                if (numg < 0 || numg >= games.Count)
+                {
+                    Console.WriteLine($"[RequestCard1vs1] El juego {move.game} no existe en memoria. Notificando GameAlreadyFinished a {Context.ConnectionId}");
+                    await Clients.Caller.SendAsync("GameAlreadyFinished", new
+                    {
+                        gameId = move.game,
+                        message = "La partida ya ha concluido.",
+                        redirectTo = "/desk"
+                    });
+                    return;
+                }
+
+                var targetGame = games[numg];
+                if (targetGame.HasPaidOut || targetGame.IsFinished || !targetGame.IsActive)
+                {
+                    Console.WriteLine($"[RequestCard1vs1] RECHAZADO: El juego {move.game} ya fue liquidado o finalizado. Notificando GameAlreadyFinished a {Context.ConnectionId}");
+                    await Clients.Caller.SendAsync("GameAlreadyFinished", new
+                    {
+                        gameId = move.game,
+                        message = "Esta partida ya ha concluido y fue liquidada.",
+                        redirectTo = "/desk"
+                    });
+                    return;
+                }
 
                 string[] daticos = move.content.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
                 bool isPlayerOne = (Context.ConnectionId == games[numg].IdPOne);
@@ -1699,7 +1804,16 @@ namespace PericonAPI.Hubs
         {
             GameLogger.Log(move.game, "TimeoutRound1vs1", $"Cliente: {Context.ConnectionId}");
             int numg = FindGame1vs1(move.game);
-            if (numg < 0 || numg >= games.Count) return;
+            if (numg < 0 || numg >= games.Count || games[numg].HasPaidOut || games[numg].IsFinished || !games[numg].IsActive)
+            {
+                await Clients.Caller.SendAsync("GameAlreadyFinished", new
+                {
+                    gameId = move.game,
+                    message = "La partida ya ha concluido y fue liquidada.",
+                    redirectTo = "/desk"
+                });
+                return;
+            }
 
             string caller = Context.ConnectionId;
             bool callerIsP1 = (caller == games[numg].IdPOne);
@@ -1797,7 +1911,16 @@ namespace PericonAPI.Hubs
         {
             Console.WriteLine($"[SurrenderGame1vs1] Cliente: {Context.ConnectionId}, Juego: {move.game}");
             int numg = FindGame1vs1(move.game);
-            if (numg < 0 || numg >= games.Count) return;
+            if (numg < 0 || numg >= games.Count || games[numg].HasPaidOut || games[numg].IsFinished || !games[numg].IsActive)
+            {
+                await Clients.Caller.SendAsync("GameAlreadyFinished", new
+                {
+                    gameId = move.game,
+                    message = "La partida ya ha concluido y fue liquidada.",
+                    redirectTo = "/desk"
+                });
+                return;
+            }
 
             string caller = Context.ConnectionId;
             bool callerIsP1 = (caller == games[numg].IdPOne);
@@ -1815,6 +1938,10 @@ namespace PericonAPI.Hubs
 
             // Notificar al que se rindió
             await Clients.Client(loserId).SendAsync("YouSurrendered", new
+            {
+                message = "Has abandonado la partida. Tu contrincante fue declarado ganador."
+            });
+            await Clients.Group($"game1vs1_{move.game}").SendAsync("YouSurrendered", new
             {
                 message = "Has abandonado la partida. Tu contrincante fue declarado ganador."
             });
@@ -1906,6 +2033,10 @@ namespace PericonAPI.Hubs
                     message = "Partida perdida por tiempo agotado o desconexión."
                 });
             }
+            await Clients.Group($"game1vs1_{game.Id}").SendAsync("YouSurrendered", new
+            {
+                message = "Partida perdida por tiempo agotado o desconexión."
+            });
         }
 
         /// <summary>
@@ -1977,6 +2108,11 @@ namespace PericonAPI.Hubs
             int loserLosses = 0;
             string loserLevel = "Peón de Casona";
 
+            string finalWinnerName = (winnerConnectionId == game.IdPOne) ? game.NamePOne : game.NamePTwo;
+            string finalLoserName = (loserConnectionId == game.IdPOne) ? game.NamePOne : game.NamePTwo;
+            int? finalWinnerDbId = null;
+            int? finalLoserDbId = null;
+
             try
             {
                 using (var scope = _scopeFactory.CreateScope())
@@ -2017,6 +2153,26 @@ namespace PericonAPI.Hubs
                         (!string.IsNullOrEmpty(loserUserId) && u.Id.ToString() == loserUserId) ||
                         (!string.IsNullOrEmpty(loserName) && u.Username.ToLower() == loserName.ToLower()) || 
                         (!string.IsNullOrEmpty(loserEmail) && u.Email.ToLower() == loserEmail.ToLower()));
+
+                    if (dbWinner != null)
+                    {
+                        finalWinnerName = dbWinner.Username;
+                        finalWinnerDbId = dbWinner.Id;
+                    }
+                    else if (!string.IsNullOrEmpty(winnerName))
+                    {
+                        finalWinnerName = winnerName;
+                    }
+
+                    if (dbLoser != null)
+                    {
+                        finalLoserName = dbLoser.Username;
+                        finalLoserDbId = dbLoser.Id;
+                    }
+                    else if (!string.IsNullOrEmpty(loserName))
+                    {
+                        finalLoserName = loserName;
+                    }
 
                     if (dbLoser != null)
                     {
@@ -2131,21 +2287,84 @@ namespace PericonAPI.Hubs
                     message = winnerMessage
                 });
 
-                await Clients.Client(loserConnectionId).SendAsync("MatchFinishedPayout", new
+                if (!string.IsNullOrEmpty(loserConnectionId))
                 {
-                    isWinner = false,
+                    await Clients.Client(loserConnectionId).SendAsync("MatchFinishedPayout", new
+                    {
+                        isWinner = false,
+                        isSala = isSala,
+                        bet = bet,
+                        totalPot = totalPot,
+                        houseCommission = houseCommission,
+                        winnerPrize = winnerPrize,
+                        netGain = -bet,
+                        newBalance = loserNewCoins,
+                        newWins = loserWins,
+                        newLosses = loserLosses,
+                        level = loserLevel,
+                        message = loserMessage
+                    });
+                }
+
+                // 1. Envío autoritativo al grupo entero de la sala para que ningún socket reconectado quede huérfano
+                var payoutNotice = new
+                {
+                    gameId = game.Id,
+                    winnerConnectionId = winnerConnectionId,
+                    loserConnectionId = loserConnectionId,
+                    winnerUsername = finalWinnerName,
+                    loserUsername = finalLoserName,
+                    winnerId = finalWinnerDbId,
+                    loserId = finalLoserDbId,
                     isSala = isSala,
                     bet = bet,
                     totalPot = totalPot,
                     houseCommission = houseCommission,
                     winnerPrize = winnerPrize,
-                    netGain = -bet,
-                    newBalance = loserNewCoins,
-                    newWins = loserWins,
-                    newLosses = loserLosses,
-                    level = loserLevel,
-                    message = loserMessage
-                });
+                    winnerNewBalance = winnerNewCoins,
+                    loserNewBalance = loserNewCoins,
+                    winnerWins = winnerWins,
+                    winnerLosses = winnerLosses,
+                    loserWins = loserWins,
+                    loserLosses = loserLosses,
+                    winnerLevel = winnerLevel,
+                    loserLevel = loserLevel,
+                    reason = reason,
+                    winnerMessage = winnerMessage,
+                    loserMessage = loserMessage
+                };
+
+                await Clients.Group($"game1vs1_{game.Id}").SendAsync("MatchFinishedPayoutNotice", payoutNotice);
+                if (!string.IsNullOrEmpty(game.RoomName))
+                {
+                    await Clients.Group(game.RoomName).SendAsync("MatchFinishedPayoutNotice", payoutNotice);
+                }
+
+                // 2. Búsqueda proactiva del socket actual del perdedor por nombre de usuario por si cambió de ConnectionId
+                lock (users)
+                {
+                    string targetLoserUser = finalLoserName;
+                    var currentLoserPlayer = users.FirstOrDefault(u => !string.IsNullOrEmpty(u.Name) && u.Name.Equals(targetLoserUser, StringComparison.OrdinalIgnoreCase));
+                    if (currentLoserPlayer != null && !string.IsNullOrEmpty(currentLoserPlayer.Id) && currentLoserPlayer.Id != loserConnectionId)
+                    {
+                        Console.WriteLine($"[ProcessMatchPayout] Re-enviando MatchFinishedPayout al socket reconectado del perdedor: {currentLoserPlayer.Id} ({targetLoserUser})");
+                        _ = Clients.Client(currentLoserPlayer.Id).SendAsync("MatchFinishedPayout", new
+                        {
+                            isWinner = false,
+                            isSala = isSala,
+                            bet = bet,
+                            totalPot = totalPot,
+                            houseCommission = houseCommission,
+                            winnerPrize = winnerPrize,
+                            netGain = -bet,
+                            newBalance = loserNewCoins,
+                            newWins = loserWins,
+                            newLosses = loserLosses,
+                            level = loserLevel,
+                            message = loserMessage
+                        });
+                    }
+                }
             }
             catch (Exception ex)
             {
