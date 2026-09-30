@@ -422,6 +422,7 @@ namespace PericonAPI.Hubs
                 (games[numg].IsTumbaDeParaAtrasOne && games[numg].PointsOne == 8) || (games[numg].IsTumbaDeParaAtrasTwo && games[numg].PointsTwo == 8))
             {
                 Console.WriteLine("[Ask369Game] Pedir bloqueado porque un jugador está en Tumba.");
+                await SyncTable1vs1(move.game);
                 return;
             }
 
@@ -431,6 +432,7 @@ namespace PericonAPI.Hubs
             if (games[numg].LastStakeAsker == callerNum)
             {
                 Console.WriteLine($"[Ask369Game] Pedir bloqueado: el jugador {callerNum} ya pidió previamente sin revire.");
+                await SyncTable1vs1(move.game);
                 return;
             }
             games[numg].LastStakeAsker = callerNum;
@@ -481,7 +483,11 @@ namespace PericonAPI.Hubs
             }
 
             string[] daticos = move.content.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-            if (daticos.Length < 2) return;
+            if (daticos.Length < 2)
+            {
+                await SyncTable1vs1(move.game);
+                return;
+            }
             int chosen = int.Parse(daticos[daticos.Length - 1]);
 
             bool callerIsP1 = (Context.ConnectionId == games[numg].IdPOne);
