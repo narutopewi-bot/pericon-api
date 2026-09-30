@@ -761,15 +761,28 @@ namespace PericonAPI.Controllers
                 return NotFound(new { message = "Usuario no encontrado." });
             }
 
+            int previousCoins = user.Coins;
             user.Coins = Math.Max(0, user.Coins + dto.Amount);
+            if (user.BonusCoins > user.Coins)
+            {
+                user.BonusCoins = user.Coins;
+            }
+            int diff = user.Coins - previousCoins;
             await _context.SaveChangesAsync();
+
+            string actionDesc = diff >= 0 ? $"acreditadas +{diff}" : $"deducidas -{Math.Abs(diff)}";
+            Console.WriteLine($"[AdminAdjustCoins] Administrador ajustó monedas a {user.Username} (ID {user.Id}): Anterior {previousCoins}, Ajuste {dto.Amount}, Actual {user.Coins} ({actionDesc}). Motivo: {dto.Reason ?? "Sin motivo especificado"}");
 
             return Ok(new
             {
                 id = user.Id,
                 username = user.Username,
                 coins = user.Coins,
-                message = $"Saldo de {user.Username} ajustado con éxito. Saldo actual: {user.Coins} monedas."
+                previousCoins = previousCoins,
+                diff = diff,
+                message = diff >= 0
+                    ? $"Se acreditaron con éxito {diff} monedas a {user.Username}. Saldo actual: {user.Coins} monedas."
+                    : $"Se dedujeron con éxito {Math.Abs(diff)} monedas a {user.Username}. Saldo actual: {user.Coins} monedas."
             });
         }
 
