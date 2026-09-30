@@ -145,8 +145,8 @@ namespace PericonAPI.Controllers
             string description = mode switch
             {
                 "facil" => "Modo Fácil (50% Casa / 50% Jugador - 5 de cada 10 para los jugadores)",
-                "dificil" => "Modo Difícil (62% Casa / 38% Jugador - Mayor dificultad)",
-                _ => "Modo Medio (55% Casa / 45% Jugador - Balance gradual y sostenible)"
+                "dificil" => "Modo Difícil (65% Casa / 35% Jugador - Mayor dificultad)",
+                _ => "Modo Medio (60% Casa / 40% Jugador - Balance gradual 60-40)"
             };
 
             return Ok(new
@@ -347,7 +347,7 @@ namespace PericonAPI.Controllers
         }
 
         [HttpGet("matches")]
-        public async Task<IActionResult> GetMatches([FromQuery] string? player)
+        public async Task<IActionResult> GetMatches([FromQuery] string? player, [FromQuery] string? period)
         {
             var query = _context.MatchBetRecords.AsQueryable();
 
@@ -361,7 +361,29 @@ namespace PericonAPI.Controllers
                     m.LoserUsername.ToLower().Contains(clean));
             }
 
-            var matches = await query
+            var vzlaNow = VenezuelaTime.Now;
+            var todayVzla = vzlaNow.Date;
+            var todayStartUtc = todayVzla.AddHours(4);
+
+            string activePeriod = (period ?? "todo").Trim().ToLowerInvariant();
+            if (activePeriod == "dia" || activePeriod == "today" || activePeriod == "hoy")
+            {
+                query = query.Where(m => m.CreatedAt >= todayStartUtc);
+            }
+            else if (activePeriod == "semana" || activePeriod == "week")
+            {
+                var weekStartUtc = todayStartUtc.AddDays(-7);
+                query = query.Where(m => m.CreatedAt >= weekStartUtc);
+            }
+            else if (activePeriod == "mes" || activePeriod == "month")
+            {
+                var monthStartUtc = todayStartUtc.AddDays(-30);
+                query = query.Where(m => m.CreatedAt >= monthStartUtc);
+            }
+
+            var allFiltered = await query.ToListAsync();
+
+            var matches = allFiltered
                 .OrderByDescending(m => m.CreatedAt)
                 .Select(m => new
                 {
@@ -376,11 +398,39 @@ namespace PericonAPI.Controllers
                     winnerUsername = m.WinnerUsername,
                     loserUsername = m.LoserUsername,
                     endReason = m.EndReason,
-                    createdAt = m.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")
+                    createdAt = m.CreatedAt.AddHours(-4).ToString("yyyy-MM-dd HH:mm:ss")
                 })
-                .ToListAsync();
+                .ToList();
 
-            return Ok(matches);
+            var dailyActivity = allFiltered
+                .GroupBy(m => m.CreatedAt.AddHours(-4).ToString("yyyy-MM-dd"))
+                .OrderByDescending(g => g.Key)
+                .Select(g => new
+                {
+                    date = g.Key,
+                    count = g.Count(),
+                    totalPot = g.Sum(m => m.TotalPot),
+                    commission = g.Sum(m => m.HouseCommission),
+                    prizes = g.Sum(m => m.WinnerPrize)
+                })
+                .ToList();
+
+            var summary = new
+            {
+                totalMatches = allFiltered.Count,
+                totalCoinsWagered = allFiltered.Sum(m => m.TotalPot),
+                totalHouseCommissions = allFiltered.Sum(m => m.HouseCommission),
+                totalPrizesAwarded = allFiltered.Sum(m => m.WinnerPrize),
+                averageBet = allFiltered.Count > 0 ? (int)Math.Round(allFiltered.Average(m => m.BetPerPlayer)) : 0
+            };
+
+            return Ok(new
+            {
+                period = activePeriod,
+                summary,
+                dailyActivity,
+                matches
+            });
         }
 
         [HttpGet("bot-matches")]
@@ -411,6 +461,65 @@ namespace PericonAPI.Controllers
             var totalCoinsWonByHouse = allList.Sum(m => m.CoinsLost);
             var netHouseProfit = allList.Sum(m => m.HouseProfit);
 
+            // CÁLCULO DIARIO (Hora de Venezuela UTC-4): Inicia en Cero a la medianoche
+            var vzlaNow = VenezuelaTime.Now;
+            var todayVzla = vzlaNow.Date;
+            var todayStartUtc = todayVzla.AddHours(4);
+            var todayEndUtc = todayStartUtc.AddDays(1);
+
+            var todayList = allList.Where(m => m.CreatedAt >= todayStartUtc && m.CreatedAt < todayEndUtc).ToList();
+            var todayTotalMatches = todayList.Count;
+            var todayUserWins = todayList.Count(m => m.UserWon);
+            var todayBotWins = todayList.Count(m => !m.UserWon);
+            var todayUserWinRate = todayTotalMatches > 0 ? Math.Round((double)todayUserWins / todayTotalMatches * 100, 1) : 0;
+            var todayBotWinRate = todayTotalMatches > 0 ? Math.Round((double)todayBotWins / todayTotalMatches * 100, 1) : 0;
+            var todayCoinsWagered = todayList.Sum(m => m.BetAmount);
+            var todayCoinsWonByUser = todayList.Sum(m => m.CoinsWon);
+            var todayCoinsWonByHouse = todayList.Sum(m => m.CoinsLost);
+            var todayNetHouseProfit = todayList.Sum(m => m.HouseProfit);
+
+            var todaySummary = new
+            {
+                date = todayVzla.ToString("yyyy-MM-dd"),
+                totalMatches = todayTotalMatches,
+                botWins = todayBotWins,
+                userWins = todayUserWins,
+                botWinRate = todayBotWinRate,
+                userWinRate = todayUserWinRate,
+                totalCoinsWagered = todayCoinsWagered,
+                coinsWonByUser = todayCoinsWonByUser,
+                coinsWonByHouse = todayCoinsWonByHouse,
+                netHouseProfit = todayNetHouseProfit,
+                targetWinRate = 60.0
+            };
+
+            // DESGLOSE HISTÓRICO DÍA POR DÍA (HORA VENEZUELA)
+            var dailyBreakdown = allList
+                .GroupBy(m => m.CreatedAt.AddHours(-4).ToString("yyyy-MM-dd"))
+                .OrderByDescending(g => g.Key)
+                .Select(g =>
+                {
+                    var count = g.Count();
+                    var bWins = g.Count(m => !m.UserWon);
+                    var uWins = g.Count(m => m.UserWon);
+                    var bRate = count > 0 ? Math.Round((double)bWins / count * 100, 1) : 0;
+                    var uRate = count > 0 ? Math.Round((double)uWins / count * 100, 1) : 0;
+                    return new
+                    {
+                        date = g.Key,
+                        totalMatches = count,
+                        botWins = bWins,
+                        userWins = uWins,
+                        botWinRate = bRate,
+                        userWinRate = uRate,
+                        totalCoinsWagered = g.Sum(m => m.BetAmount),
+                        coinsWonByUser = g.Sum(m => m.CoinsWon),
+                        coinsWonByHouse = g.Sum(m => m.CoinsLost),
+                        netHouseProfit = g.Sum(m => m.HouseProfit)
+                    };
+                })
+                .ToList();
+
             var matches = await query
                 .OrderByDescending(m => m.CreatedAt)
                 .Select(m => new
@@ -427,7 +536,7 @@ namespace PericonAPI.Controllers
                     userCoinsBefore = m.UserCoinsBefore,
                     userCoinsAfter = m.UserCoinsAfter,
                     endReason = m.EndReason,
-                    createdAt = m.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")
+                    createdAt = m.CreatedAt.AddHours(-4).ToString("yyyy-MM-dd HH:mm:ss")
                 })
                 .ToListAsync();
 
@@ -445,6 +554,8 @@ namespace PericonAPI.Controllers
                     totalCoinsWonByHouse,
                     netHouseProfit
                 },
+                todaySummary,
+                dailyBreakdown,
                 matches
             });
         }

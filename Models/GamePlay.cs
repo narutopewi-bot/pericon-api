@@ -24,7 +24,7 @@ namespace PericonAPI.Models
         public string UserIdPTwo { get; set; } = string.Empty;
         public int LastStakeAsker { get; set; } = 0; // 0 = ninguno, 1 = P1, 2 = P2
         public bool IsSolitaire { get; set; }
-        public static double BotAdvantageProbability { get; set; } = 0.55;
+        public static double BotAdvantageProbability { get; set; } = 0.60;
         public static string BotDifficultyMode { get; set; } = "medio"; // "facil", "medio", "dificil"
 
         // Lista de usuarios bajo estabilización de ventaja de la casa (ej: Memo)
@@ -80,12 +80,12 @@ namespace PericonAPI.Models
             else if (mode == "dificil")
             {
                 BotDifficultyMode = "dificil";
-                BotAdvantageProbability = 0.62;
+                BotAdvantageProbability = 0.65;
             }
             else // "medio"
             {
                 BotDifficultyMode = "medio";
-                BotAdvantageProbability = 0.55;
+                BotAdvantageProbability = 0.60;
             }
 
             SaveBotSettingsToFile();
@@ -656,14 +656,14 @@ namespace PericonAPI.Models
                     }
                     else if (BotDifficultyMode == "dificil")
                     {
-                        // Modo Difícil: 62% Casa / 38% Jugador
-                        favorProb = 0.62;
+                        // Modo Difícil: 65% Casa / 35% Jugador
+                        favorProb = 0.65;
                         if (IsTumbaTwo) favorProb = 0.75;
                     }
                     else
                     {
-                        // Modo Medio (Por defecto): 55% Casa / 45% Jugador (ventaja sutil y gradual)
-                        favorProb = 0.55;
+                        // Modo Medio (Por defecto): 60% Casa / 40% Jugador (ventaja gradual 60-40)
+                        favorProb = 0.60;
                         if (IsTumbaTwo) favorProb = 0.70;
                     }
 

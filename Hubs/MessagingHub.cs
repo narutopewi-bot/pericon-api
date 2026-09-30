@@ -2614,25 +2614,40 @@ namespace PericonAPI.Hubs
                             }
                         }
 
-                        // SISTEMA DE EQUILIBRIO FINANCIERO Y CONTROL ANTIRACHAS CONTRA EL BOT
+                        // SISTEMA DE EQUILIBRIO FINANCIERO Y CONTROL ANTIRACHAS CONTRA EL BOT (OPERACIÓN DIARIA 60/40)
                         // 1. Obtener historial del usuario contra el bot
-                        var botMatches = db.BotMatchRecords
+                        var userBotMatches = db.BotMatchRecords
                             .Where(m => m.UserId == uId || (m.Username != null && m.Username.ToLower() == newgame.NamePOne.ToLower()))
                             .ToList();
 
-                        int userCoinsWonAgainstBot = botMatches.Sum(m => m.CoinsWon);
-                        int userCoinsLostAgainstBot = botMatches.Sum(m => m.CoinsLost);
+                        int userCoinsWonAgainstBot = userBotMatches.Sum(m => m.CoinsWon);
+                        int userCoinsLostAgainstBot = userBotMatches.Sum(m => m.CoinsLost);
                         int userNetProfitAgainstBot = userCoinsWonAgainstBot - userCoinsLostAgainstBot;
-                        int totalBotMatches = botMatches.Count;
-                        int houseWins = botMatches.Count(m => !m.UserWon);
-                        int userWins = botMatches.Count(m => m.UserWon);
-                        double houseWinRate = totalBotMatches > 0 ? (double)houseWins / totalBotMatches : 0.0;
-                        double userWinRate = totalBotMatches > 0 ? (double)userWins / totalBotMatches : 0.5;
-
                         newgame.UserNetCoinsAgainstBot = userNetProfitAgainstBot;
 
-                        // 2. Calcular racha de derrotas consecutivas recientes del usuario (victorias seguidas del bot)
-                        var recentBotMatches = botMatches.OrderByDescending(m => m.CreatedAt).Take(10).ToList();
+                        // 2. Control diario (Horario de Venezuela UTC-4): cada día arranca en cero estadísticas y balance
+                        var vzlaNow = Classes.VenezuelaTime.Now;
+                        var todayVzlaStartUtc = vzlaNow.Date.AddHours(4);
+                        var todayVzlaEndUtc = todayVzlaStartUtc.AddDays(1);
+
+                        var todayBotMatches = db.BotMatchRecords
+                            .Where(m => m.CreatedAt >= todayVzlaStartUtc && m.CreatedAt < todayVzlaEndUtc)
+                            .ToList();
+
+                        int todayTotal = todayBotMatches.Count;
+                        int todayBotWins = todayBotMatches.Count(m => !m.UserWon);
+                        int todayUserWins = todayBotMatches.Count(m => m.UserWon);
+                        double todayBotWinRate = todayTotal > 0 ? (double)todayBotWins / todayTotal : 0.60;
+                        int todayHouseProfit = todayBotMatches.Sum(m => m.HouseProfit);
+
+                        // Partidas de este usuario hoy
+                        var userTodayBotMatches = todayBotMatches
+                            .Where(m => m.UserId == uId || (m.Username != null && m.Username.ToLower() == newgame.NamePOne.ToLower()))
+                            .ToList();
+                        int userTodayLosses = userTodayBotMatches.Count(m => !m.UserWon);
+
+                        // 3. Calcular racha de derrotas consecutivas recientes del usuario (victorias seguidas del bot)
+                        var recentBotMatches = userBotMatches.OrderByDescending(m => m.CreatedAt).Take(10).ToList();
                         int consecutiveBotWins = 0;
                         foreach (var m in recentBotMatches)
                         {
@@ -2647,7 +2662,6 @@ namespace PericonAPI.Hubs
                         }
 
                         bool isManuallyTargeted = GamePlayOneVsOne.IsUserTargetedForStabilization(uId, newgame.NamePOne);
-                        bool isChe = (uId == 202 || (newgame.NamePOne != null && newgame.NamePOne.Trim().Equals("Che", StringComparison.OrdinalIgnoreCase)));
 
                         // CASO 1: Ganancia excesiva contra la casa (o usuario Memo) -> Modo Defensivo de Casa
                         if (isManuallyTargeted || userNetProfitAgainstBot > 500)
@@ -2655,13 +2669,9 @@ namespace PericonAPI.Hubs
                             newgame.UserBalanceMode = UserBotBalanceMode.DefendHouse;
                             newgame.IsTargetedForStabilization = true;
                             newgame.MustFavorUserToBreakStreak = false;
-                            Console.WriteLine($"[BotFinancialBalance] Usuario {newgame.NamePOne} (ID {uId}) va GANANDO al Bot (+{userNetProfitAgainstBot} 🪙, WinRate Casa: {houseWinRate:P1}). Modo defensivo de casa ACTIVADO.");
+                            Console.WriteLine($"[BotFinancialBalance] Usuario {newgame.NamePOne} (ID {uId}) va GANANDO al Bot (+{userNetProfitAgainstBot} 🪙). Modo defensivo de casa ACTIVADO.");
                         }
-                        // CASO 2: Modo Equilibrado Sostenible con Control Antirachas (Che y usuarios regulares)
-                        // Instrucción del Administrador:
-                        // "No es que a partir de ahora lo vas a dejar ganar para que él se recupere, si él ya perdió, ya perdió.
-                        // Pero cuando él vuelva a jugar, no seas tan agresivo con él. No gánales tantas partidas seguidas:
-                        // gana una tú, una él, una tú, gana dos tú, una él. Vele quitando dinero pero gradualmente, no que te ganes todas las partidas tú y él las pierda todas."
+                        // CASO 2: Modo Equilibrado Sostenible Diario 60-40 con Control Antirachas
                         else
                         {
                             newgame.UserBalanceMode = UserBotBalanceMode.BalancedGradualEdge;
@@ -2672,22 +2682,39 @@ namespace PericonAPI.Hubs
                             if (consecutiveBotWins >= 2)
                             {
                                 newgame.MustFavorUserToBreakStreak = true;
-                                Console.WriteLine($"[BotBalance] Usuario {newgame.NamePOne} (ID {uId}) venía de {consecutiveBotWins} derrotas seguidas ante el Bot. ¡ANTIRACHA ACTIVADA! Esta partida se favorece al usuario.");
+                                Console.WriteLine($"[BotDailyBalance] Usuario {newgame.NamePOne} (ID {uId}) venía de {consecutiveBotWins} derrotas seguidas ante el Bot. ¡ANTIRACHA ACTIVADA! Esta partida se favorece al usuario.");
+                            }
+                            // Si el bot va ganando demasiado hoy (>65% con más de 3 partidas jugadas hoy),
+                            // se equilibra dando ventaja al usuario para mantener el objetivo 60-40 diario
+                            else if (todayTotal >= 4 && todayBotWinRate > 0.65)
+                            {
+                                newgame.MustFavorUserToBreakStreak = true;
+                                Console.WriteLine($"[BotDailyBalance] Bot hoy con efectividad alta ({todayBotWinRate:P1} en {todayTotal} partidas hoy). Favoreciendo usuario {newgame.NamePOne} para estabilizar objetivo diario 60/40.");
                             }
                             // Regla de Ritmo 1-1 / 2-1: Si el bot ganó la partida anterior (1 victoria):
-                            // 50% de probabilidad de que el usuario gane ahora (ritmo 1 bot - 1 usuario)
-                            // 50% de probabilidad de que el bot gane su segunda partida (ritmo 2 bot - 1 usuario)
                             else if (consecutiveBotWins == 1)
                             {
-                                bool favorUserThisTime = Random.Shared.NextDouble() < 0.50;
-                                newgame.MustFavorUserToBreakStreak = favorUserThisTime;
-                                Console.WriteLine($"[BotBalance] Usuario {newgame.NamePOne} (ID {uId}) perdió 1 partida anterior. Ritmo alternado: FavorUser={favorUserThisTime}.");
+                                // Si el usuario ha perdido más del 60% de sus partidas hoy, favorecerlo
+                                if (userTodayBotMatches.Count >= 2 && ((double)userTodayLosses / userTodayBotMatches.Count) > 0.60)
+                                {
+                                    newgame.MustFavorUserToBreakStreak = true;
+                                    Console.WriteLine($"[BotDailyBalance] Usuario {newgame.NamePOne} lleva {userTodayLosses}/{userTodayBotMatches.Count} derrotas hoy. Favoreciendo usuario.");
+                                }
+                                else
+                                {
+                                    // 50% de probabilidad de que el usuario gane ahora (ritmo 1 bot - 1 usuario)
+                                    // 50% de probabilidad de que el bot gane su segunda partida (ritmo 2 bot - 1 usuario)
+                                    bool favorUserThisTime = Random.Shared.NextDouble() < 0.50;
+                                    newgame.MustFavorUserToBreakStreak = favorUserThisTime;
+                                    Console.WriteLine($"[BotDailyBalance] Usuario {newgame.NamePOne} (ID {uId}) perdió 1 partida anterior. Ritmo alternado: FavorUser={favorUserThisTime}.");
+                                }
                             }
                             // Si el usuario ganó la partida anterior (consecutiveBotWins == 0):
                             else
                             {
+                                // El usuario viene de ganar, jugar con la probabilidad objetivo de la casa (60% bot / 40% usuario)
                                 newgame.MustFavorUserToBreakStreak = false;
-                                Console.WriteLine($"[BotBalance] Usuario {newgame.NamePOne} (ID {uId}) ganó su partida anterior. Juego competitivo estándar con ventaja gradual de la casa (55/45).");
+                                Console.WriteLine($"[BotDailyBalance] Usuario {newgame.NamePOne} ganó su partida anterior. Balance diario actual: {todayBotWins}W/{todayUserWins}L (Bot: {todayBotWinRate:P1}). Juego competitivo con ventaja gradual de la casa (60/40).");
                             }
                         }
                     }
