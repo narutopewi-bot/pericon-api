@@ -165,6 +165,9 @@ namespace PericonAPI.Models
             // Virar la carta de La Vida
             Life = Deck.OutCard();
 
+            // Aplicar ventaja sutil exclusiva si Dianelith juega en la mesa 2vs2
+            ApplyVipSubtleAdvantage_2vs2(Life.Id);
+
             // Formato de InitHand para 2 vs 2:
             // P1(3 cartas) - P2(3 cartas) - P3(3 cartas) - P4(3 cartas) - Vida
             List<string> parts = new List<string>();
@@ -175,6 +178,73 @@ namespace PericonAPI.Models
             parts.Add(Life.Id.ToString("D2"));
 
             InitHand = string.Join("-", parts);
+        }
+
+        public void ApplyVipSubtleAdvantage_2vs2(int lifeId)
+        {
+            var players = new (List<Card> hand, string name)[]
+            {
+                (Cards1, Name1),
+                (Cards2, Name2),
+                (Cards3, Name3),
+                (Cards4, Name4)
+            };
+
+            foreach (var p in players)
+            {
+                if (GamePlayOneVsOne.IsFavoredVipUser(0, p.name, null, null))
+                {
+                    // 1. Inyectar al menos 1 triunfo sutil / basurita si no tiene triunfos
+                    int trumps = p.hand.Count(c => GamePlayOneVsOne.EvaluateCard(c.Id, lifeId) >= 11);
+                    if (trumps == 0 && Deck?.Package != null && Deck.Package.Count > 0)
+                    {
+                        var subtle = Deck.Package
+                            .Where(c => c.Id != 4 && c.Id != 33 && GamePlayOneVsOne.EvaluateCard(c.Id, lifeId) >= 15 && GamePlayOneVsOne.EvaluateCard(c.Id, lifeId) <= 27)
+                            .OrderByDescending(c => GamePlayOneVsOne.EvaluateCard(c.Id, lifeId))
+                            .FirstOrDefault();
+
+                        if (subtle != null)
+                        {
+                            int worstIdx = 0;
+                            int lowestVal = int.MaxValue;
+                            for (int i = 0; i < p.hand.Count; i++)
+                            {
+                                int val = SpanishCards.GetFaceValue(p.hand[i].Id);
+                                if (val < lowestVal)
+                                {
+                                    lowestVal = val;
+                                    worstIdx = i;
+                                }
+                            }
+                            Deck.Package.Remove(subtle);
+                            Deck.Package.Add(p.hand[worstIdx]);
+                            p.hand[worstIdx] = subtle;
+                        }
+                    }
+
+                    // 2. Blindaje estricto: NUNCA 5 y 4 juntos
+                    bool has5 = p.hand.Any(c => c.Id == 4);
+                    bool has4 = p.hand.Any(c => c.Id == 33);
+                    if (has5 && has4 && Deck?.Package != null)
+                    {
+                        int idx4 = p.hand.FindIndex(c => c.Id == 33);
+                        if (idx4 >= 0)
+                        {
+                            var replacement = Deck.Package
+                                .Where(c => c.Id != 4 && c.Id != 33 && GamePlayOneVsOne.EvaluateCard(c.Id, lifeId) >= 15 && GamePlayOneVsOne.EvaluateCard(c.Id, lifeId) <= 27)
+                                .OrderByDescending(c => GamePlayOneVsOne.EvaluateCard(c.Id, lifeId))
+                                .FirstOrDefault();
+
+                            if (replacement != null)
+                            {
+                                Deck.Package.Remove(replacement);
+                                Deck.Package.Add(p.hand[idx4]);
+                                p.hand[idx4] = replacement;
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         public List<Card> GetPlayerCards(int playerIndex)

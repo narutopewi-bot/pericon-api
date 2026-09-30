@@ -653,6 +653,8 @@ namespace PericonAPI.Hubs
             string name2 = !string.IsNullOrEmpty(QTwo.Name) && !QTwo.Name.StartsWith("Jugador-") ? QTwo.Name : (QTwo.Name ?? "Jugador 2");
             newgame.NamePOne = name1;
             newgame.NamePTwo = name2;
+            newgame.EmailPOne = QOne.Email ?? "";
+            newgame.EmailPTwo = QTwo.Email ?? "";
             newgame.RoomName = $"match-{newgame.Id}";
             newgame.IsFriendlyRoom = false;
 
@@ -2608,6 +2610,7 @@ namespace PericonAPI.Hubs
                         if (dbUser != null)
                         {
                             newgame.NamePOne = dbUser.Username;
+                            newgame.EmailPOne = dbUser.Email ?? "";
                             if (string.IsNullOrWhiteSpace(playerLevel))
                             {
                                 newgame.PlayerLevel = dbUser.GetCalculatedLevel();
@@ -3067,6 +3070,8 @@ namespace PericonAPI.Hubs
                 newGame.NamePTwo = name2;
                 newGame.UserIdPOne = matchedPlayer.UserId ?? "";
                 newGame.UserIdPTwo = userId ?? "";
+                newGame.EmailPOne = q1.Email ?? "";
+                newGame.EmailPTwo = q2.Email ?? "";
                 newGame.RoomName = $"match-{newGame.Id}";
                 newGame.IsFriendlyRoom = false;
 

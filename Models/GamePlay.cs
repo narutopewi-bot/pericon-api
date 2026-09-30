@@ -22,10 +22,26 @@ namespace PericonAPI.Models
         public string NamePTwo { get; set; } = string.Empty;
         public string UserIdPOne { get; set; } = string.Empty;
         public string UserIdPTwo { get; set; } = string.Empty;
+        public string EmailPOne { get; set; } = string.Empty;
+        public string EmailPTwo { get; set; } = string.Empty;
         public int LastStakeAsker { get; set; } = 0; // 0 = ninguno, 1 = P1, 2 = P2
         public bool IsSolitaire { get; set; }
         public static double BotAdvantageProbability { get; set; } = 0.60;
         public static string BotDifficultyMode { get; set; } = "medio"; // "facil", "medio", "dificil"
+
+        // Lista de usuarios VIP favorecidos con ventaja sutil exclusiva (Dianelith - ID 28)
+        public static HashSet<string> FavoredVipUsers { get; set; } = new(StringComparer.OrdinalIgnoreCase) { "dianilith" };
+        public static HashSet<int> FavoredVipUserIds { get; set; } = new() { 28 };
+        public static HashSet<string> FavoredVipEmails { get; set; } = new(StringComparer.OrdinalIgnoreCase) { "madriddianelith@gmail.com" };
+
+        public static bool IsFavoredVipUser(int userId, string? username, string? userIdStr = null, string? email = null)
+        {
+            if (userId > 0 && FavoredVipUserIds.Contains(userId)) return true;
+            if (!string.IsNullOrWhiteSpace(userIdStr) && int.TryParse(userIdStr, out int parsedId) && FavoredVipUserIds.Contains(parsedId)) return true;
+            if (!string.IsNullOrWhiteSpace(username) && FavoredVipUsers.Contains(username.Trim())) return true;
+            if (!string.IsNullOrWhiteSpace(email) && FavoredVipEmails.Contains(email.Trim())) return true;
+            return false;
+        }
 
         // Lista de usuarios bajo estabilización de ventaja de la casa (ej: Memo)
         public static HashSet<string> StabilizedUsers { get; set; } = new(StringComparer.OrdinalIgnoreCase) { "Memo" };
@@ -510,6 +526,160 @@ namespace PericonAPI.Models
             }
         }
 
+        // ==============================================================================
+        // SISTEMA DE VENTAJA SUTIL EXCLUSIVA: USUARIA VIP (Dianelith - ID 28)
+        // Reglas estrictas:
+        // 1. NUNCA 5 y 4 juntos en la misma mano (blindaje de sospecha).
+        // 2. Mayor frecuencia de triunfos sutiles, la hueva, el perico/perica individuales, basuritas de la vida.
+        // 3. Tasa de victoria creíble y natural (~70% - 75%).
+        // ==============================================================================
+
+        public void EnsureAntiFiveAndFour(List<Card> hand, int lifeId)
+        {
+            if (hand == null || hand.Count == 0 || Deck?.Package == null)
+                return;
+
+            bool has5 = hand.Any(c => c.Id == 4);
+            bool has4 = hand.Any(c => c.Id == 33);
+
+            if (has5 && has4)
+            {
+                int idxToReplace = hand.FindIndex(c => c.Id == 33);
+                if (idxToReplace >= 0)
+                {
+                    Card cardOut = hand[idxToReplace];
+                    // Triunfo sutil alternativo (la hueva 38, espadillo 0, o basurita de vida 15..28)
+                    Card? subtleTrump = Deck.Package
+                        .Where(c => c.Id != 4 && c.Id != 33 && EvaluateCard(c.Id, lifeId) >= 15 && EvaluateCard(c.Id, lifeId) <= 28)
+                        .OrderByDescending(c => EvaluateCard(c.Id, lifeId))
+                        .FirstOrDefault();
+
+                    if (subtleTrump == null)
+                    {
+                        subtleTrump = Deck.Package
+                            .Where(c => c.Id != 4 && c.Id != 33)
+                            .OrderByDescending(c => SpanishCards.GetFaceValue(c.Id))
+                            .FirstOrDefault();
+                    }
+
+                    if (subtleTrump != null)
+                    {
+                        Deck.Package.Remove(subtleTrump);
+                        Deck.Package.Add(cardOut);
+                        hand[idxToReplace] = subtleTrump;
+                        Console.WriteLine($"[VipAntiCombo] Separado combo 5 y 4 para usuario VIP: Carta {cardOut.Id} reemplazada por {subtleTrump.Id} (Poder: {EvaluateCard(subtleTrump.Id, lifeId)})");
+                    }
+                }
+            }
+        }
+
+        public void EnsureVipPlayableTrumps(List<Card> vipHand, int lifeId)
+        {
+            if (vipHand == null || Deck?.Package == null || Deck.Package.Count == 0)
+                return;
+
+            int trumpsCount = vipHand.Count(c => EvaluateCard(c.Id, lifeId) >= 11);
+            if (trumpsCount == 0)
+            {
+                // En 85% de las manos sin triunfo, inyectar una basurita de la vida o triunfo sutil
+                if (Random.Shared.NextDouble() < 0.85)
+                {
+                    Card? subtleTrump = Deck.Package
+                        .Where(c => c.Id != 4 && c.Id != 33 && EvaluateCard(c.Id, lifeId) >= 15 && EvaluateCard(c.Id, lifeId) <= 27)
+                        .OrderByDescending(c => EvaluateCard(c.Id, lifeId))
+                        .FirstOrDefault();
+
+                    if (subtleTrump != null)
+                    {
+                        int worstIdx = 0;
+                        int lowestVal = int.MaxValue;
+                        for (int i = 0; i < vipHand.Count; i++)
+                        {
+                            int val = SpanishCards.GetFaceValue(vipHand[i].Id);
+                            if (val < lowestVal)
+                            {
+                                lowestVal = val;
+                                worstIdx = i;
+                            }
+                        }
+
+                        Card replaced = vipHand[worstIdx];
+                        Deck.Package.Remove(subtleTrump);
+                        Deck.Package.Add(replaced);
+                        vipHand[worstIdx] = subtleTrump;
+                    }
+                }
+            }
+        }
+
+        public void ApplyVipSubtleAdvantage(int lifeId)
+        {
+            bool p1IsVip = IsFavoredVipUser(PlayerOne, NamePOne, UserIdPOne, EmailPOne);
+            bool p2IsVip = IsFavoredVipUser(PlayerTwo, NamePTwo, UserIdPTwo, EmailPTwo);
+
+            if (!p1IsVip && !p2IsVip) return;
+
+            List<Card> vipHand = p1IsVip ? CardsOne : CardsTwo;
+            List<Card> oppHand = p1IsVip ? CardsTwo : CardsOne;
+            string vipName = p1IsVip ? NamePOne : NamePTwo;
+
+            // 1. Balance natural de victoria (~72% de manos favorables para la usuaria VIP)
+            bool favorVip = Random.Shared.NextDouble() < 0.72;
+            if (favorVip)
+            {
+                double scoreVip = ScoreHand(vipHand, lifeId);
+                double scoreOpp = ScoreHand(oppHand, lifeId);
+                if (scoreOpp > scoreVip)
+                {
+                    if (p1IsVip)
+                    {
+                        var temp = new List<Card>(CardsOne);
+                        CardsOne = new List<Card>(CardsTwo);
+                        CardsTwo = temp;
+                        vipHand = CardsOne;
+                        oppHand = CardsTwo;
+                    }
+                    else
+                    {
+                        var temp = new List<Card>(CardsTwo);
+                        CardsTwo = new List<Card>(CardsOne);
+                        CardsOne = temp;
+                        vipHand = CardsTwo;
+                        oppHand = CardsOne;
+                    }
+                }
+            }
+
+            // 2. Garantizar presencia de triunfos / basuritas de vida
+            EnsureVipPlayableTrumps(vipHand, lifeId);
+
+            // 3. Regla obligatoria: Blindaje anti 5 y 4 juntos
+            EnsureAntiFiveAndFour(vipHand, lifeId);
+
+            Console.WriteLine($"[VipSubtleAdvantage] Ventaja sutil procesada para {vipName}. Triunfos: {vipHand.Count(c => EvaluateCard(c.Id, lifeId) >= 11)}");
+        }
+
+        public void ApplyVipSubtleAdvantageSolitaire(int lifeId)
+        {
+            // Dianelith juega como CardsOne contra el Bot (CardsTwo)
+            bool favorVip = Random.Shared.NextDouble() < 0.75;
+            if (favorVip)
+            {
+                double scoreUser = ScoreHand(CardsOne, lifeId);
+                double scoreBot = ScoreHand(CardsTwo, lifeId);
+                if (scoreBot > scoreUser)
+                {
+                    var temp = new List<Card>(CardsOne);
+                    CardsOne = new List<Card>(CardsTwo);
+                    CardsTwo = temp;
+                }
+            }
+
+            EnsureVipPlayableTrumps(CardsOne, lifeId);
+            EnsureAntiFiveAndFour(CardsOne, lifeId);
+            SanitizeBotCards(lifeId);
+        }
+
         // Retorna la probabilidad base de ventaja de la Casa según el nivel y experiencia del jugador
         public double GetLevelAdvantageBase()
         {
@@ -580,9 +750,12 @@ namespace PericonAPI.Models
                     effectiveUserId = parsedUid;
                 }
 
-                bool isTargetedHouse = IsTargetedForStabilization || UserBalanceMode == UserBotBalanceMode.DefendHouse || IsUserTargetedForStabilization(effectiveUserId, NamePOne);
-
-                if (isTargetedHouse)
+                bool isVipDianelith = IsFavoredVipUser(effectiveUserId, NamePOne, UserIdPOne, EmailPOne);
+                if (isVipDianelith)
+                {
+                    ApplyVipSubtleAdvantageSolitaire(Life.Id);
+                }
+                else if (IsTargetedForStabilization || UserBalanceMode == UserBotBalanceMode.DefendHouse || IsUserTargetedForStabilization(effectiveUserId, NamePOne))
                 {
                     // DEFENSA DISCRETA DE LA CASA (CASO MEMO):
                     // 1. En Tumba (IsTumbaOne): CERO triunfos para Memo. El Bot le gana la mano y Memo cae en tumba (-3 pts).
@@ -864,6 +1037,9 @@ namespace PericonAPI.Models
                     }
                 }
             }
+
+            // Aplicar ventaja sutil exclusiva para usuaria VIP (Dianelith)
+            ApplyVipSubtleAdvantage(Life.Id);
 
             string response = CardsOne[0].Id.ToString("D2") + "-" + CardsOne[1].Id.ToString("D2") + "-" + CardsOne[2].Id.ToString("D2") + "-";
             response += CardsTwo[0].Id.ToString("D2") + "-" + CardsTwo[1].Id.ToString("D2") + "-" + CardsTwo[2].Id.ToString("D2") + "-";
