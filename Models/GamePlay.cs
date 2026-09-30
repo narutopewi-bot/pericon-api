@@ -407,6 +407,16 @@ namespace PericonAPI.Models
 
             int lifeId = Life.Id;
 
+            // 0. Si el usuario tiene una mano con mayor puntuación que el Bot, intercambiar manos para garantizar ventaja real
+            double scoreUser = ScoreHand(CardsOne, lifeId);
+            double scoreBot = ScoreHand(CardsTwo, lifeId);
+            if (scoreUser > scoreBot)
+            {
+                var temp = new List<Card>(CardsOne);
+                CardsOne = new List<Card>(CardsTwo);
+                CardsTwo = temp;
+            }
+
             // 1. Si el bot no tiene ningún triunfo sólido (>= 16) y la mano amerita ventaja:
             int botTrumpsCount = CardsTwo.Count(c => EvaluateCard(c.Id, lifeId) >= 15);
             if (botTrumpsCount < 1)
@@ -773,10 +783,15 @@ namespace PericonAPI.Models
                     }
                     else
                     {
-                        // En rondas normales, 55% de favoritismo a Memo para que arme juego y gane bazas
-                        bool favorMemoInNormalRound = Random.Shared.NextDouble() < 0.55;
-                        if (favorMemoInNormalRound)
+                        // En rondas normales: Defensa activa de la casa (65% Bot / 35% Usuario)
+                        bool favorBotTargeted = Random.Shared.NextDouble() < 0.65;
+                        if (favorBotTargeted)
                         {
+                            EnsureBotSuperiorHand(isBeginner: false, isTargeted: true);
+                        }
+                        else
+                        {
+                            // 35% restante: margen para que el usuario arme juego y sume puntos naturales
                             double scoreUser = ScoreHand(CardsOne, Life.Id);
                             double scoreBot = ScoreHand(CardsTwo, Life.Id);
                             if (scoreBot > scoreUser)
@@ -784,15 +799,6 @@ namespace PericonAPI.Models
                                 var temp = new List<Card>(CardsOne);
                                 CardsOne = new List<Card>(CardsTwo);
                                 CardsTwo = temp;
-                            }
-                        }
-                        else
-                        {
-                            // 45% restante: mano disputada con margen estándar
-                            bool favorBotNormal = Random.Shared.NextDouble() < BotAdvantageProbability;
-                            if (favorBotNormal)
-                            {
-                                EnsureBotSuperiorHand(isBeginner: false, isTargeted: false);
                             }
                         }
                     }
@@ -819,25 +825,22 @@ namespace PericonAPI.Models
                 {
                     // MODO EQUILIBRADO CON VENTAJA GRADUAL DE LA CASA (55% Bot / 45% Usuario en Medio)
                     // "Vele quitando dinero pero gradualmente, no que te ganes todas las partidas tú y él las pierda todas."
-                    double favorProb = BotAdvantageProbability;
-                    bool isEasy = (BotDifficultyMode == "facil" || favorProb <= 0.52);
+                    double favorProb = BotAdvantageProbability > 0 ? BotAdvantageProbability : 0.60;
+                    bool isEasy = (BotDifficultyMode == "facil");
 
                     if (isEasy)
                     {
-                        // Modo Fácil: 50% Casa / 50% Jugador (50-50 ESTRICTO)
                         favorProb = 0.50;
                     }
                     else if (BotDifficultyMode == "dificil")
                     {
-                        // Modo Difícil: 65% Casa / 35% Jugador
-                        favorProb = 0.65;
-                        if (IsTumbaTwo) favorProb = 0.75;
+                        favorProb = Math.Max(0.65, favorProb);
+                        if (IsTumbaTwo) favorProb = Math.Max(0.75, favorProb + 0.10);
                     }
                     else
                     {
-                        // Modo Medio (Por defecto): 60% Casa / 40% Jugador (ventaja gradual 60-40)
-                        favorProb = 0.60;
-                        if (IsTumbaTwo) favorProb = 0.70;
+                        // Modo Medio / Dinámico: usa BotAdvantageProbability configurado (0.60 base, 0.65 o 0.70 en déficit, 0.52 en superávit)
+                        if (IsTumbaTwo) favorProb = Math.Min(0.85, favorProb + 0.10);
                     }
 
                     bool favorBot = Random.Shared.NextDouble() < favorProb;

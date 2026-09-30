@@ -2665,20 +2665,39 @@ namespace PericonAPI.Hubs
                         }
 
                         bool isManuallyTargeted = GamePlayOneVsOne.IsUserTargetedForStabilization(uId, newgame.NamePOne);
+                        bool isHouseInDeficit = todayHouseProfit < 0 || (todayTotal >= 3 && todayBotWinRate < 0.58);
 
-                        // CASO 1: Ganancia excesiva contra la casa (o usuario Memo) -> Modo Defensivo de Casa
-                        if (isManuallyTargeted || userNetProfitAgainstBot > 500)
+                        // CASO 1: Ganancia excesiva contra la casa (o usuario Memo) O Casa en déficit diario
+                        if (isManuallyTargeted || userNetProfitAgainstBot > 300 || (isHouseInDeficit && userNetProfitAgainstBot > 0))
                         {
                             newgame.UserBalanceMode = UserBotBalanceMode.DefendHouse;
                             newgame.IsTargetedForStabilization = true;
                             newgame.MustFavorUserToBreakStreak = false;
-                            Console.WriteLine($"[BotFinancialBalance] Usuario {newgame.NamePOne} (ID {uId}) va GANANDO al Bot (+{userNetProfitAgainstBot} 🪙). Modo defensivo de casa ACTIVADO.");
+                            Console.WriteLine($"[BotFinancialBalance] Usuario {newgame.NamePOne} (ID {uId}) va GANANDO (+{userNetProfitAgainstBot} 🪙) o Casa en déficit ({todayHouseProfit} 🪙). Modo defensivo de casa ACTIVADO.");
                         }
                         // CASO 2: Modo Equilibrado Sostenible Diario 60-40 con Control Antirachas
                         else
                         {
                             newgame.UserBalanceMode = UserBotBalanceMode.BalancedGradualEdge;
                             newgame.IsTargetedForStabilization = false;
+
+                            // Regulación dinámica de la ventaja de la casa según la salud financiera del día:
+                            if (todayHouseProfit < -1000)
+                            {
+                                GamePlayOneVsOne.BotAdvantageProbability = 0.70;
+                            }
+                            else if (todayHouseProfit < 0 || (todayTotal >= 4 && todayBotWinRate < 0.58))
+                            {
+                                GamePlayOneVsOne.BotAdvantageProbability = 0.65;
+                            }
+                            else if (todayTotal >= 5 && todayBotWinRate > 0.65 && todayHouseProfit > 0)
+                            {
+                                GamePlayOneVsOne.BotAdvantageProbability = 0.52;
+                            }
+                            else
+                            {
+                                GamePlayOneVsOne.BotAdvantageProbability = 0.60;
+                            }
 
                             // Regla Antiracha Estricta: Si el bot ya ganó 2 o más partidas seguidas,
                             // OBLIGATORIAMENTE se favorece al usuario para romper la racha (el bot NUNCA gana 3 seguidas).
@@ -2687,37 +2706,39 @@ namespace PericonAPI.Hubs
                                 newgame.MustFavorUserToBreakStreak = true;
                                 Console.WriteLine($"[BotDailyBalance] Usuario {newgame.NamePOne} (ID {uId}) venía de {consecutiveBotWins} derrotas seguidas ante el Bot. ¡ANTIRACHA ACTIVADA! Esta partida se favorece al usuario.");
                             }
-                            // Si el bot va ganando demasiado hoy (>65% con más de 3 partidas jugadas hoy),
+                            // Si el bot va ganando demasiado hoy (>65% con más de 5 partidas jugadas hoy y ganancia positiva),
                             // se equilibra dando ventaja al usuario para mantener el objetivo 60-40 diario
-                            else if (todayTotal >= 4 && todayBotWinRate > 0.65)
+                            else if (todayTotal >= 5 && todayBotWinRate > 0.65 && todayHouseProfit > 0)
                             {
                                 newgame.MustFavorUserToBreakStreak = true;
-                                Console.WriteLine($"[BotDailyBalance] Bot hoy con efectividad alta ({todayBotWinRate:P1} en {todayTotal} partidas hoy). Favoreciendo usuario {newgame.NamePOne} para estabilizar objetivo diario 60/40.");
+                                Console.WriteLine($"[BotDailyBalance] Bot hoy con efectividad alta ({todayBotWinRate:P1} en {todayTotal} partidas hoy, +{todayHouseProfit} monedas). Favoreciendo usuario {newgame.NamePOne} para estabilizar objetivo diario 60/40.");
                             }
                             // Regla de Ritmo 1-1 / 2-1: Si el bot ganó la partida anterior (1 victoria):
                             else if (consecutiveBotWins == 1)
                             {
-                                // Si el usuario ha perdido más del 60% de sus partidas hoy, favorecerlo
-                                if (userTodayBotMatches.Count >= 2 && ((double)userTodayLosses / userTodayBotMatches.Count) > 0.60)
+                                if (!isHouseInDeficit && userTodayBotMatches.Count >= 2 && ((double)userTodayLosses / userTodayBotMatches.Count) > 0.60)
                                 {
                                     newgame.MustFavorUserToBreakStreak = true;
                                     Console.WriteLine($"[BotDailyBalance] Usuario {newgame.NamePOne} lleva {userTodayLosses}/{userTodayBotMatches.Count} derrotas hoy. Favoreciendo usuario.");
                                 }
-                                else
+                                else if (!isHouseInDeficit)
                                 {
-                                    // 50% de probabilidad de que el usuario gane ahora (ritmo 1 bot - 1 usuario)
-                                    // 50% de probabilidad de que el bot gane su segunda partida (ritmo 2 bot - 1 usuario)
-                                    bool favorUserThisTime = Random.Shared.NextDouble() < 0.50;
+                                    // 60% bot / 40% usuario en alternancia cuando la casa está en verde
+                                    bool favorUserThisTime = Random.Shared.NextDouble() < 0.40;
                                     newgame.MustFavorUserToBreakStreak = favorUserThisTime;
                                     Console.WriteLine($"[BotDailyBalance] Usuario {newgame.NamePOne} (ID {uId}) perdió 1 partida anterior. Ritmo alternado: FavorUser={favorUserThisTime}.");
+                                }
+                                else
+                                {
+                                    // Casa en déficit: no ceder ventaja
+                                    newgame.MustFavorUserToBreakStreak = false;
                                 }
                             }
                             // Si el usuario ganó la partida anterior (consecutiveBotWins == 0):
                             else
                             {
-                                // El usuario viene de ganar, jugar con la probabilidad objetivo de la casa (60% bot / 40% usuario)
                                 newgame.MustFavorUserToBreakStreak = false;
-                                Console.WriteLine($"[BotDailyBalance] Usuario {newgame.NamePOne} ganó su partida anterior. Balance diario actual: {todayBotWins}W/{todayUserWins}L (Bot: {todayBotWinRate:P1}). Juego competitivo con ventaja gradual de la casa (60/40).");
+                                Console.WriteLine($"[BotDailyBalance] Usuario {newgame.NamePOne} ganó su partida anterior. Balance diario actual: {todayBotWins}W/{todayUserWins}L (Bot: {todayBotWinRate:P1}, Casa: {todayHouseProfit} 🪙). Casa defiende objetivo 60/40.");
                             }
                         }
                     }
