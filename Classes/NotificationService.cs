@@ -11,7 +11,7 @@ namespace PericonAPI.Classes
 {
     public interface INotificationService
     {
-        Task SendRechargeNotificationAsync(string username, decimal amountBs, int coins, string reference, string? receiptImageUrl);
+        Task SendRechargeNotificationAsync(string username, decimal amountBs, int coins, string reference, string? receiptImageUrl, bool isAutoApproved = false, string? reason = null);
         Task SendWithdrawalNotificationAsync(string username, decimal amountBs, int coins, string bankName, string phone, string idCard);
     }
 
@@ -30,7 +30,7 @@ namespace PericonAPI.Classes
             _webRootPath = env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot");
         }
 
-        public async Task SendRechargeNotificationAsync(string username, decimal amountBs, int coins, string reference, string? receiptImageUrl)
+        public async Task SendRechargeNotificationAsync(string username, decimal amountBs, int coins, string reference, string? receiptImageUrl, bool isAutoApproved = false, string? reason = null)
         {
             try
             {
@@ -38,22 +38,43 @@ namespace PericonAPI.Classes
                 bool enabled = section.GetValue<bool>("Enabled", true);
                 if (!enabled) return;
 
-                // 1. Notificación WhatsApp
+                string headerTitle = isAutoApproved
+                    ? "✅ *PERICÓN: RECARGA APROBADA AL INSTANTE* ⚡"
+                    : "⚠️ *PERICÓN: RECARGA EN REVISIÓN MANUAL* 🔍";
+
+                string statusDesc = isAutoApproved
+                    ? "*Estado:* Aprobado y acreditado automáticamente por Banco del Tesoro (Caja 03)."
+                    : $"*Estado:* En Revisión Manual.\n*Detalle del Banco:* {reason ?? "Pago no confirmado de forma automática en Tesoro Pagos."}";
+
+                string actionCall = isAutoApproved
+                    ? "_Acreditación instantánea efectuada con éxito._"
+                    : "👉 *Acción:* Revisa el capture y aprueba o rechaza en el panel:\nhttps://elpericon.com/admin";
+
+                string notifyMessage = $"{headerTitle}\n\n" +
+                                       $"*Usuario:* {username}\n" +
+                                       $"*Monto:* {amountBs:N2} Bs. ({coins:N0} Monedas)\n" +
+                                       $"*Referencia:* {reference}\n" +
+                                       $"{statusDesc}\n" +
+                                       $"*Fecha:* {VenezuelaTime.Now:dd/MM/yyyy hh:mm tt} (Hora Vzla)\n\n" +
+                                       $"{actionCall}";
+
+                // 1. Notificación WhatsApp (CallMeBot)
                 var waPhone = section["WhatsAppPhone"];
                 var waApiKey = section["WhatsAppApiKey"];
                 if (!string.IsNullOrWhiteSpace(waPhone) && !string.IsNullOrWhiteSpace(waApiKey))
                 {
-                    string waMessage = $"*PERICÓN: NUEVA RECARGA REPORTADA*\n\n" +
-                                      $"*Usuario:* {username}\n" +
-                                      $"*Monto:* {amountBs:N2} Bs. ({coins:N0} Monedas)\n" +
-                                      $"*Referencia:* {reference}\n" +
-                                      $"*Fecha:* {DateTime.UtcNow:dd/MM/yyyy HH:mm} UTC\n\n" +
-                                      $"Revisa y aprueba en el panel:\nhttps://elpericon.com/admin";
-
-                    await SendWhatsAppAsync(waPhone, waApiKey, waMessage);
+                    await SendWhatsAppAsync(waPhone, waApiKey, notifyMessage);
                 }
 
-                // 2. Notificación Correo Electrónico
+                // 2. Notificación Bot de Telegram
+                var tgToken = section["TelegramBotToken"] ?? Environment.GetEnvironmentVariable("TELEGRAM_BOT_TOKEN");
+                var tgChatId = section["TelegramChatId"] ?? Environment.GetEnvironmentVariable("TELEGRAM_CHAT_ID");
+                if (!string.IsNullOrWhiteSpace(tgToken) && !string.IsNullOrWhiteSpace(tgChatId))
+                {
+                    await SendTelegramAsync(tgToken, tgChatId, notifyMessage);
+                }
+
+                // 3. Notificación Correo Electrónico
                 var adminEmail = section["AdminEmail"] ?? "narutopewi@gmail.com";
                 var smtpUser = section["SmtpUser"] ?? adminEmail;
                 var smtpPass = section["SmtpPass"];
@@ -182,6 +203,26 @@ namespace PericonAPI.Classes
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "No se pudo enviar el WhatsApp a través de CallMeBot");
+            }
+        }
+
+        private async Task SendTelegramAsync(string botToken, string chatId, string message)
+        {
+            try
+            {
+                var url = $"https://api.telegram.org/bot{botToken}/sendMessage";
+                var parameters = new System.Collections.Generic.Dictionary<string, string>
+                {
+                    { "chat_id", chatId },
+                    { "text", message },
+                    { "parse_mode", "Markdown" }
+                };
+                var response = await _httpClient.PostAsync(url, new FormUrlEncodedContent(parameters));
+                _logger.LogInformation("Telegram Bot notification response status: {StatusCode}", response.StatusCode);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "No se pudo enviar la notificación por Telegram Bot");
             }
         }
 

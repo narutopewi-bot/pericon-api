@@ -29,17 +29,6 @@ namespace PericonAPI.Controllers
         [Consumes("multipart/form-data")]
         public async Task<IActionResult> ReportPayment([FromForm] PaymentReportFormDto dto)
         {
-            if (!VenezuelaTime.IsWithinOperatingHours())
-            {
-                return BadRequest(new
-                {
-                    message = VenezuelaTime.OperatingHoursMessage,
-                    isOutsideHours = true,
-                    currentTimeVenezuela = VenezuelaTime.Now.ToString("hh:mm tt"),
-                    operatingHours = "6:00 AM a 9:30 PM (Hora de Venezuela)"
-                });
-            }
-
             if (dto.AmountBs <= 0)
             {
                 return BadRequest(new { message = "El monto de recarga debe ser un número positivo mayor a 0." });
@@ -143,16 +132,18 @@ namespace PericonAPI.Controllers
 
             // Intentar validación automática inmediata con Banco del Tesoro (Caja 03)
             bool isAutoApproved = false;
+            string? bankMsg = null;
             try
             {
-                var (valSuccess, valApproved, bankMsg) = await _tesoroPagosService.ValidatePaymentAsync(
+                var valResult = await _tesoroPagosService.ValidatePaymentAsync(
                     recharge.AmountBs,
                     dto.OriginBank,
                     dto.OriginPhone,
                     recharge.Reference
                 );
+                bankMsg = valResult.Message;
 
-                if (valApproved)
+                if (valResult.Approved)
                 {
                     isAutoApproved = true;
                     recharge.Status = "APROBADO";
@@ -165,6 +156,7 @@ namespace PericonAPI.Controllers
             catch (Exception ex)
             {
                 Console.WriteLine($"[Tesoro Auto-Validation Error] {ex.Message}");
+                bankMsg = ex.Message;
             }
 
             _ = _notificationService.SendRechargeNotificationAsync(
@@ -172,7 +164,9 @@ namespace PericonAPI.Controllers
                 recharge.AmountBs,
                 recharge.CoinsAmount,
                 recharge.Reference,
-                recharge.ReceiptImageUrl
+                recharge.ReceiptImageUrl,
+                isAutoApproved,
+                bankMsg
             );
 
             if (isAutoApproved)
@@ -209,17 +203,6 @@ namespace PericonAPI.Controllers
         [HttpPost("report-json")]
         public async Task<IActionResult> ReportPaymentJson([FromBody] PaymentReportJsonDto dto)
         {
-            if (!VenezuelaTime.IsWithinOperatingHours())
-            {
-                return BadRequest(new
-                {
-                    message = VenezuelaTime.OperatingHoursMessage,
-                    isOutsideHours = true,
-                    currentTimeVenezuela = VenezuelaTime.Now.ToString("hh:mm tt"),
-                    operatingHours = "6:00 AM a 9:30 PM (Hora de Venezuela)"
-                });
-            }
-
             if (dto.AmountBs <= 0)
             {
                 return BadRequest(new { message = "El monto de recarga debe ser un número positivo mayor a 0." });
@@ -320,16 +303,18 @@ namespace PericonAPI.Controllers
 
             // Intentar validación automática inmediata con Banco del Tesoro (Caja 03)
             bool isAutoApproved = false;
+            string? bankMsg = null;
             try
             {
-                var (valSuccess, valApproved, bankMsg) = await _tesoroPagosService.ValidatePaymentAsync(
+                var valResult = await _tesoroPagosService.ValidatePaymentAsync(
                     recharge.AmountBs,
                     dto.OriginBank,
                     dto.OriginPhone,
                     recharge.Reference
                 );
+                bankMsg = valResult.Message;
 
-                if (valApproved)
+                if (valResult.Approved)
                 {
                     isAutoApproved = true;
                     recharge.Status = "APROBADO";
@@ -342,6 +327,7 @@ namespace PericonAPI.Controllers
             catch (Exception ex)
             {
                 Console.WriteLine($"[Tesoro Auto-Validation Error JSON] {ex.Message}");
+                bankMsg = ex.Message;
             }
 
             _ = _notificationService.SendRechargeNotificationAsync(
@@ -349,7 +335,9 @@ namespace PericonAPI.Controllers
                 recharge.AmountBs,
                 recharge.CoinsAmount,
                 recharge.Reference,
-                recharge.ReceiptImageUrl
+                recharge.ReceiptImageUrl,
+                isAutoApproved,
+                bankMsg
             );
 
             if (isAutoApproved)
