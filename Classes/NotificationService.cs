@@ -39,16 +39,16 @@ namespace PericonAPI.Classes
                 if (!enabled) return;
 
                 string headerTitle = isAutoApproved
-                    ? "✅ *PERICÓN: RECARGA APROBADA AL INSTANTE* ⚡"
-                    : "⚠️ *PERICÓN: RECARGA EN REVISIÓN MANUAL* 🔍";
+                    ? "✅ *PERICÓN: RECARGA APROBADA Y PAGADA AL INSTANTE* ⚡"
+                    : "🚨 *ALERTA PERICÓN: RECARGA CON ERROR / NO COINCIDE* ⚠️";
 
                 string statusDesc = isAutoApproved
-                    ? "*Estado:* Aprobado y acreditado automáticamente por Banco del Tesoro (Caja 03)."
-                    : $"*Estado:* En Revisión Manual.\n*Detalle del Banco:* {reason ?? "Pago no confirmado de forma automática en Tesoro Pagos."}";
+                    ? "*Estado:* ✅ APROBADA Y ACREDITADA AUTOMÁTICAMENTE por Banco del Tesoro (Caja 03)."
+                    : $"*Estado:* ⏳ EN REVISIÓN MANUAL (NO se entregaron monedas).\n*Motivo:* {reason ?? "El pago no coincide, no existe o no fue encontrado en el banco."}";
 
                 string actionCall = isAutoApproved
-                    ? "_Acreditación instantánea efectuada con éxito._"
-                    : "👉 *Acción:* Revisa el capture y aprueba o rechaza en el panel:\nhttps://elpericon.com/admin";
+                    ? "✨ _Esta recarga ya fue pagada y acreditada al usuario en vivo. ¡NO tienes que revisar ni hacer nada en el panel!_"
+                    : "👉 *ACCIÓN REQUERIDA:* Chequea manualmente el comprobante y aprueba o rechaza en el panel:\nhttps://elpericon.com/admin";
 
                 string notifyMessage = $"{headerTitle}\n\n" +
                                        $"*Usuario:* {username}\n" +
@@ -81,22 +81,31 @@ namespace PericonAPI.Classes
 
                 if (!string.IsNullOrWhiteSpace(smtpPass))
                 {
-                    string subject = $"🔔 [El Pericón] Nueva Recarga: {username} ({amountBs:N2} Bs.)";
+                    string subject = isAutoApproved
+                        ? $"✅ [El Pericón] Recarga APROBADA Automáticamente: {username} ({amountBs:N2} Bs.)"
+                        : $"🚨 [El Pericón] Recarga en REVISIÓN MANUAL: {username} ({amountBs:N2} Bs.)";
+
+                    string bannerColor = isAutoApproved ? "#10b981" : "#ef4444";
+                    string bannerTitle = isAutoApproved ? "✅ Recarga Aprobada y Pagada Automáticamente" : "🚨 Recarga Requiere Revisión Manual";
+                    string bannerSub = isAutoApproved ? "Validada y acreditada al instante por Banco del Tesoro (Caja 03). ¡No requiere acción!" : "El pago no coincidió con el banco. Requiere verificación manual del capture.";
+
                     string bodyHtml = $@"
                     <div style='font-family: Arial, sans-serif; background-color: #0f172a; color: #f8fafc; padding: 24px; border-radius: 12px; max-width: 600px;'>
-                        <div style='border-bottom: 2px solid #eab308; padding-bottom: 12px; margin-bottom: 16px;'>
-                            <h2 style='color: #eab308; margin: 0;'>🔔 Nueva Recarga Reportada</h2>
-                            <p style='color: #94a3b8; margin: 4px 0 0 0; font-size: 13px;'>Plataforma Oficial El Pericón</p>
+                        <div style='border-bottom: 2px solid {bannerColor}; padding-bottom: 12px; margin-bottom: 16px;'>
+                            <h2 style='color: {bannerColor}; margin: 0;'>{bannerTitle}</h2>
+                            <p style='color: #94a3b8; margin: 4px 0 0 0; font-size: 13px;'>{bannerSub}</p>
                         </div>
                         <div style='background-color: #1e293b; padding: 16px; border-radius: 8px; margin-bottom: 16px;'>
                             <p style='margin: 8px 0;'><strong>👤 Usuario:</strong> <span style='color: #38bdf8;'>{username}</span></p>
                             <p style='margin: 8px 0;'><strong>💰 Monto:</strong> <span style='color: #4ade80; font-size: 18px; font-weight: bold;'>{amountBs:N2} Bs.</span> ({coins:N0} Monedas)</p>
                             <p style='margin: 8px 0;'><strong>📝 Referencia:</strong> <code style='background: #334155; padding: 2px 6px; border-radius: 4px;'>{reference}</code></p>
-                            <p style='margin: 8px 0;'><strong>📅 Fecha:</strong> {DateTime.UtcNow:dd/MM/yyyy HH:mm:ss} UTC</p>
+                            <p style='margin: 8px 0;'><strong>📅 Fecha:</strong> {VenezuelaTime.Now:dd/MM/yyyy hh:mm:ss tt} (Hora Vzla)</p>
+                            <p style='margin: 8px 0;'><strong>⚙️ Estado:</strong> <span style='color: {bannerColor}; font-weight: bold;'>{(isAutoApproved ? "APROBADO AUTOMÁTICAMENTE" : "EN REVISIÓN MANUAL")}</span></p>
+                            {(!isAutoApproved ? $"<p style='margin: 8px 0; color: #fca5a5;'><strong>⚠️ Motivo:</strong> {reason ?? "No encontrado en Banco del Tesoro o monto no coincide"}</p>" : "")}
                         </div>
                         <p style='margin-bottom: 20px;'>
-                            <a href='https://elpericon.com/admin' style='background: linear-gradient(135deg, #eab308, #ca8a04); color: #000; padding: 12px 24px; text-decoration: none; font-weight: bold; border-radius: 8px; display: inline-block;'>
-                                Ir al Panel Administrativo para Aprobar
+                            <a href='https://elpericon.com/admin' style='background: linear-gradient(135deg, {bannerColor}, #b91c1c); color: #fff; padding: 12px 24px; text-decoration: none; font-weight: bold; border-radius: 8px; display: inline-block;'>
+                                {(isAutoApproved ? "Ver en Panel Administrativo" : "Ir al Panel para Aprobar o Rechazar")}
                             </a>
                         </p>
                     </div>";
