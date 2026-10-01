@@ -13,12 +13,14 @@ namespace PericonAPI.Controllers
         private readonly AppDbContext _context;
         private readonly IWebHostEnvironment _env;
         private readonly INotificationService _notificationService;
+        private readonly ITesoroPagosService _tesoroPagosService;
 
-        public PaymentController(AppDbContext context, IWebHostEnvironment env, INotificationService notificationService)
+        public PaymentController(AppDbContext context, IWebHostEnvironment env, INotificationService notificationService, ITesoroPagosService tesoroPagosService)
         {
             _context = context;
             _env = env;
             _notificationService = notificationService;
+            _tesoroPagosService = tesoroPagosService;
         }
 
         public const decimal MIN_RECHARGE_BS = 800m;
@@ -139,6 +141,32 @@ namespace PericonAPI.Controllers
             recharge.ReceiptImageUrl = $"/api/payment/receipt/{recharge.Id}";
             await _context.SaveChangesAsync();
 
+            // Intentar validación automática inmediata con Banco del Tesoro (Caja 03)
+            bool isAutoApproved = false;
+            try
+            {
+                var (valSuccess, valApproved, bankMsg) = await _tesoroPagosService.ValidatePaymentAsync(
+                    recharge.AmountBs,
+                    dto.OriginBank,
+                    dto.OriginPhone,
+                    recharge.Reference
+                );
+
+                if (valApproved)
+                {
+                    isAutoApproved = true;
+                    recharge.Status = "APROBADO";
+                    recharge.ProcessedAt = VenezuelaTime.Now;
+                    recharge.AdminNotes = "Aprobado automáticamente por integración Tesoro Pagos (Caja 03)";
+                    user.Coins += recharge.CoinsAmount;
+                    await _context.SaveChangesAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Tesoro Auto-Validation Error] {ex.Message}");
+            }
+
             _ = _notificationService.SendRechargeNotificationAsync(
                 user.Username,
                 recharge.AmountBs,
@@ -147,6 +175,23 @@ namespace PericonAPI.Controllers
                 recharge.ReceiptImageUrl
             );
 
+            if (isAutoApproved)
+            {
+                return Ok(new
+                {
+                    id = recharge.Id,
+                    amountBs = recharge.AmountBs,
+                    coinsAmount = recharge.CoinsAmount,
+                    reference = recharge.Reference,
+                    status = recharge.Status,
+                    isAutoApproved = true,
+                    receiptUrl = recharge.ReceiptImageUrl,
+                    createdAt = recharge.CreatedAt,
+                    userNewCoins = user.Coins,
+                    message = $"¡Pago verificado automáticamente por Banco del Tesoro! Se te han acreditado {recharge.CoinsAmount} monedas al instante."
+                });
+            }
+
             return Ok(new
             {
                 id = recharge.Id,
@@ -154,6 +199,7 @@ namespace PericonAPI.Controllers
                 coinsAmount = recharge.CoinsAmount,
                 reference = recharge.Reference,
                 status = recharge.Status,
+                isAutoApproved = false,
                 receiptUrl = recharge.ReceiptImageUrl,
                 createdAt = recharge.CreatedAt,
                 message = $"¡Comprobante de {recharge.CoinsAmount} monedas recibido! Tu pago está pendiente de aprobación por el administrador."
@@ -272,6 +318,32 @@ namespace PericonAPI.Controllers
             recharge.ReceiptImageUrl = $"/api/payment/receipt/{recharge.Id}";
             await _context.SaveChangesAsync();
 
+            // Intentar validación automática inmediata con Banco del Tesoro (Caja 03)
+            bool isAutoApproved = false;
+            try
+            {
+                var (valSuccess, valApproved, bankMsg) = await _tesoroPagosService.ValidatePaymentAsync(
+                    recharge.AmountBs,
+                    dto.OriginBank,
+                    dto.OriginPhone,
+                    recharge.Reference
+                );
+
+                if (valApproved)
+                {
+                    isAutoApproved = true;
+                    recharge.Status = "APROBADO";
+                    recharge.ProcessedAt = VenezuelaTime.Now;
+                    recharge.AdminNotes = "Aprobado automáticamente por integración Tesoro Pagos (Caja 03)";
+                    user.Coins += recharge.CoinsAmount;
+                    await _context.SaveChangesAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Tesoro Auto-Validation Error JSON] {ex.Message}");
+            }
+
             _ = _notificationService.SendRechargeNotificationAsync(
                 user.Username,
                 recharge.AmountBs,
@@ -280,6 +352,23 @@ namespace PericonAPI.Controllers
                 recharge.ReceiptImageUrl
             );
 
+            if (isAutoApproved)
+            {
+                return Ok(new
+                {
+                    id = recharge.Id,
+                    amountBs = recharge.AmountBs,
+                    coinsAmount = recharge.CoinsAmount,
+                    reference = recharge.Reference,
+                    status = recharge.Status,
+                    isAutoApproved = true,
+                    receiptUrl = recharge.ReceiptImageUrl,
+                    createdAt = recharge.CreatedAt,
+                    userNewCoins = user.Coins,
+                    message = $"¡Pago verificado automáticamente por Banco del Tesoro! Se te han acreditado {recharge.CoinsAmount} monedas al instante."
+                });
+            }
+
             return Ok(new
             {
                 id = recharge.Id,
@@ -287,6 +376,7 @@ namespace PericonAPI.Controllers
                 coinsAmount = recharge.CoinsAmount,
                 reference = recharge.Reference,
                 status = recharge.Status,
+                isAutoApproved = false,
                 receiptUrl = recharge.ReceiptImageUrl,
                 createdAt = recharge.CreatedAt,
                 message = $"¡Comprobante de {recharge.CoinsAmount} monedas recibido! Tu pago está pendiente de aprobación por el administrador."
@@ -558,6 +648,8 @@ namespace PericonAPI.Controllers
         public decimal AmountBs { get; set; }
         public string Reference { get; set; } = string.Empty;
         public IFormFile? ReceiptImage { get; set; }
+        public string? OriginBank { get; set; }
+        public string? OriginPhone { get; set; }
     }
 
     public class PaymentReportJsonDto
@@ -566,6 +658,8 @@ namespace PericonAPI.Controllers
         public decimal AmountBs { get; set; }
         public string Reference { get; set; } = string.Empty;
         public string? Base64Image { get; set; }
+        public string? OriginBank { get; set; }
+        public string? OriginPhone { get; set; }
     }
 
     public class PaymentWithdrawDto

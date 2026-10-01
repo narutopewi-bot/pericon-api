@@ -92,6 +92,7 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddHttpClient();
 builder.Services.AddScoped<INotificationService, NotificationService>();
+builder.Services.AddSingleton<ITesoroPagosService, TesoroPagosService>();
 
 var app = builder.Build();
 
@@ -548,6 +549,30 @@ using (var scope = app.Services.CreateScope())
     catch (Exception ex)
     {
         Console.WriteLine($"[PromoCode Error] {ex.Message}");
+    }
+
+    // Anuncio Global Oficial: Cambio a Banco del Tesoro y Acreditación Automática
+    try
+    {
+        var existingBancoTesoroAnnouncement = db.SystemAnnouncements.FirstOrDefault(a => a.Title.Contains("BANCO DEL TESORO"));
+        if (existingBancoTesoroAnnouncement == null)
+        {
+            db.SystemAnnouncements.Add(new SystemAnnouncement
+            {
+                Title = "🏦 ¡NUEVO BANCO RECEPTOR: BANCO DEL TESORO (0163)!",
+                Message = "¡Atención a todos los jugadores! A partir de ahora las recargas de saldo se realizan a Banco del Tesoro (0163) | Teléfono: 0412-9278135 | Cédula: 26554121. ¡Tus pagos ahora se validan y acreditan automáticamente en segundos al reportarlos!",
+                Type = "alerta",
+                IsActive = true,
+                CreatedAt = DateTime.UtcNow,
+                CreatedBy = "Sistema El Pericón"
+            });
+            db.SaveChanges();
+            Console.WriteLine("[Announcements] Anuncio de Banco del Tesoro activado con éxito.");
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[Announcements Error] {ex.Message}");
     }
 
     // Corregir partidas de Salas en MatchBetRecords (por ejemplo #136) para que reflejen 100% de comisión para la casa
