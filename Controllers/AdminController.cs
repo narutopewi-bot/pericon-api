@@ -138,15 +138,15 @@ namespace PericonAPI.Controllers
             }
             catch { }
 
-            string mode = GamePlayOneVsOne.BotDifficultyMode ?? "medio";
+            string mode = GamePlayOneVsOne.BotDifficultyMode ?? "facil";
             double houseAdvantage = GamePlayOneVsOne.BotAdvantageProbability;
             double userAdvantage = Math.Round(1.0 - houseAdvantage, 2);
 
             string description = mode switch
             {
-                "facil" => "Modo Fácil (50% Casa / 50% Jugador - 5 de cada 10 para los jugadores)",
+                "facil" => "Modo Fácil (40% Casa / 60% Jugador - 6 de cada 10 a favor de los jugadores)",
                 "dificil" => "Modo Difícil (65% Casa / 35% Jugador - Mayor dificultad)",
-                _ => "Modo Medio (60% Casa / 40% Jugador - Balance gradual 60-40)"
+                _ => "Modo Medio (50% Casa / 50% Jugador - Balance equitativo)"
             };
 
             return Ok(new
@@ -162,7 +162,7 @@ namespace PericonAPI.Controllers
 
         public class SetBotDifficultyRequest
         {
-            public string Mode { get; set; } = "medio";
+            public string Mode { get; set; } = "facil";
         }
 
         [HttpPost("bot-difficulty")]
@@ -207,9 +207,9 @@ namespace PericonAPI.Controllers
 
             string description = cleanMode switch
             {
-                "facil" => "Modo Fácil activado (50% Casa / 50% Jugador)",
+                "facil" => "Modo Fácil activado (40% Casa / 60% Jugador - A favor del usuario)",
                 "dificil" => "Modo Difícil activado (65% Casa / 35% Jugador)",
-                _ => "Modo Medio activado (60% Casa / 40% Jugador)"
+                _ => "Modo Medio activado (50% Casa / 50% Jugador - Balance equitativo)"
             };
 
             return Ok(new

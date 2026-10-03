@@ -84,10 +84,32 @@ namespace PericonAPI.Hubs
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly IHubContext<MessagingHub> _hubContext;
         private static IHubContext<MessagingHub>? _staticHubContext;
+        private static IServiceScopeFactory? _staticScopeFactory;
+        private static System.Threading.Timer? _gameScavengerTimer;
+        private static readonly object _scavengerLock = new object();
 
         public static void SetHubContext(IHubContext<MessagingHub> context)
         {
             _staticHubContext = context;
+        }
+
+        public static void InitializeScavenger(IHubContext<MessagingHub> context, IServiceScopeFactory scopeFactory)
+        {
+            _staticHubContext = context;
+            _staticScopeFactory = scopeFactory;
+            StartScavenger();
+        }
+
+        public static void StartScavenger()
+        {
+            lock (_scavengerLock)
+            {
+                if (_gameScavengerTimer == null)
+                {
+                    _gameScavengerTimer = new System.Threading.Timer(ScavengeAbandonedGames, null, TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(10));
+                    Console.WriteLine("[GameScavenger] Centinela automático de partidas 1vs1 iniciado (revisión cada 10s).");
+                }
+            }
         }
 
         public MessagingHub(IServiceScopeFactory scopeFactory, IHubContext<MessagingHub> hubContext)
@@ -95,6 +117,8 @@ namespace PericonAPI.Hubs
             _scopeFactory = scopeFactory;
             _hubContext = hubContext;
             _staticHubContext = hubContext;
+            _staticScopeFactory = scopeFactory;
+            StartScavenger();
         }
 
         private static List<GamePlayOneVsOne> games = new List<GamePlayOneVsOne>(); 
@@ -290,7 +314,7 @@ namespace PericonAPI.Hubs
         }
 
         // 
-        public GamePlayer SearchPlayer(string id)
+        public static GamePlayer SearchPlayer(string id)
         {
             lock (users)
             {
@@ -664,6 +688,9 @@ namespace PericonAPI.Hubs
             newgame.HandStarter = startingPlayer;
             newgame.PlayerTurn = (startingPlayer == 1);
             newgame.HandCount = 1;
+            newgame.LastTurnActionAt = DateTime.UtcNow;
+            newgame.P1DisconnectedAt = null;
+            newgame.P2DisconnectedAt = null;
 
             newgame.Deck.RandomCards();
             newgame.Id = newgame.GenerateSeed(games);
@@ -732,6 +759,7 @@ namespace PericonAPI.Hubs
             games[numg].HandStarter = (games[numg].HandStarter == 1) ? 2 : 1;
             games[numg].PlayerTurn = (games[numg].HandStarter == 1);
             games[numg].HandCount++;
+            games[numg].LastTurnActionAt = DateTime.UtcNow;
 
             games[numg].Deck.RandomCards();
             games[numg].ShuffleCards_1vs1();
@@ -1011,8 +1039,16 @@ namespace PericonAPI.Hubs
                 targetGame.IsActive = true;
             }
 
-            if (isPlayerOne) games[numg].IdPOne = Context.ConnectionId;
-            else games[numg].IdPTwo = Context.ConnectionId;
+            if (isPlayerOne)
+            {
+                games[numg].IdPOne = Context.ConnectionId;
+                games[numg].P1DisconnectedAt = null;
+            }
+            else
+            {
+                games[numg].IdPTwo = Context.ConnectionId;
+                games[numg].P2DisconnectedAt = null;
+            }
 
             await Groups.AddToGroupAsync(Context.ConnectionId, $"game1vs1_{gameId}");
 
@@ -1049,6 +1085,28 @@ namespace PericonAPI.Hubs
                 leadMove = games[numg].CurrentLeadMove,
                 pendingAsk = games[numg].PendingAsk369Message
             });
+
+            // Resincronización inmediata de cartas de la mano y triunfo de la mesa para evitar que la interfaz quede congelada
+            if (!string.IsNullOrEmpty(targetGame.InitHand))
+            {
+                string pStarter = (isPlayerOne ? (targetGame.HandStarter == 1 ? "1" : "0") : (targetGame.HandStarter == 2 ? "1" : "0"));
+                string pScore = $"-{targetGame.PointsOne}-{targetGame.PointsTwo}";
+                GameMessage resyncHand = new GameMessage
+                {
+                    game = gameId,
+                    order = 87,
+                    content = MaskInitHand1vs1(targetGame.InitHand, isPlayerOne) + "-" + pStarter + pScore
+                };
+                await Clients.Client(Context.ConnectionId).SendAsync("setChangeHand", resyncHand);
+                await Clients.Client(Context.ConnectionId).SendAsync("GameHandUpdated1vs1", new
+                {
+                    game = gameId,
+                    handCards = MaskInitHand1vs1(targetGame.InitHand, isPlayerOne),
+                    handStarter = targetGame.HandStarter,
+                    pointsOne = targetGame.PointsOne,
+                    pointsTwo = targetGame.PointsTwo
+                });
+            }
 
             // Sincronización proactiva: si hay una carta de salida (orden 84) en la mesa, entregársela al reconectado
             if (games[numg].CurrentLeadMove != null)
@@ -1221,6 +1279,7 @@ namespace PericonAPI.Hubs
             games[numg].HandStarter = (games[numg].HandStarter == 1) ? 2 : 1;
             games[numg].PlayerTurn = (games[numg].HandStarter == 1);
             games[numg].HandCount++;
+            games[numg].LastTurnActionAt = DateTime.UtcNow;
             games[numg].CurrentStake = 1;
             games[numg].LastStakeAsker = 0;
             games[numg].Ask369 = 0;
@@ -1278,6 +1337,7 @@ namespace PericonAPI.Hubs
             GameLogger.Log(move.game, "AcceptTumba1vs1", $"Cliente: {Context.ConnectionId}");
             int numg = FindGame1vs1(move.game);
             if (numg < 0 || numg >= games.Count) return;
+            games[numg].LastTurnActionAt = DateTime.UtcNow;
 
             string caller = Context.ConnectionId;
             bool callerIsP1 = (caller == games[numg].IdPOne);
@@ -1588,6 +1648,7 @@ namespace PericonAPI.Hubs
                 games[numg].CurrentLeadMove = sentence;
                 games[numg].LeadPlayer = isPlayerOne ? 1 : 2;
                 games[numg].PlayerTurn = !isPlayerOne; // Pasa el turno al contrincante que responde
+                games[numg].LastTurnActionAt = DateTime.UtcNow;
 
                 Console.WriteLine($"[RequestCard1vs1 LEAD] Jugador {(isPlayerOne ? 1 : 2)} lanzó carta {leadCardId}. Enviando 84 a rival ({targetOpp})");
 
@@ -1694,6 +1755,7 @@ namespace PericonAPI.Hubs
 
                 // Sincronizar autoritativamente el turno para la siguiente baza:
                 games[numg].PlayerTurn = trickWinnerIsPlayerOne;
+                games[numg].LastTurnActionAt = DateTime.UtcNow;
 
                 int stake = games[numg].CurrentStake > 0 ? games[numg].CurrentStake : 1;
 
@@ -1849,6 +1911,7 @@ namespace PericonAPI.Hubs
             bool wasInTumbaOne = games[numg].IsTumbaOne;
             bool wasInTumbaTwo = games[numg].IsTumbaTwo;
             bool isGameOver = false;
+            games[numg].LastTurnActionAt = DateTime.UtcNow;
 
             if (callerIsP1)
             {
@@ -2010,8 +2073,21 @@ namespace PericonAPI.Hubs
                 return;
             }
 
-            // Blindaje temporal estricto: Validación del período de gracia (30s) y turno de 30s (60s total)
             DateTime? rivalDisconnectedAt = callerIsP1 ? game.P2DisconnectedAt : game.P1DisconnectedAt;
+            bool isCallerTurn = callerIsP1 ? game.PlayerTurn : !game.PlayerTurn;
+
+            // BLINDAJE CRÍTICO DE TURNO: Si el rival NO está desconectado y el reclamo es por inactividad de turno,
+            // NUNCA permitir que el jugador cuyo turno está activo reclame victoria!
+            if (!rivalDisconnectedAt.HasValue && isCallerTurn)
+            {
+                Console.WriteLine($"[ClaimOpponentTimeout1vs1] RECHAZADO para {caller}: Reclamo inválido en turno propio.");
+                await Clients.Caller.SendAsync("ClaimRejected", new { 
+                    message = "No puedes reclamar victoria en tu propio turno de juego. Te corresponde lanzar una carta." 
+                });
+                return;
+            }
+
+            // Blindaje temporal estricto: Validación del período de gracia (30s) y turno de 30s
             if (rivalDisconnectedAt.HasValue)
             {
                 var elapsedDisconnect = (DateTime.UtcNow - rivalDisconnectedAt.Value).TotalSeconds;
@@ -2027,11 +2103,11 @@ namespace PericonAPI.Hubs
             }
             else
             {
-                // Inactividad durante el turno regular: debe haber transcurrido al menos 55s (30s turno + 25s gracia)
+                // Inactividad durante el turno regular: debe haber transcurrido al menos 50s desde la última acción de turno
                 var elapsedInactivity = (DateTime.UtcNow - game.LastTurnActionAt).TotalSeconds;
-                if (elapsedInactivity < 55)
+                if (elapsedInactivity < 50)
                 {
-                    int remain = Math.Max(1, 60 - (int)elapsedInactivity);
+                    int remain = Math.Max(1, 55 - (int)elapsedInactivity);
                     Console.WriteLine($"[ClaimOpponentTimeout1vs1] RECHAZADO para {caller}: Turno y gracia activos ({remain}s restantes).");
                     await Clients.Caller.SendAsync("ClaimRejected", new { 
                         message = $"Tu contrincante aún tiene tiempo de juego y gracia activo ({remain}s restantes)." 
@@ -2073,6 +2149,14 @@ namespace PericonAPI.Hubs
         /// - Notifica a ambos jugadores con su saldo actualizado.
         /// </summary>
         private async Task ProcessMatchPayout(int gameIndex, string winnerConnectionId, string loserConnectionId, string reason)
+        {
+            await ProcessMatchPayoutCore(gameIndex, winnerConnectionId, loserConnectionId, reason);
+        }
+
+        /// <summary>
+        /// Liquida autoritativamente las apuestas de la partida 1 vs 1. Puede ser invocado tanto por SignalR como por el Scavenger en segundo plano.
+        /// </summary>
+        private static async Task ProcessMatchPayoutCore(int gameIndex, string winnerConnectionId, string loserConnectionId, string reason)
         {
             if (gameIndex < 0 || gameIndex >= games.Count) return;
             var game = games[gameIndex];
@@ -2119,8 +2203,8 @@ namespace PericonAPI.Hubs
             }
             else
             {
-                // En duelos de emparejamiento público: 20% para la casa, 80% para el ganador
-                houseCommission = (int)Math.Round(totalPot * 0.20);
+                // En duelos de emparejamiento público: 10% para la casa, 90% para el ganador
+                houseCommission = (int)Math.Round(totalPot * 0.10);
                 winnerPrize = totalPot - houseCommission;
             }
 
@@ -2138,242 +2222,188 @@ namespace PericonAPI.Hubs
             int? finalWinnerDbId = null;
             int? finalLoserDbId = null;
 
-            try
+            if (_staticScopeFactory != null)
             {
-                using (var scope = _scopeFactory.CreateScope())
+                try
                 {
-                    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-
-                    // Blindaje de base de datos contra cobros duplicados (idempotencia absoluta)
-                    bool alreadyPaidInDb = await db.MatchBetRecords.AnyAsync(m => m.GameId == game.Id);
-                    if (alreadyPaidInDb)
+                    using (var scope = _staticScopeFactory.CreateScope())
                     {
-                        Console.WriteLine($"[ProcessMatchPayout DB Guard] Ya existe registro en base de datos para GameId {game.Id}. Payout abortado para evitar duplicados.");
-                        return;
-                    }
+                        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-                    var winnerPlayer = SearchPlayer(winnerConnectionId);
-                    var loserPlayer = SearchPlayer(loserConnectionId);
-
-                    string winnerName = !string.IsNullOrEmpty(winnerPlayer.Name) && winnerPlayer.Name != "nulo"
-                        ? winnerPlayer.Name
-                        : ((winnerConnectionId == game.IdPOne) ? game.NamePOne : game.NamePTwo);
-
-                    string loserName = !string.IsNullOrEmpty(loserPlayer.Name) && loserPlayer.Name != "nulo"
-                        ? loserPlayer.Name
-                        : ((loserConnectionId == game.IdPOne) ? game.NamePOne : game.NamePTwo);
-
-                    string winnerEmail = winnerPlayer.Email ?? "";
-                    string loserEmail = loserPlayer.Email ?? "";
-
-                    string winnerUserId = (winnerConnectionId == game.IdPOne) ? game.UserIdPOne : game.UserIdPTwo;
-                    string loserUserId = (loserConnectionId == game.IdPOne) ? game.UserIdPOne : game.UserIdPTwo;
-
-                    var dbWinner = db.Users.FirstOrDefault(u => 
-                        (!string.IsNullOrEmpty(winnerUserId) && u.Id.ToString() == winnerUserId) ||
-                        (!string.IsNullOrEmpty(winnerName) && u.Username.ToLower() == winnerName.ToLower()) || 
-                        (!string.IsNullOrEmpty(winnerEmail) && u.Email.ToLower() == winnerEmail.ToLower()));
-
-                    var dbLoser = db.Users.FirstOrDefault(u => 
-                        (!string.IsNullOrEmpty(loserUserId) && u.Id.ToString() == loserUserId) ||
-                        (!string.IsNullOrEmpty(loserName) && u.Username.ToLower() == loserName.ToLower()) || 
-                        (!string.IsNullOrEmpty(loserEmail) && u.Email.ToLower() == loserEmail.ToLower()));
-
-                    if (dbWinner != null)
-                    {
-                        finalWinnerName = dbWinner.Username;
-                        finalWinnerDbId = dbWinner.Id;
-                    }
-                    else if (!string.IsNullOrEmpty(winnerName))
-                    {
-                        finalWinnerName = winnerName;
-                    }
-
-                    if (dbLoser != null)
-                    {
-                        finalLoserName = dbLoser.Username;
-                        finalLoserDbId = dbLoser.Id;
-                    }
-                    else if (!string.IsNullOrEmpty(loserName))
-                    {
-                        finalLoserName = loserName;
-                    }
-
-                    if (dbLoser != null)
-                    {
-                        int loserDeduction = Math.Min(dbLoser.Coins, bet);
-                        dbLoser.Coins -= loserDeduction;
-                        dbLoser.BonusCoins = Math.Max(0, dbLoser.BonusCoins - loserDeduction);
-                        dbLoser.Losses += 1;
-                        dbLoser.Level = dbLoser.GetCalculatedLevel();
-                        loserNewCoins = dbLoser.Coins;
-                        loserPlayer.Coins = loserNewCoins;
-                        loserWins = dbLoser.Wins;
-                        loserLosses = dbLoser.Losses;
-                        loserLevel = dbLoser.Level;
-                    }
-                    else
-                    {
-                        loserPlayer.Coins = Math.Max(0, loserPlayer.Coins - bet);
-                        loserNewCoins = loserPlayer.Coins;
-                        loserWins = 0;
-                        loserLosses = 1;
-                    }
-
-                    if (dbWinner != null)
-                    {
-                        if (isSala)
+                        // Blindaje de base de datos contra cobros duplicados (idempotencia absoluta)
+                        bool alreadyPaidInDb = await db.MatchBetRecords.AnyAsync(m => m.GameId == game.Id);
+                        if (alreadyPaidInDb)
                         {
-                            // En sala, ambos jugadores pagan la tarifa de sala de entrada (10 monedas) para la casa
-                            int winnerDeduction = Math.Min(dbWinner.Coins, bet);
-                            dbWinner.Coins -= winnerDeduction;
+                            Console.WriteLine($"[ProcessMatchPayout DB Guard] Ya existe registro en base de datos para GameId {game.Id}. Payout abortado para evitar duplicados.");
+                            return;
+                        }
+
+                        var winnerPlayer = SearchPlayer(winnerConnectionId);
+                        var loserPlayer = SearchPlayer(loserConnectionId);
+
+                        string winnerName = !string.IsNullOrEmpty(winnerPlayer.Name) && winnerPlayer.Name != "nulo"
+                            ? winnerPlayer.Name
+                            : ((winnerConnectionId == game.IdPOne) ? game.NamePOne : game.NamePTwo);
+
+                        string loserName = !string.IsNullOrEmpty(loserPlayer.Name) && loserPlayer.Name != "nulo"
+                            ? loserPlayer.Name
+                            : ((loserConnectionId == game.IdPOne) ? game.NamePOne : game.NamePTwo);
+
+                        string winnerEmail = winnerPlayer.Email ?? "";
+                        string loserEmail = loserPlayer.Email ?? "";
+
+                        string winnerUserId = (winnerConnectionId == game.IdPOne) ? game.UserIdPOne : game.UserIdPTwo;
+                        string loserUserId = (loserConnectionId == game.IdPOne) ? game.UserIdPOne : game.UserIdPTwo;
+
+                        var dbWinner = db.Users.FirstOrDefault(u => 
+                            (!string.IsNullOrEmpty(winnerUserId) && u.Id.ToString() == winnerUserId) ||
+                            (!string.IsNullOrEmpty(winnerName) && u.Username.ToLower() == winnerName.ToLower()) || 
+                            (!string.IsNullOrEmpty(winnerEmail) && u.Email.ToLower() == winnerEmail.ToLower()));
+
+                        var dbLoser = db.Users.FirstOrDefault(u => 
+                            (!string.IsNullOrEmpty(loserUserId) && u.Id.ToString() == loserUserId) ||
+                            (!string.IsNullOrEmpty(loserName) && u.Username.ToLower() == loserName.ToLower()) || 
+                            (!string.IsNullOrEmpty(loserEmail) && u.Email.ToLower() == loserEmail.ToLower()));
+
+                        if (dbWinner != null)
+                        {
+                            finalWinnerName = dbWinner.Username;
+                            finalWinnerDbId = dbWinner.Id;
+                        }
+                        else if (!string.IsNullOrEmpty(winnerName))
+                        {
+                            finalWinnerName = winnerName;
+                        }
+
+                        if (dbLoser != null)
+                        {
+                            finalLoserName = dbLoser.Username;
+                            finalLoserDbId = dbLoser.Id;
+                        }
+                        else if (!string.IsNullOrEmpty(loserName))
+                        {
+                            finalLoserName = loserName;
+                        }
+
+                        if (dbLoser != null)
+                        {
+                            int loserDeduction = Math.Min(dbLoser.Coins, bet);
+                            dbLoser.Coins -= loserDeduction;
+                            dbLoser.BonusCoins = Math.Max(0, dbLoser.BonusCoins - loserDeduction);
+                            dbLoser.Losses += 1;
+                            dbLoser.Level = dbLoser.GetCalculatedLevel();
+                            loserNewCoins = dbLoser.Coins;
+                            loserPlayer.Coins = loserNewCoins;
+                            loserWins = dbLoser.Wins;
+                            loserLosses = dbLoser.Losses;
+                            loserLevel = dbLoser.Level;
                         }
                         else
                         {
-                            int netWinnerGain = Math.Max(0, winnerPrize - bet);
-                            dbWinner.Coins += netWinnerGain;
+                            loserPlayer.Coins = Math.Max(0, loserPlayer.Coins - bet);
+                            loserNewCoins = loserPlayer.Coins;
+                            loserWins = 0;
+                            loserLosses = 1;
                         }
 
-                        dbWinner.Wins += 1;
-                        dbWinner.Level = dbWinner.GetCalculatedLevel();
-                        winnerNewCoins = dbWinner.Coins;
-                        winnerPlayer.Coins = winnerNewCoins;
-                        winnerWins = dbWinner.Wins;
-                        winnerLosses = dbWinner.Losses;
-                        winnerLevel = dbWinner.Level;
-                    }
-                    else
-                    {
-                        if (isSala)
+                        if (dbWinner != null)
                         {
-                            winnerPlayer.Coins = Math.Max(0, winnerPlayer.Coins - bet);
+                            if (isSala)
+                            {
+                                // En sala, ambos jugadores pagan la tarifa de sala de entrada (10 monedas) para la casa
+                                int winnerDeduction = Math.Min(dbWinner.Coins, bet);
+                                dbWinner.Coins -= winnerDeduction;
+                            }
+                            else
+                            {
+                                int netWinnerGain = Math.Max(0, winnerPrize - bet);
+                                dbWinner.Coins += netWinnerGain;
+                            }
+
+                            dbWinner.Wins += 1;
+                            dbWinner.Level = dbWinner.GetCalculatedLevel();
+                            winnerNewCoins = dbWinner.Coins;
+                            winnerPlayer.Coins = winnerNewCoins;
+                            winnerWins = dbWinner.Wins;
+                            winnerLosses = dbWinner.Losses;
+                            winnerLevel = dbWinner.Level;
                         }
                         else
                         {
-                            winnerPlayer.Coins = Math.Max(0, winnerPlayer.Coins + (winnerPrize - bet));
+                            if (isSala)
+                            {
+                                winnerPlayer.Coins = Math.Max(0, winnerPlayer.Coins - bet);
+                            }
+                            else
+                            {
+                                winnerPlayer.Coins = Math.Max(0, winnerPlayer.Coins + (winnerPrize - bet));
+                            }
+                            winnerNewCoins = winnerPlayer.Coins;
+                            winnerWins = 1;
+                            winnerLosses = 0;
                         }
-                        winnerNewCoins = winnerPlayer.Coins;
-                        winnerWins = 1;
-                        winnerLosses = 0;
-                    }
 
-                    if (dbWinner != null || dbLoser != null)
-                    {
-                        var betRecord = new MatchBetRecord
+                        if (dbWinner != null || dbLoser != null)
                         {
-                            GameId = game.Id,
-                            PlayerOneName = !string.IsNullOrEmpty(game.NamePOne) ? game.NamePOne : SearchPlayer(game.IdPOne).Name,
-                            PlayerTwoName = !string.IsNullOrEmpty(game.NamePTwo) ? game.NamePTwo : SearchPlayer(game.IdPTwo).Name,
-                            BetPerPlayer = bet,
-                            TotalPot = totalPot,
-                            HouseCommission = houseCommission,
-                            WinnerPrize = winnerPrize,
-                            WinnerUsername = dbWinner?.Username ?? winnerName,
-                            LoserUsername = dbLoser?.Username ?? loserName,
-                            EndReason = isSala ? $"[SALA 100%] {reason}" : reason,
-                            CreatedAt = DateTime.UtcNow
-                        };
-                        db.MatchBetRecords.Add(betRecord);
-                        await db.SaveChangesAsync();
+                            var betRecord = new MatchBetRecord
+                            {
+                                GameId = game.Id,
+                                PlayerOneName = !string.IsNullOrEmpty(game.NamePOne) ? game.NamePOne : SearchPlayer(game.IdPOne).Name,
+                                PlayerTwoName = !string.IsNullOrEmpty(game.NamePTwo) ? game.NamePTwo : SearchPlayer(game.IdPTwo).Name,
+                                BetPerPlayer = bet,
+                                TotalPot = totalPot,
+                                HouseCommission = houseCommission,
+                                WinnerPrize = winnerPrize,
+                                WinnerUsername = dbWinner?.Username ?? winnerName,
+                                LoserUsername = dbLoser?.Username ?? loserName,
+                                EndReason = isSala ? $"[SALA 100%] {reason}" : reason,
+                                CreatedAt = DateTime.UtcNow
+                            };
+                            db.MatchBetRecords.Add(betRecord);
+                            await db.SaveChangesAsync();
 
-                        GameLogger.Log(game.Id, "ProcessMatchPayout", $"[{(isSala ? "SALA 100%" : "DUELO 20%")}] Ganador={dbWinner?.Username ?? winnerName} (Saldo={winnerNewCoins}), Perdedor={dbLoser?.Username ?? loserName} (Saldo={loserNewCoins}), Premio={winnerPrize}, Casa={houseCommission}, Razon={reason}");
+                            GameLogger.Log(game.Id, "ProcessMatchPayout", $"[{(isSala ? "SALA 100%" : "DUELO 10%")}] Ganador={dbWinner?.Username ?? winnerName} (Saldo={winnerNewCoins}), Perdedor={dbLoser?.Username ?? loserName} (Saldo={loserNewCoins}), Premio={winnerPrize}, Casa={houseCommission}, Razon={reason}");
+                        }
                     }
                 }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[ProcessMatchPayout Error] {ex.Message}");
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[ProcessMatchPayout Error] {ex.Message}");
+                }
             }
 
             // Notificar SIEMPRE a ambos jugadores para que vean su pantalla final y monedas
-            try
+            if (_staticHubContext != null)
             {
-                string winnerMessage = isSala
-                    ? $"🏆 ¡Ganaste la partida en sala privada! Tarifa de sala ({bet} monedas) abonada a la plataforma."
-                    : $"🏆 ¡Ganaste la partida! Te llevas {winnerPrize} monedas (80% del pozo de {totalPot}). Comisión de sala (20%): {houseCommission} monedas.";
-
-                string loserMessage = isSala
-                    ? $"Partida en sala privada finalizada. Tarifa de sala ({bet} monedas) abonada a la plataforma."
-                    : $"Partida finalizada. Se descontaron {bet} monedas de tu monedero.";
-
-                await Clients.Client(winnerConnectionId).SendAsync("MatchFinishedPayout", new
+                try
                 {
-                    isWinner = true,
-                    isSala = isSala,
-                    bet = bet,
-                    totalPot = totalPot,
-                    houseCommission = houseCommission,
-                    winnerPrize = winnerPrize,
-                    netGain = isSala ? -bet : (winnerPrize - bet),
-                    newBalance = winnerNewCoins,
-                    newWins = winnerWins,
-                    newLosses = winnerLosses,
-                    level = winnerLevel,
-                    message = winnerMessage
-                });
+                    string winnerMessage = isSala
+                        ? $"🏆 ¡Ganaste la partida en sala privada! Tarifa de sala ({bet} monedas) abonada a la plataforma."
+                        : $"🏆 ¡Ganaste la partida! Te llevas {winnerPrize} monedas (90% del pozo de {totalPot}). Comisión de sala (10%): {houseCommission} monedas.";
 
-                if (!string.IsNullOrEmpty(loserConnectionId))
-                {
-                    await Clients.Client(loserConnectionId).SendAsync("MatchFinishedPayout", new
+                    string loserMessage = isSala
+                        ? $"Partida en sala privada finalizada. Tarifa de sala ({bet} monedas) abonada a la plataforma."
+                        : $"Partida finalizada. Se descontaron {bet} monedas de tu monedero.";
+
+                    await _staticHubContext.Clients.Client(winnerConnectionId).SendAsync("MatchFinishedPayout", new
                     {
-                        isWinner = false,
+                        isWinner = true,
                         isSala = isSala,
                         bet = bet,
                         totalPot = totalPot,
                         houseCommission = houseCommission,
                         winnerPrize = winnerPrize,
-                        netGain = -bet,
-                        newBalance = loserNewCoins,
-                        newWins = loserWins,
-                        newLosses = loserLosses,
-                        level = loserLevel,
-                        message = loserMessage
+                        netGain = isSala ? -bet : (winnerPrize - bet),
+                        newBalance = winnerNewCoins,
+                        newWins = winnerWins,
+                        newLosses = winnerLosses,
+                        level = winnerLevel,
+                        message = winnerMessage
                     });
-                }
 
-                // 1. Envío autoritativo al grupo entero de la sala para que ningún socket reconectado quede huérfano
-                var payoutNotice = new
-                {
-                    gameId = game.Id,
-                    winnerConnectionId = winnerConnectionId,
-                    loserConnectionId = loserConnectionId,
-                    winnerUsername = finalWinnerName,
-                    loserUsername = finalLoserName,
-                    winnerId = finalWinnerDbId,
-                    loserId = finalLoserDbId,
-                    isSala = isSala,
-                    bet = bet,
-                    totalPot = totalPot,
-                    houseCommission = houseCommission,
-                    winnerPrize = winnerPrize,
-                    winnerNewBalance = winnerNewCoins,
-                    loserNewBalance = loserNewCoins,
-                    winnerWins = winnerWins,
-                    winnerLosses = winnerLosses,
-                    loserWins = loserWins,
-                    loserLosses = loserLosses,
-                    winnerLevel = winnerLevel,
-                    loserLevel = loserLevel,
-                    reason = reason,
-                    winnerMessage = winnerMessage,
-                    loserMessage = loserMessage
-                };
-
-                await Clients.Group($"game1vs1_{game.Id}").SendAsync("MatchFinishedPayoutNotice", payoutNotice);
-                if (!string.IsNullOrEmpty(game.RoomName))
-                {
-                    await Clients.Group(game.RoomName).SendAsync("MatchFinishedPayoutNotice", payoutNotice);
-                }
-
-                // 2. Búsqueda proactiva del socket actual del perdedor por nombre de usuario por si cambió de ConnectionId
-                lock (users)
-                {
-                    string targetLoserUser = finalLoserName;
-                    var currentLoserPlayer = users.FirstOrDefault(u => !string.IsNullOrEmpty(u.Name) && u.Name.Equals(targetLoserUser, StringComparison.OrdinalIgnoreCase));
-                    if (currentLoserPlayer != null && !string.IsNullOrEmpty(currentLoserPlayer.Id) && currentLoserPlayer.Id != loserConnectionId)
+                    if (!string.IsNullOrEmpty(loserConnectionId))
                     {
-                        Console.WriteLine($"[ProcessMatchPayout] Re-enviando MatchFinishedPayout al socket reconectado del perdedor: {currentLoserPlayer.Id} ({targetLoserUser})");
-                        _ = Clients.Client(currentLoserPlayer.Id).SendAsync("MatchFinishedPayout", new
+                        await _staticHubContext.Clients.Client(loserConnectionId).SendAsync("MatchFinishedPayout", new
                         {
                             isWinner = false,
                             isSala = isSala,
@@ -2389,11 +2419,233 @@ namespace PericonAPI.Hubs
                             message = loserMessage
                         });
                     }
+
+                    // Envío autoritativo al grupo entero de la sala para que ningún socket reconectado quede huérfano
+                    var payoutNotice = new
+                    {
+                        gameId = game.Id,
+                        winnerConnectionId = winnerConnectionId,
+                        loserConnectionId = loserConnectionId,
+                        winnerUsername = finalWinnerName,
+                        loserUsername = finalLoserName,
+                        winnerId = finalWinnerDbId,
+                        loserId = finalLoserDbId,
+                        isSala = isSala,
+                        bet = bet,
+                        totalPot = totalPot,
+                        houseCommission = houseCommission,
+                        winnerPrize = winnerPrize,
+                        winnerNewBalance = winnerNewCoins,
+                        loserNewBalance = loserNewCoins,
+                        winnerWins = winnerWins,
+                        winnerLosses = winnerLosses,
+                        loserWins = loserWins,
+                        loserLosses = loserLosses,
+                        winnerLevel = winnerLevel,
+                        loserLevel = loserLevel,
+                        reason = reason,
+                        winnerMessage = winnerMessage,
+                        loserMessage = loserMessage
+                    };
+
+                    await _staticHubContext.Clients.Group($"game1vs1_{game.Id}").SendAsync("MatchFinishedPayoutNotice", payoutNotice);
+                    if (!string.IsNullOrEmpty(game.RoomName))
+                    {
+                        await _staticHubContext.Clients.Group(game.RoomName).SendAsync("MatchFinishedPayoutNotice", payoutNotice);
+                    }
+
+                    // Búsqueda proactiva del socket actual del perdedor por nombre de usuario por si cambió de ConnectionId
+                    lock (users)
+                    {
+                        string targetLoserUser = finalLoserName;
+                        var currentLoserPlayer = users.FirstOrDefault(u => !string.IsNullOrEmpty(u.Name) && u.Name.Equals(targetLoserUser, StringComparison.OrdinalIgnoreCase));
+                        if (currentLoserPlayer != null && !string.IsNullOrEmpty(currentLoserPlayer.Id) && currentLoserPlayer.Id != loserConnectionId)
+                        {
+                            Console.WriteLine($"[ProcessMatchPayout] Re-enviando MatchFinishedPayout al socket reconectado del perdedor: {currentLoserPlayer.Id} ({targetLoserUser})");
+                            _ = _staticHubContext.Clients.Client(currentLoserPlayer.Id).SendAsync("MatchFinishedPayout", new
+                            {
+                                isWinner = false,
+                                isSala = isSala,
+                                bet = bet,
+                                totalPot = totalPot,
+                                houseCommission = houseCommission,
+                                winnerPrize = winnerPrize,
+                                netGain = -bet,
+                                newBalance = loserNewCoins,
+                                newWins = loserWins,
+                                newLosses = loserLosses,
+                                level = loserLevel,
+                                message = loserMessage
+                            });
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[ProcessMatchPayout Send Error] {ex.Message}");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Centinela automático en segundo plano que monitorea partidas 1vs1 abandonadas:
+        /// - Respeta estrictamente el flujo oficial: si 1 jugador se desconecta o agota sus 30s, el rival ve el modal con 30s adicionales de gracia ("Rival sin internet, esperando reconexión..."), y al terminar la gracia el jugador pulsa "Reclamar Victoria". El centinela NO interfiere ni corta ese flujo.
+        /// - Si AMBOS jugadores se desconectan por más de 60 segundos (o la partida queda huérfana en el limbo sin actividad por más de 15 minutos), el centinela cancela la partida y REEMBOLSA el 100% de las monedas a ambos jugadores en la base de datos (evita que la partida quede "tabla" o que las monedas queden atrapadas).
+        /// </summary>
+        private static async void ScavengeAbandonedGames(object? state)
+        {
+            if (_staticHubContext == null || _staticScopeFactory == null) return;
+            try
+            {
+                List<GamePlayOneVsOne> activeGames;
+                lock (games)
+                {
+                    activeGames = games.Where(g => g.IsActive && !g.HasPaidOut && !g.IsFinished).ToList();
+                }
+
+                foreach (var g in activeGames)
+                {
+                    int numg = -1;
+                    lock (games)
+                    {
+                        numg = games.IndexOf(g);
+                    }
+                    if (numg < 0) continue;
+
+                    var now = DateTime.UtcNow;
+
+                    // Caso A: Ambos jugadores desconectados por más de 60 segundos -> Reembolso mutuo del 100% de las monedas
+                    if (g.P1DisconnectedAt.HasValue && g.P2DisconnectedAt.HasValue)
+                    {
+                        var p1Elapsed = (now - g.P1DisconnectedAt.Value).TotalSeconds;
+                        var p2Elapsed = (now - g.P2DisconnectedAt.Value).TotalSeconds;
+                        if (p1Elapsed >= 60 && p2Elapsed >= 60)
+                        {
+                            Console.WriteLine($"[GameScavenger] Partida {g.Id} abandonada por ambos jugadores. Reembolsando 100% de apuestas...");
+                            await RefundAbandonedGame(g);
+                            continue;
+                        }
+                    }
+
+                    // Caso B: Partida zombi o huérfana sin actividad por más de 15 minutos -> Reembolso de seguridad
+                    var inactivityMinutes = (now - g.LastTurnActionAt).TotalMinutes;
+                    if (inactivityMinutes >= 15)
+                    {
+                        Console.WriteLine($"[GameScavenger] Partida {g.Id} inactiva por más de 15 minutos en el limbo. Reembolsando y liberando...");
+                        await RefundAbandonedGame(g);
+                    }
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[ProcessMatchPayout Send Error] {ex.Message}");
+                Console.WriteLine($"[GameScavenger Exception] {ex.Message}");
+            }
+        }
+
+        private static async Task ExecuteScavengerPayout(int numg, string winnerId, string loserId, string reason)
+        {
+            if (numg < 0 || numg >= games.Count) return;
+            var game = games[numg];
+            if (!game.IsActive || game.HasPaidOut || game.IsFinished) return;
+
+            await ProcessMatchPayoutCore(numg, winnerId, loserId, reason);
+
+            if (_staticHubContext != null)
+            {
+                if (!string.IsNullOrEmpty(winnerId))
+                {
+                    await _staticHubContext.Clients.Client(winnerId).SendAsync("OpponentSurrendered", new
+                    {
+                        message = "🏆 ¡Tu contrincante se desconectó y no regresó a tiempo! Has ganado la partida."
+                    });
+                }
+                if (!string.IsNullOrEmpty(loserId))
+                {
+                    await _staticHubContext.Clients.Client(loserId).SendAsync("YouSurrendered", new
+                    {
+                        message = "Partida perdida por desconexión o inactividad prolongada."
+                    });
+                }
+            }
+        }
+
+        private static async Task RefundAbandonedGame(GamePlayOneVsOne game)
+        {
+            if (game == null || !game.IsActive || game.HasPaidOut || game.IsFinished) return;
+
+            game.IsActive = false;
+            game.HasPaidOut = true;
+            game.IsFinished = true;
+            game.FinishedAt = DateTime.UtcNow;
+
+            int bet = game.Coins > 0 ? game.Coins : 10;
+
+            if (_staticScopeFactory != null)
+            {
+                try
+                {
+                    using (var scope = _staticScopeFactory.CreateScope())
+                    {
+                        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+                        bool alreadyHandled = await db.MatchBetRecords.AnyAsync(m => m.GameId == game.Id);
+                        if (!alreadyHandled)
+                        {
+                            var dbP1 = db.Users.FirstOrDefault(u => 
+                                (!string.IsNullOrEmpty(game.UserIdPOne) && u.Id.ToString() == game.UserIdPOne) ||
+                                (!string.IsNullOrEmpty(game.NamePOne) && u.Username.ToLower() == game.NamePOne.ToLower()));
+
+                            var dbP2 = db.Users.FirstOrDefault(u => 
+                                (!string.IsNullOrEmpty(game.UserIdPTwo) && u.Id.ToString() == game.UserIdPTwo) ||
+                                (!string.IsNullOrEmpty(game.NamePTwo) && u.Username.ToLower() == game.NamePTwo.ToLower()));
+
+                            if (dbP1 != null)
+                            {
+                                dbP1.Coins += bet;
+                                Console.WriteLine($"[RefundAbandonedGame] Reembolsadas {bet} monedas a P1 ({dbP1.Username}). Nuevo saldo: {dbP1.Coins}");
+                            }
+
+                            if (dbP2 != null)
+                            {
+                                dbP2.Coins += bet;
+                                Console.WriteLine($"[RefundAbandonedGame] Reembolsadas {bet} monedas a P2 ({dbP2.Username}). Nuevo saldo: {dbP2.Coins}");
+                            }
+
+                            var refundRecord = new MatchBetRecord
+                            {
+                                GameId = game.Id,
+                                PlayerOneName = game.NamePOne ?? "P1",
+                                PlayerTwoName = game.NamePTwo ?? "P2",
+                                BetPerPlayer = bet,
+                                TotalPot = bet * 2,
+                                HouseCommission = 0,
+                                WinnerPrize = 0,
+                                WinnerUsername = "REEMBOLSO",
+                                LoserUsername = "REEMBOLSO",
+                                EndReason = "ReembolsoPorAbandonoMutuo",
+                                CreatedAt = DateTime.UtcNow
+                            };
+                            db.MatchBetRecords.Add(refundRecord);
+                            await db.SaveChangesAsync();
+
+                            GameLogger.Log(game.Id, "RefundAbandonedGame", $"Partida cancelada por abandono mutuo. Reembolsadas {bet} monedas a cada jugador.");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[RefundAbandonedGame Error] {ex.Message}");
+                }
+            }
+
+            if (_staticHubContext != null)
+            {
+                await _staticHubContext.Clients.Group($"game1vs1_{game.Id}").SendAsync("GameAlreadyFinished", new
+                {
+                    gameId = game.Id,
+                    message = "Partida cancelada por desconexión de ambos jugadores. Las monedas apostadas fueron devueltas a ambas cuentas.",
+                    redirectTo = "/desk"
+                });
             }
         }
 
@@ -2422,7 +2674,8 @@ namespace PericonAPI.Hubs
             }
             else
             {
-                houseCommission = (int)Math.Round(totalPot * 0.20);
+                // Mesas 2 vs 2 normales: la casa retiene el 10% de comisión de sala (90% pozo a ganadores)
+                houseCommission = (int)Math.Round(totalPot * 0.10);
                 totalPrize = totalPot - houseCommission;
                 winnerPrizePerPlayer = totalPrize / 2;
             }
@@ -2484,7 +2737,7 @@ namespace PericonAPI.Hubs
                                 string seatMsg = isWinner
                                     ? (isSala2v2
                                         ? $"🏆 ¡Tu equipo ganó la partida en sala privada! Tarifa de sala ({betPerPlayer} monedas) abonada a la plataforma."
-                                        : $"🏆 ¡Tu equipo ganó la partida 2 vs 2! Te llevas {winnerPrizePerPlayer} monedas. Comisión de sala: {houseCommission / 2} monedas.")
+                                        : $"🏆 ¡Tu equipo ganó la partida 2 vs 2! Te llevas {winnerPrizePerPlayer} monedas (90% del pozo). Comisión de sala (10%): {houseCommission / 2} monedas.")
                                     : (isSala2v2
                                         ? $"Partida en sala privada 2 vs 2 finalizada. Tarifa de sala ({betPerPlayer} monedas) abonada a la plataforma."
                                         : $"Partida 2 vs 2 finalizada. Se descontaron {betPerPlayer} monedas de tu monedero.");
@@ -2531,7 +2784,7 @@ namespace PericonAPI.Hubs
                     db.MatchBetRecords.Add(betRecord);
                     await db.SaveChangesAsync();
 
-                    GameLogger.Log(session.GameId, "ProcessMatchPayout2v2", $"[{(isSala2v2 ? "SALA 2v2 100%" : "DUELO 2v2 20%")}] Equipo Ganador={winningTeamOfMatch}, Pozo={totalPot}, Casa={houseCommission}, Razon={reason}");
+                    GameLogger.Log(session.GameId, "ProcessMatchPayout2v2", $"[{(isSala2v2 ? "SALA 2v2 100%" : "DUELO 2v2 10%")}] Equipo Ganador={winningTeamOfMatch}, Pozo={totalPot}, Casa={houseCommission}, Razon={reason}");
                 }
             }
             catch (Exception ex)
@@ -2665,81 +2918,69 @@ namespace PericonAPI.Hubs
                         }
 
                         bool isManuallyTargeted = GamePlayOneVsOne.IsUserTargetedForStabilization(uId, newgame.NamePOne);
-                        bool isHouseInDeficit = todayHouseProfit < 0 || (todayTotal >= 3 && todayBotWinRate < 0.58);
+                        string currentDifficulty = (GamePlayOneVsOne.BotDifficultyMode ?? "facil").Trim().ToLowerInvariant();
 
-                        // CASO 1: Ganancia excesiva contra la casa (o usuario Memo) O Casa en déficit diario
-                        if (isManuallyTargeted || userNetProfitAgainstBot > 300 || (isHouseInDeficit && userNetProfitAgainstBot > 0))
+                        // 1. Si el usuario está manualmente marcado en estabilización (ej: Memo):
+                        if (isManuallyTargeted)
                         {
                             newgame.UserBalanceMode = UserBotBalanceMode.DefendHouse;
                             newgame.IsTargetedForStabilization = true;
                             newgame.MustFavorUserToBreakStreak = false;
-                            Console.WriteLine($"[BotFinancialBalance] Usuario {newgame.NamePOne} (ID {uId}) va GANANDO (+{userNetProfitAgainstBot} 🪙) o Casa en déficit ({todayHouseProfit} 🪙). Modo defensivo de casa ACTIVADO.");
+                            Console.WriteLine($"[BotDifficulty] Usuario {newgame.NamePOne} (ID {uId}) bajo estabilización manual. Modo defensivo activado.");
                         }
-                        // CASO 2: Modo Equilibrado Sostenible Diario 60-40 con Control Antirachas
+                        // 2. Modo FÁCIL: 40% Casa / 60% Jugador (Márgenes a favor del jugador para atraer clientes)
+                        else if (currentDifficulty == "facil")
+                        {
+                            newgame.UserBalanceMode = UserBotBalanceMode.BalancedGradualEdge;
+                            newgame.IsTargetedForStabilization = false;
+
+                            // Si el usuario tuvo 1 o más derrotas consecutivas, favorecerlo de inmediato para romper racha:
+                            if (consecutiveBotWins >= 1)
+                            {
+                                newgame.MustFavorUserToBreakStreak = true;
+                            }
+                            else
+                            {
+                                // 60% probabilidad de favorecer al usuario
+                                newgame.MustFavorUserToBreakStreak = Random.Shared.NextDouble() < 0.60;
+                            }
+                            Console.WriteLine($"[BotDifficulty] Modo FÁCIL activo (40% Casa / 60% Jugador). Usuario={newgame.NamePOne}, FavorUser={newgame.MustFavorUserToBreakStreak}.");
+                        }
+                        // 3. Modo DIFÍCIL: 65% Casa / 35% Jugador
+                        else if (currentDifficulty == "dificil")
+                        {
+                            newgame.UserBalanceMode = UserBotBalanceMode.DefendHouse;
+                            newgame.IsTargetedForStabilization = false;
+
+                            if (consecutiveBotWins >= 2)
+                            {
+                                newgame.MustFavorUserToBreakStreak = true; // Control antiracha
+                            }
+                            else
+                            {
+                                newgame.MustFavorUserToBreakStreak = false;
+                            }
+                            Console.WriteLine($"[BotDifficulty] Modo DIFÍCIL activo (65% Casa / 35% Jugador). Usuario={newgame.NamePOne}.");
+                        }
+                        // 4. Modo MEDIO: 50% Casa / 50% Jugador
                         else
                         {
                             newgame.UserBalanceMode = UserBotBalanceMode.BalancedGradualEdge;
                             newgame.IsTargetedForStabilization = false;
 
-                            // Regulación dinámica de la ventaja de la casa según la salud financiera del día:
-                            if (todayHouseProfit < -1000)
-                            {
-                                GamePlayOneVsOne.BotAdvantageProbability = 0.70;
-                            }
-                            else if (todayHouseProfit < 0 || (todayTotal >= 4 && todayBotWinRate < 0.58))
-                            {
-                                GamePlayOneVsOne.BotAdvantageProbability = 0.65;
-                            }
-                            else if (todayTotal >= 5 && todayBotWinRate > 0.65 && todayHouseProfit > 0)
-                            {
-                                GamePlayOneVsOne.BotAdvantageProbability = 0.52;
-                            }
-                            else
-                            {
-                                GamePlayOneVsOne.BotAdvantageProbability = 0.60;
-                            }
-
-                            // Regla Antiracha Estricta: Si el bot ya ganó 2 o más partidas seguidas,
-                            // OBLIGATORIAMENTE se favorece al usuario para romper la racha (el bot NUNCA gana 3 seguidas).
                             if (consecutiveBotWins >= 2)
                             {
                                 newgame.MustFavorUserToBreakStreak = true;
-                                Console.WriteLine($"[BotDailyBalance] Usuario {newgame.NamePOne} (ID {uId}) venía de {consecutiveBotWins} derrotas seguidas ante el Bot. ¡ANTIRACHA ACTIVADA! Esta partida se favorece al usuario.");
                             }
-                            // Si el bot va ganando demasiado hoy (>65% con más de 5 partidas jugadas hoy y ganancia positiva),
-                            // se equilibra dando ventaja al usuario para mantener el objetivo 60-40 diario
-                            else if (todayTotal >= 5 && todayBotWinRate > 0.65 && todayHouseProfit > 0)
-                            {
-                                newgame.MustFavorUserToBreakStreak = true;
-                                Console.WriteLine($"[BotDailyBalance] Bot hoy con efectividad alta ({todayBotWinRate:P1} en {todayTotal} partidas hoy, +{todayHouseProfit} monedas). Favoreciendo usuario {newgame.NamePOne} para estabilizar objetivo diario 60/40.");
-                            }
-                            // Regla de Ritmo 1-1 / 2-1: Si el bot ganó la partida anterior (1 victoria):
                             else if (consecutiveBotWins == 1)
                             {
-                                if (!isHouseInDeficit && userTodayBotMatches.Count >= 2 && ((double)userTodayLosses / userTodayBotMatches.Count) > 0.60)
-                                {
-                                    newgame.MustFavorUserToBreakStreak = true;
-                                    Console.WriteLine($"[BotDailyBalance] Usuario {newgame.NamePOne} lleva {userTodayLosses}/{userTodayBotMatches.Count} derrotas hoy. Favoreciendo usuario.");
-                                }
-                                else if (!isHouseInDeficit)
-                                {
-                                    // 60% bot / 40% usuario en alternancia cuando la casa está en verde
-                                    bool favorUserThisTime = Random.Shared.NextDouble() < 0.40;
-                                    newgame.MustFavorUserToBreakStreak = favorUserThisTime;
-                                    Console.WriteLine($"[BotDailyBalance] Usuario {newgame.NamePOne} (ID {uId}) perdió 1 partida anterior. Ritmo alternado: FavorUser={favorUserThisTime}.");
-                                }
-                                else
-                                {
-                                    // Casa en déficit: no ceder ventaja
-                                    newgame.MustFavorUserToBreakStreak = false;
-                                }
+                                newgame.MustFavorUserToBreakStreak = Random.Shared.NextDouble() < 0.50;
                             }
-                            // Si el usuario ganó la partida anterior (consecutiveBotWins == 0):
                             else
                             {
                                 newgame.MustFavorUserToBreakStreak = false;
-                                Console.WriteLine($"[BotDailyBalance] Usuario {newgame.NamePOne} ganó su partida anterior. Balance diario actual: {todayBotWins}W/{todayUserWins}L (Bot: {todayBotWinRate:P1}, Casa: {todayHouseProfit} 🪙). Casa defiende objetivo 60/40.");
                             }
+                            Console.WriteLine($"[BotDifficulty] Modo MEDIO activo (50% Casa / 50% Jugador). Usuario={newgame.NamePOne}.");
                         }
                     }
                 }

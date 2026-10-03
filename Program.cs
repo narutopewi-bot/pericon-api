@@ -99,7 +99,8 @@ var app = builder.Build();
 try
 {
     var hubContext = app.Services.GetRequiredService<IHubContext<MessagingHub>>();
-    MessagingHub.SetHubContext(hubContext);
+    var scopeFactory = app.Services.GetRequiredService<IServiceScopeFactory>();
+    MessagingHub.InitializeScavenger(hubContext, scopeFactory);
 }
 catch (Exception ex)
 {

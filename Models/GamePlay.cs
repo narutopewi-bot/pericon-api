@@ -26,8 +26,8 @@ namespace PericonAPI.Models
         public string EmailPTwo { get; set; } = string.Empty;
         public int LastStakeAsker { get; set; } = 0; // 0 = ninguno, 1 = P1, 2 = P2
         public bool IsSolitaire { get; set; }
-        public static double BotAdvantageProbability { get; set; } = 0.60;
-        public static string BotDifficultyMode { get; set; } = "medio"; // "facil", "medio", "dificil"
+        public static double BotAdvantageProbability { get; set; } = 0.40;
+        public static string BotDifficultyMode { get; set; } = "facil"; // "facil", "medio", "dificil"
 
         // Lista de usuarios VIP favorecidos con ventaja sutil exclusiva (Dianelith - ID 28)
         public static HashSet<string> FavoredVipUsers { get; set; } = new(StringComparer.OrdinalIgnoreCase) { "dianilith" };
@@ -91,19 +91,20 @@ namespace PericonAPI.Models
             if (mode == "facil")
             {
                 BotDifficultyMode = "facil";
-                BotAdvantageProbability = 0.50;
+                BotAdvantageProbability = 0.40; // 40% Casa / 60% Jugador (a favor de los jugadores)
             }
             else if (mode == "dificil")
             {
                 BotDifficultyMode = "dificil";
-                BotAdvantageProbability = 0.65;
+                BotAdvantageProbability = 0.65; // 65% Casa / 35% Jugador
             }
             else // "medio"
             {
                 BotDifficultyMode = "medio";
-                BotAdvantageProbability = 0.60;
+                BotAdvantageProbability = 0.50; // 50% Casa / 50% Jugador (balance equitativo)
             }
 
+            StabilizationTargetHouseWinRate = BotAdvantageProbability;
             SaveBotSettingsToFile();
         }
 
@@ -823,24 +824,26 @@ namespace PericonAPI.Models
                 }
                 else
                 {
-                    // MODO EQUILIBRADO CON VENTAJA GRADUAL DE LA CASA (55% Bot / 45% Usuario en Medio)
-                    // "Vele quitando dinero pero gradualmente, no que te ganes todas las partidas tú y él las pierda todas."
-                    double favorProb = BotAdvantageProbability > 0 ? BotAdvantageProbability : 0.60;
+                    // COMPORTAMIENTO BASADO EN LOS BOTONES DE DIFICULTAD
                     bool isEasy = (BotDifficultyMode == "facil");
+                    double favorProb;
 
                     if (isEasy)
                     {
-                        favorProb = 0.50;
+                        // Modo Fácil: 40% Casa / 60% Jugador (los jugadores ganan con mayor frecuencia)
+                        favorProb = 0.40;
                     }
                     else if (BotDifficultyMode == "dificil")
                     {
-                        favorProb = Math.Max(0.65, favorProb);
-                        if (IsTumbaTwo) favorProb = Math.Max(0.75, favorProb + 0.10);
+                        // Modo Difícil: 65% Casa / 35% Jugador
+                        favorProb = 0.65;
+                        if (IsTumbaTwo) favorProb = 0.75;
                     }
                     else
                     {
-                        // Modo Medio / Dinámico: usa BotAdvantageProbability configurado (0.60 base, 0.65 o 0.70 en déficit, 0.52 en superávit)
-                        if (IsTumbaTwo) favorProb = Math.Min(0.85, favorProb + 0.10);
+                        // Modo Medio: 50% Casa / 50% Jugador (balance equitativo)
+                        favorProb = 0.50;
+                        if (IsTumbaTwo) favorProb = 0.60;
                     }
 
                     bool favorBot = Random.Shared.NextDouble() < favorProb;

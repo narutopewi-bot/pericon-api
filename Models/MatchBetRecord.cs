@@ -10,8 +10,8 @@ namespace PericonAPI.Models
         public string PlayerTwoName { get; set; } = string.Empty;
         public int BetPerPlayer { get; set; }
         public int TotalPot { get; set; }
-        public int HouseCommission { get; set; } // 20% retenido por el administrador
-        public int WinnerPrize { get; set; }    // 80% entregado al ganador
+        public int HouseCommission { get; set; } // 10% retenido por el administrador
+        public int WinnerPrize { get; set; }    // 90% entregado al ganador
         public string WinnerUsername { get; set; } = string.Empty;
         public string LoserUsername { get; set; } = string.Empty;
         public string EndReason { get; set; } = string.Empty; // "VictoriaPorPuntos", "Rendicion", "TiempoAgotado"
