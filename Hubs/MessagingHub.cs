@@ -1094,6 +1094,10 @@ namespace PericonAPI.Hubs
             int oppRounds = isPlayerOne ? games[numg].RoundTwo : games[numg].RoundOne;
             bool isMyTurn = isPlayerOne ? games[numg].PlayerTurn : !games[numg].PlayerTurn;
 
+            var myRemainingCards = isPlayerOne ? targetGame.CardsOne : targetGame.CardsTwo;
+            var remainingIds = myRemainingCards != null ? myRemainingCards.Select(c => c.Id).ToList() : new List<int>();
+            int lifeCardId = targetGame.Life != null ? targetGame.Life.Id : -1;
+
             await Clients.Client(Context.ConnectionId).SendAsync("GameStateSync1vs1", new
             {
                 gameId = gameId,
@@ -1108,30 +1112,10 @@ namespace PericonAPI.Hubs
                 handCount = games[numg].HandCount,
                 hasLeadMove = games[numg].CurrentLeadMove != null,
                 leadMove = games[numg].CurrentLeadMove,
-                pendingAsk = games[numg].PendingAsk369Message
+                pendingAsk = games[numg].PendingAsk369Message,
+                lifeCardId = lifeCardId,
+                remainingCardIds = remainingIds
             });
-
-            // Resincronización inmediata de cartas de la mano y triunfo de la mesa para evitar que la interfaz quede congelada
-            if (!string.IsNullOrEmpty(targetGame.InitHand))
-            {
-                string pStarter = (isPlayerOne ? (targetGame.HandStarter == 1 ? "1" : "0") : (targetGame.HandStarter == 2 ? "1" : "0"));
-                string pScore = $"-{targetGame.PointsOne}-{targetGame.PointsTwo}";
-                GameMessage resyncHand = new GameMessage
-                {
-                    game = gameId,
-                    order = 87,
-                    content = MaskInitHand1vs1(targetGame.InitHand, isPlayerOne) + "-" + pStarter + pScore
-                };
-                await Clients.Client(Context.ConnectionId).SendAsync("setChangeHand", resyncHand);
-                await Clients.Client(Context.ConnectionId).SendAsync("GameHandUpdated1vs1", new
-                {
-                    game = gameId,
-                    handCards = MaskInitHand1vs1(targetGame.InitHand, isPlayerOne),
-                    handStarter = targetGame.HandStarter,
-                    pointsOne = targetGame.PointsOne,
-                    pointsTwo = targetGame.PointsTwo
-                });
-            }
 
             // Sincronización proactiva: si hay una carta de salida (orden 84) en la mesa, entregársela al reconectado
             if (games[numg].CurrentLeadMove != null)
@@ -1420,6 +1404,21 @@ namespace PericonAPI.Hubs
                     message = "Esta partida ya ha concluido y fue liquidada.",
                     redirectTo = "/desk"
                 });
+                return;
+            }
+
+            // Si la partida ya está en curso (jugadas realizadas, puntos sumados o cartas lanzadas),
+            // NO volver a repartir ni mandar SetInitHand. Reconectar con las mismas cartas existentes:
+            bool isGameInProgress = g.HandCount > 1 || 
+                                    g.PointsOne > 0 || g.PointsTwo > 0 || 
+                                    g.CurrentLeadMove != null || 
+                                    (g.CardsOne != null && g.CardsOne.Count < 3) || 
+                                    (g.CardsTwo != null && g.CardsTwo.Count < 3);
+
+            if (isGameInProgress)
+            {
+                Console.WriteLine($"[GetInitHand] Partida {id} ya está en curso. Reconectando y preservando exactamente las mismas cartas.");
+                await RejoinGame1vs1(id, flag);
                 return;
             }
 
@@ -2139,16 +2138,16 @@ namespace PericonAPI.Hubs
                 return;
             }
 
-            // Blindaje temporal estricto: Validación del período de gracia (30s) y turno de 30s
+            // Blindaje temporal estricto: Validación del período de gracia de 60 segundos (1 minuto)
             if (rivalDisconnectedAt.HasValue)
             {
                 var elapsedDisconnect = (DateTime.UtcNow - rivalDisconnectedAt.Value).TotalSeconds;
-                if (elapsedDisconnect < 28) // Tolerancia de 2s para latencia de red
+                if (elapsedDisconnect < 58) // Tolerancia de 2s para latencia de red (60 segundos totales)
                 {
-                    int remain = Math.Max(1, 30 - (int)elapsedDisconnect);
-                    Console.WriteLine($"[ClaimOpponentTimeout1vs1] RECHAZADO para {caller}: Período de gracia por desconexión activo ({remain}s restantes).");
+                    int remain = Math.Max(1, 60 - (int)elapsedDisconnect);
+                    Console.WriteLine($"[ClaimOpponentTimeout1vs1] RECHAZADO para {caller}: Período de gracia de 1 minuto activo ({remain}s restantes).");
                     await Clients.Caller.SendAsync("ClaimRejected", new { 
-                        message = $"Tu rival perdió internet hace poco. Aún restan {remain} segundos de cortesía para su reconexión." 
+                        message = $"Tu rival perdió internet hace poco. Dispone de {remain} segundos de cortesía (1 minuto total) para reconectarse." 
                     });
                     return;
                 }
@@ -3818,6 +3817,72 @@ namespace PericonAPI.Hubs
                 return;
             }
 
+            // 0. VERIFICACIÓN DE PARTIDA ACTIVA PREVIA (VENTANA DE RECONEXIÓN DE 1 MINUTO)
+            object? activeMatchNotice = null;
+            lock (games)
+            {
+                var activeGame = games.FirstOrDefault(g =>
+                    g.IsActive && !g.IsFinished && !g.HasPaidOut &&
+                    ((!string.IsNullOrEmpty(userId) && (g.UserIdPOne == userId || g.UserIdPTwo == userId)) ||
+                     (!string.IsNullOrEmpty(playerName) && (g.NamePOne.Equals(playerName, StringComparison.OrdinalIgnoreCase) || g.NamePTwo.Equals(playerName, StringComparison.OrdinalIgnoreCase))))
+                );
+
+                if (activeGame != null)
+                {
+                    bool isP1 = (!string.IsNullOrEmpty(userId) && activeGame.UserIdPOne == userId) || 
+                                (string.IsNullOrEmpty(userId) && activeGame.NamePOne.Equals(playerName, StringComparison.OrdinalIgnoreCase));
+                    DateTime? discAt = isP1 ? activeGame.P1DisconnectedAt : activeGame.P2DisconnectedAt;
+                    double elapsed = discAt.HasValue 
+                        ? (DateTime.UtcNow - discAt.Value).TotalSeconds 
+                        : (DateTime.UtcNow - activeGame.LastTurnActionAt).TotalSeconds;
+                    
+                    if (elapsed <= 60)
+                    {
+                        int secondsLeft = Math.Max(1, 60 - (int)elapsed);
+                        string oppName = isP1 ? activeGame.NamePTwo : activeGame.NamePOne;
+
+                        var partial = new
+                        {
+                            id = activeGame.Id,
+                            userone = activeGame.IdPOne,
+                            nameone = activeGame.NamePOne,
+                            usertwo = activeGame.IdPTwo,
+                            nametwo = activeGame.NamePTwo,
+                            coins = activeGame.Coins,
+                            turn = "01",
+                            flag = isP1
+                        };
+                        string serializedDatos = System.Text.Json.JsonSerializer.Serialize(partial);
+
+                        Console.WriteLine($"[JoinMatchmaking] Partida activa detectada para {playerName} ({userId}): Juego {activeGame.Id}, Rival: {oppName}, Quedan {secondsLeft}s.");
+
+                        activeMatchNotice = new
+                        {
+                            hasActiveMatch = true,
+                            gameId = activeGame.Id,
+                            roomName = activeGame.RoomName,
+                            opponentName = oppName,
+                            coins = activeGame.Coins,
+                            isPlayerOne = isP1,
+                            secondsLeft = secondsLeft,
+                            serializedDatos = serializedDatos
+                        };
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[JoinMatchmaking] Partida {activeGame.Id} para {playerName} expiró ventana de 1 minuto (transcurridos {(int)elapsed}s). Desactivando partida.");
+                        activeGame.IsActive = false;
+                        activeGame.IsFinished = true;
+                    }
+                }
+            }
+
+            if (activeMatchNotice != null)
+            {
+                await Clients.Caller.SendAsync("ActiveMatchPending1vs1", activeMatchNotice);
+                return;
+            }
+
             MatchQueueItem? matchedPlayer = null;
 
             lock (queueLock)
@@ -3939,6 +4004,123 @@ namespace PericonAPI.Hubs
             }
             Console.WriteLine($"[Matchmaking] Cancelado por cliente: {callerId}");
             await Clients.Caller.SendAsync("MatchmakingStatus", new { status = "canceled", message = "Búsqueda cancelada" });
+        }
+
+        // ==========================================
+        // CONSULTA Y ABANDONO DE PARTIDA ACTIVA 1 VS 1 (VENTANA DE 1 MINUTO)
+        // ==========================================
+
+        public async Task CheckActiveMatch1vs1(string userId = "", string playerName = "")
+        {
+            object? activeMatchNotice = null;
+            lock (games)
+            {
+                var activeGame = games.FirstOrDefault(g =>
+                    g.IsActive && !g.IsFinished && !g.HasPaidOut &&
+                    ((!string.IsNullOrEmpty(userId) && (g.UserIdPOne == userId || g.UserIdPTwo == userId)) ||
+                     (!string.IsNullOrEmpty(playerName) && (g.NamePOne.Equals(playerName, StringComparison.OrdinalIgnoreCase) || g.NamePTwo.Equals(playerName, StringComparison.OrdinalIgnoreCase))))
+                );
+
+                if (activeGame != null)
+                {
+                    bool isP1 = (!string.IsNullOrEmpty(userId) && activeGame.UserIdPOne == userId) || 
+                                (string.IsNullOrEmpty(userId) && activeGame.NamePOne.Equals(playerName, StringComparison.OrdinalIgnoreCase));
+                    DateTime? discAt = isP1 ? activeGame.P1DisconnectedAt : activeGame.P2DisconnectedAt;
+                    double elapsed = discAt.HasValue 
+                        ? (DateTime.UtcNow - discAt.Value).TotalSeconds 
+                        : (DateTime.UtcNow - activeGame.LastTurnActionAt).TotalSeconds;
+                    
+                    if (elapsed <= 60)
+                    {
+                        int secondsLeft = Math.Max(1, 60 - (int)elapsed);
+                        string oppName = isP1 ? activeGame.NamePTwo : activeGame.NamePOne;
+
+                        var partial = new
+                        {
+                            id = activeGame.Id,
+                            userone = activeGame.IdPOne,
+                            nameone = activeGame.NamePOne,
+                            usertwo = activeGame.IdPTwo,
+                            nametwo = activeGame.NamePTwo,
+                            coins = activeGame.Coins,
+                            turn = "01",
+                            flag = isP1
+                        };
+                        string serializedDatos = System.Text.Json.JsonSerializer.Serialize(partial);
+
+                        Console.WriteLine($"[CheckActiveMatch1vs1] Partida activa encontrada para {playerName} ({userId}): Juego {activeGame.Id}, Rival: {oppName}, Quedan {secondsLeft}s.");
+
+                        activeMatchNotice = new
+                        {
+                            hasActiveMatch = true,
+                            gameId = activeGame.Id,
+                            roomName = activeGame.RoomName,
+                            opponentName = oppName,
+                            coins = activeGame.Coins,
+                            isPlayerOne = isP1,
+                            secondsLeft = secondsLeft,
+                            serializedDatos = serializedDatos
+                        };
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[CheckActiveMatch1vs1] Partida {activeGame.Id} para {playerName} expiró ventana de 1 minuto (transcurridos {(int)elapsed}s). Desactivando partida.");
+                        activeGame.IsActive = false;
+                        activeGame.IsFinished = true;
+                    }
+                }
+            }
+
+            if (activeMatchNotice != null)
+            {
+                await Clients.Caller.SendAsync("ActiveMatchPending1vs1", activeMatchNotice);
+            }
+            else
+            {
+                await Clients.Caller.SendAsync("ActiveMatchPending1vs1", new
+                {
+                    hasActiveMatch = false
+                });
+            }
+        }
+
+        public async Task AbandonActiveMatch1vs1(int gameId, bool isPlayerOne)
+        {
+            Console.WriteLine($"[AbandonActiveMatch1vs1] Jugador solicita abandonar partida activa: Juego {gameId}, IsPlayerOne: {isPlayerOne}");
+            int numg = FindGame1vs1(gameId);
+            if (numg == -1) return;
+
+            var game = games[numg];
+            if (!game.IsActive || game.IsFinished || game.HasPaidOut) return;
+
+            if (Context.ConnectionId == game.IdPOne) isPlayerOne = true;
+            else if (Context.ConnectionId == game.IdPTwo) isPlayerOne = false;
+
+            string loserId = isPlayerOne ? game.IdPOne : game.IdPTwo;
+            string winnerId = isPlayerOne ? game.IdPTwo : game.IdPOne;
+
+            await ProcessMatchPayout(numg, winnerId, loserId, "AbandonoVoluntario");
+
+            if (!string.IsNullOrEmpty(winnerId))
+            {
+                await Clients.Client(winnerId).SendAsync("OpponentSurrendered", new
+                {
+                    message = "🏆 ¡Tu contrincante decidió abandonar la partida! Has ganado la partida."
+                });
+            }
+
+            if (!string.IsNullOrEmpty(loserId))
+            {
+                await Clients.Client(loserId).SendAsync("YouSurrendered", new
+                {
+                    message = "Has abandonado la partida."
+                });
+            }
+
+            await Clients.Group($"game1vs1_{game.Id}").SendAsync("YouSurrendered", new
+            {
+                message = "Partida finalizada por abandono."
+            });
         }
 
         // ==========================================
