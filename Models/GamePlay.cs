@@ -256,6 +256,7 @@ namespace PericonAPI.Models
         public int LeadPlayer { get; set; } = 0;
         public bool HasPaidOut { get; set; } = false;
         public bool IsFinished { get; set; } = false;
+        public bool IsHandTransitioning { get; set; } = false;
         public DateTime? FinishedAt { get; set; } = null;
         public bool IsTargetedForStabilization { get; set; } = false;
         public UserBotBalanceMode UserBalanceMode { get; set; } = UserBotBalanceMode.Normal;

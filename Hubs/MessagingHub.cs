@@ -448,6 +448,15 @@ namespace PericonAPI.Hubs
                 return;
             }
 
+            // Si la mano ya está definida o en transición al siguiente reparto, bloquear Pedir
+            if (games[numg].IsHandTransitioning || games[numg].RoundOne >= 2 || games[numg].RoundTwo >= 2 ||
+                (games[numg].RoundOne == 0 && games[numg].RoundTwo == 0 && games[numg].CardsOne.Count == 0))
+            {
+                Console.WriteLine($"[Ask369Game] Pedir bloqueado: mano ya resuelta o en transición (IsHandTransitioning={games[numg].IsHandTransitioning}, R1={games[numg].RoundOne}, R2={games[numg].RoundTwo}).");
+                await SyncTable1vs1(move.game);
+                return;
+            }
+
             // En Tumba no está permitido pedir
             if (games[numg].IsTumbaOne || games[numg].IsTumbaTwo || games[numg].PointsOne >= 9 || games[numg].PointsTwo >= 9 ||
                 (games[numg].IsTumbaDeParaAtrasOne && games[numg].PointsOne == 8) || (games[numg].IsTumbaDeParaAtrasTwo && games[numg].PointsTwo == 8))
@@ -803,6 +812,7 @@ namespace PericonAPI.Hubs
             games[numg].CurrentLeadMove = null;
             games[numg].LeadPlayer = 0;
             games[numg].PendingAsk369Message = null;
+            games[numg].IsHandTransitioning = false;
 
             // Asegurar que IdPOne e IdPTwo tengan las conexiones vivas más recientes de cada jugador
             lock (users)
@@ -957,6 +967,58 @@ namespace PericonAPI.Hubs
                 {
                     games[numg].IdPTwo = caller;
                     games[numg].P2DisconnectedAt = null;
+                }
+            }
+
+            // Si la mano ya está repartida y no se ha jugado ninguna carta aún, reenviar la mano existente en lugar de barajar de nuevo
+            if (targetGame.CardsOne.Count == 3 && targetGame.CardsTwo.Count == 3 && targetGame.RoundOne == 0 && targetGame.RoundTwo == 0)
+            {
+                string pOne = targetGame.IdPOne;
+                string pTwo = targetGame.IdPTwo;
+                string pThree = targetGame.InitHand;
+                string pScore = $"-{targetGame.PointsOne}-{targetGame.PointsTwo}";
+
+                if (caller == pOne)
+                {
+                    string pFour = (targetGame.HandStarter == 1 ? "1" : "0");
+                    GameMessage sentencePOne = new GameMessage
+                    {
+                        game = gameId,
+                        order = 87,
+                        content = MaskInitHand1vs1(pThree, true) + "-" + pFour + pScore
+                    };
+                    await Clients.Caller.SendAsync("setChangeHand", sentencePOne);
+                    await Clients.Caller.SendAsync("GameHandUpdated1vs1", new
+                    {
+                        game = gameId,
+                        handCards = MaskInitHand1vs1(pThree, true),
+                        handStarter = targetGame.HandStarter,
+                        pointsOne = targetGame.PointsOne,
+                        pointsTwo = targetGame.PointsTwo
+                    });
+                    Console.WriteLine($"[RequestNewHand1vs1] Mano ya repartida reenviada exitosamente a POne ({caller})");
+                    return;
+                }
+                else if (caller == pTwo)
+                {
+                    string pFive = (targetGame.HandStarter == 2 ? "1" : "0");
+                    GameMessage sentencePTwo = new GameMessage
+                    {
+                        game = gameId,
+                        order = 87,
+                        content = MaskInitHand1vs1(pThree, false) + "-" + pFive + pScore
+                    };
+                    await Clients.Caller.SendAsync("setChangeHand", sentencePTwo);
+                    await Clients.Caller.SendAsync("GameHandUpdated1vs1", new
+                    {
+                        game = gameId,
+                        handCards = MaskInitHand1vs1(pThree, false),
+                        handStarter = targetGame.HandStarter,
+                        pointsOne = targetGame.PointsOne,
+                        pointsTwo = targetGame.PointsTwo
+                    });
+                    Console.WriteLine($"[RequestNewHand1vs1] Mano ya repartida reenviada exitosamente a PTwo ({caller})");
+                    return;
                 }
             }
 
@@ -1906,6 +1968,7 @@ namespace PericonAPI.Hubs
                     rone = games[numg].RoundOne.ToString();
                     if (games[numg].RoundOne == 2)
                     {
+                        games[numg].IsHandTransitioning = true;
                         mdef = leadIsPlayerOne ? "3" : "2"; 
                         games[numg].RoundOne = 0; 
                         games[numg].RoundTwo = 0;
@@ -1958,6 +2021,7 @@ namespace PericonAPI.Hubs
                     rtwo = games[numg].RoundTwo.ToString();
                     if (games[numg].RoundTwo == 2)
                     {
+                        games[numg].IsHandTransitioning = true;
                         mdef = (!leadIsPlayerOne) ? "3" : "2"; 
                         games[numg].RoundOne = 0; 
                         games[numg].RoundTwo = 0;
@@ -2028,7 +2092,7 @@ namespace PericonAPI.Hubs
                     int gId = move.game;
                     _ = Task.Run(async () =>
                     {
-                        await Task.Delay(4500);
+                        await Task.Delay(5500);
                         int idx = FindGame1vs1(gId);
                         if (idx >= 0 && idx < games.Count && !games[idx].IsFinished && games[idx].IsActive && games[idx].RoundOne == 0 && games[idx].RoundTwo == 0)
                         {
@@ -2945,6 +3009,7 @@ namespace PericonAPI.Hubs
                 rone = targetGame.RoundOne.ToString();
                 if (targetGame.RoundOne == 2)
                 {
+                    targetGame.IsHandTransitioning = true;
                     mdef = "3";
                     targetGame.RoundOne = 0;
                     targetGame.RoundTwo = 0;
@@ -2987,6 +3052,7 @@ namespace PericonAPI.Hubs
                 rtwo = targetGame.RoundTwo.ToString();
                 if (targetGame.RoundTwo == 2)
                 {
+                    targetGame.IsHandTransitioning = true;
                     mdef = "2";
                     targetGame.RoundOne = 0;
                     targetGame.RoundTwo = 0;
@@ -3045,7 +3111,7 @@ namespace PericonAPI.Hubs
             {
                 _ = Task.Run(async () =>
                 {
-                    await Task.Delay(4500);
+                    await Task.Delay(5500);
                     if (!targetGame.IsFinished && targetGame.IsActive && targetGame.RoundOne == 0 && targetGame.RoundTwo == 0)
                     {
                         await ChangeGame1vs1Core(targetGame.Id);
@@ -3075,7 +3141,11 @@ namespace PericonAPI.Hubs
                 }
                 if (numg < 0 || numg >= games.Count) return;
                 var g = games[numg];
-                if (!g.IsActive || g.HasPaidOut || g.IsFinished) return;
+                if (!g.IsActive || g.HasPaidOut || g.IsFinished || g.IsHandTransitioning || g.RoundOne >= 2 || (g.CardsTwo.Count == 0 && g.RoundOne > g.RoundTwo))
+                {
+                    Console.WriteLine($"[ExecuteBotAnswerStake1vs1] Pedir ignorado/rechazado: mano ya resuelta o en transición.");
+                    return;
+                }
 
                 int handScore = 0;
                 foreach (var c in g.CardsTwo)
