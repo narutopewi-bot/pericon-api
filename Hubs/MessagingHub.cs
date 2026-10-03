@@ -807,13 +807,19 @@ namespace PericonAPI.Hubs
             // Asegurar que IdPOne e IdPTwo tengan las conexiones vivas más recientes de cada jugador
             lock (users)
             {
-                var p1Active = users.FirstOrDefault(u => u.Name == games[numg].NamePOne);
+                var p1Active = users.FirstOrDefault(u => 
+                    u.Id == games[numg].IdPOne ||
+                    (!string.IsNullOrEmpty(games[numg].NamePOne) && string.Equals(u.Name?.Trim(), games[numg].NamePOne?.Trim(), StringComparison.OrdinalIgnoreCase))
+                );
                 if (p1Active != null && !string.IsNullOrEmpty(p1Active.Id))
                 {
                     games[numg].IdPOne = p1Active.Id;
                     games[numg].P1DisconnectedAt = null;
                 }
-                var p2Active = users.FirstOrDefault(u => u.Name == games[numg].NamePTwo);
+                var p2Active = users.FirstOrDefault(u => 
+                    u.Id == games[numg].IdPTwo ||
+                    (!string.IsNullOrEmpty(games[numg].NamePTwo) && string.Equals(u.Name?.Trim(), games[numg].NamePTwo?.Trim(), StringComparison.OrdinalIgnoreCase))
+                );
                 if (p2Active != null && !string.IsNullOrEmpty(p2Active.Id))
                 {
                     games[numg].IdPTwo = p2Active.Id;
@@ -868,13 +874,46 @@ namespace PericonAPI.Hubs
                 });
             }
 
-            if (games[numg].IsBotMatch && games[numg].HandStarter == 2)
+            if (games[numg].IsBotMatch)
             {
-                _ = Task.Run(async () =>
+                bool botInTumba = games[numg].PointsTwo >= 9 || (games[numg].IsTumbaDeParaAtrasTwo && games[numg].PointsTwo == 8);
+                if (botInTumba)
                 {
-                    await Task.Delay(Random.Shared.Next(2400, 3600));
-                    await ExecuteBotMove1vs1(gameId);
-                });
+                    _ = Task.Run(async () =>
+                    {
+                        await Task.Delay(1800);
+                        int idx = FindGame1vs1(gameId);
+                        if (idx >= 0 && idx < games.Count && games[idx].IsActive && !games[idx].IsFinished)
+                        {
+                            string p1 = games[idx].IdPOne;
+                            if (!string.IsNullOrEmpty(p1))
+                            {
+                                await _staticHubContext.Clients.Client(p1).SendAsync("TumbaAcceptedNotice", new
+                                {
+                                    message = "El rival aceptó jugar la mano de Tumba."
+                                });
+                            }
+                            await _staticHubContext.Clients.Group($"game1vs1_{gameId}").SendAsync("TumbaAcceptedNotice", new
+                            {
+                                message = "El rival aceptó jugar la mano de Tumba."
+                            });
+
+                            if (games[idx].HandStarter == 2)
+                            {
+                                await Task.Delay(1500);
+                                await ExecuteBotMove1vs1(gameId);
+                            }
+                        }
+                    });
+                }
+                else if (games[numg].HandStarter == 2)
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        await Task.Delay(Random.Shared.Next(2400, 3600));
+                        await ExecuteBotMove1vs1(gameId);
+                    });
+                }
             }
         }
 
@@ -1381,6 +1420,16 @@ namespace PericonAPI.Hubs
             {
                 message = "El rival aceptó jugar la mano de Tumba."
             });
+
+            // Si el rival es BOT y el BOT debe salir de mano (Lead) pero aún no ha jugado, activar su turno tras aceptación:
+            if (games[numg].IsBotMatch && games[numg].HandStarter == 2 && games[numg].CurrentLeadMove == null)
+            {
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(1800);
+                    await ExecuteBotMove1vs1(move.game);
+                });
+            }
         }
 
         public async Task GetGame1vs1(GameMessage move)
@@ -2090,6 +2139,21 @@ namespace PericonAPI.Hubs
             if (isGameOver)
             {
                 await ProcessMatchPayout(numg, winnerId, loserId, "TiempoAgotado");
+            }
+            else
+            {
+                // AUTORIDAD TOTAL EN SERVIDOR: Garantizar que se reparta la siguiente mano
+                // sin depender exclusivamente del navegador del jugador ganador.
+                int gId = move.game;
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(4500);
+                    int idx = FindGame1vs1(gId);
+                    if (idx >= 0 && idx < games.Count && !games[idx].IsFinished && games[idx].IsActive && games[idx].RoundOne == 0 && games[idx].RoundTwo == 0)
+                    {
+                        await ChangeGame1vs1Core(gId);
+                    }
+                });
             }
 
             // Notificar a ambos clientes
@@ -3156,21 +3220,19 @@ namespace PericonAPI.Hubs
                     lock (users)
                     {
                         p1Alive = users.Any(u => u.Id == g.IdPOne ||
-                            (!string.IsNullOrEmpty(g.UserIdPOne) && u.Id.ToString() == g.UserIdPOne) ||
-                            (!string.IsNullOrEmpty(g.NamePOne) && u.Name.Equals(g.NamePOne, StringComparison.OrdinalIgnoreCase)));
+                            (!string.IsNullOrEmpty(g.NamePOne) && string.Equals(u.Name?.Trim(), g.NamePOne?.Trim(), StringComparison.OrdinalIgnoreCase)));
 
                         p2Alive = g.IsBotMatch || users.Any(u => u.Id == g.IdPTwo ||
-                            (!string.IsNullOrEmpty(g.UserIdPTwo) && u.Id.ToString() == g.UserIdPTwo) ||
-                            (!string.IsNullOrEmpty(g.NamePTwo) && u.Name.Equals(g.NamePTwo, StringComparison.OrdinalIgnoreCase)));
+                            (!string.IsNullOrEmpty(g.NamePTwo) && string.Equals(u.Name?.Trim(), g.NamePTwo?.Trim(), StringComparison.OrdinalIgnoreCase)));
                     }
 
                     // Si están activos en el servidor, jamás considerar desconectados
                     if (p1Alive) g.P1DisconnectedAt = null;
                     if (p2Alive) g.P2DisconnectedAt = null;
 
-                    // Caso A: AMBOS jugadores verdaderamente desconectados (ninguno está en línea) por más de 60 segundos
+                    // Caso A: Partida entre humanos donde AMBOS jugadores están desconectados por más de 60 segundos
                     // -> Reembolso mutuo del 100% de las monedas
-                    if (!p1Alive && !p2Alive && g.P1DisconnectedAt.HasValue && g.P2DisconnectedAt.HasValue)
+                    if (!g.IsBotMatch && !p1Alive && !p2Alive && g.P1DisconnectedAt.HasValue && g.P2DisconnectedAt.HasValue)
                     {
                         var p1Elapsed = (now - g.P1DisconnectedAt.Value).TotalSeconds;
                         var p2Elapsed = (now - g.P2DisconnectedAt.Value).TotalSeconds;
@@ -3182,17 +3244,66 @@ namespace PericonAPI.Hubs
                         }
                     }
 
-                    // Nota: Si un rival se desconecta pero el otro permanece en la sala, NO se fuerza victoria automática
-                    // por temporizador. Se respeta el modal de "Reclamar victoria" para que el jugador conectado decida si
-                    // acepta/reclama o espera pacientemente a que su rival se reconecte con sus mismas cartas.
+                    // Caso B: Partida contra BOT donde el humano se desconectó por más de 60 segundos
+                    // -> Se adjudica victoria al Bot (la casa gana por abandono del usuario, no reembolso)
+                    if (g.IsBotMatch && !p1Alive && g.P1DisconnectedAt.HasValue)
+                    {
+                        var p1Elapsed = (now - g.P1DisconnectedAt.Value).TotalSeconds;
+                        if (p1Elapsed >= 60)
+                        {
+                            Console.WriteLine($"[GameScavenger] Partida {g.Id} contra bot abandonada por humano (desconectado {p1Elapsed:F0}s). Adjudicando victoria al Bot...");
+                            await ExecuteScavengerPayout(numg, g.IdPTwo, g.IdPOne, "AbandonoContraBot");
+                            continue;
+                        }
+                    }
 
-                    // Caso C: Partida zombi o huérfana sin actividad por más de 15 minutos en el limbo
-                    // -> Reembolso de seguridad para no retener monedas indefinidamente
+                    // Caso C: Auto-descongelamiento de partidas activas (Anti-Stuck Watchdog)
+                    // Si el jugador está conectado pero la partida lleva más de 35s sin acción:
+                    if (p1Alive && (now - g.LastTurnActionAt).TotalSeconds >= 35)
+                    {
+                        // Si la ronda terminó (RoundOne == 0 && RoundTwo == 0) y no se han repartido cartas:
+                        if (g.RoundOne == 0 && g.RoundTwo == 0 && !g.IsFinished && g.IsActive)
+                        {
+                            Console.WriteLine($"[GameScavenger] Partida {g.Id} destrabada: forzando ChangeGame1vs1Core tras inactividad...");
+                            g.LastTurnActionAt = DateTime.UtcNow;
+                            await ChangeGame1vs1Core(g.Id);
+                            continue;
+                        }
+                        // Si es partida contra bot y el bot no ha jugado:
+                        if (g.IsBotMatch && !g.IsFinished && g.IsActive)
+                        {
+                            bool isBotLead = (g.CurrentLeadMove == null && ((g.RoundOne == 0 && g.RoundTwo == 0 && g.HandStarter == 2) || (g.LeadPlayer == 2)));
+                            bool isBotResponse = (g.CurrentLeadMove != null && g.LeadPlayer == 1);
+                            if (isBotLead || isBotResponse)
+                            {
+                                Console.WriteLine($"[GameScavenger] Partida {g.Id} destrabada: forzando movimiento del bot...");
+                                g.LastTurnActionAt = DateTime.UtcNow;
+                                await ExecuteBotMove1vs1(g.Id);
+                                continue;
+                            }
+                        }
+                    }
+
+                    // Caso D: Partida zombi o huérfana sin actividad por más de 15 minutos en el limbo
+                    // Si un jugador sigue conectado y el rival no, darle la victoria al conectado
                     var inactivityMinutes = (now - g.LastTurnActionAt).TotalMinutes;
                     if (inactivityMinutes >= 15)
                     {
-                        Console.WriteLine($"[GameScavenger] Partida {g.Id} inactiva por más de 15 minutos en el limbo. Reembolsando y liberando...");
-                        await RefundAbandonedGame(g);
+                        if (p1Alive && !p2Alive)
+                        {
+                            Console.WriteLine($"[GameScavenger] Partida {g.Id} inactiva 15m. P1 conectado, P2 desconectado. Victoria para P1...");
+                            await ExecuteScavengerPayout(numg, g.IdPOne, g.IdPTwo, "InactividadRival");
+                        }
+                        else if (!p1Alive && p2Alive && !g.IsBotMatch)
+                        {
+                            Console.WriteLine($"[GameScavenger] Partida {g.Id} inactiva 15m. P2 conectado, P1 desconectado. Victoria para P2...");
+                            await ExecuteScavengerPayout(numg, g.IdPTwo, g.IdPOne, "InactividadRival");
+                        }
+                        else
+                        {
+                            Console.WriteLine($"[GameScavenger] Partida {g.Id} verdaderamente huérfana sin jugadores por 15m. Reembolsando...");
+                            await RefundAbandonedGame(g);
+                        }
                     }
                 }
             }
@@ -4396,8 +4507,8 @@ namespace PericonAPI.Hubs
 
                 string p1 = seat0.ConnectionId;
                 string p2 = seat1.ConnectionId;
-                string name1 = seat0.Name;
-                string name2 = seat1.Name;
+                string name1 = !string.IsNullOrWhiteSpace(seat0.Name) ? seat0.Name : "Jugador 1";
+                string name2 = !string.IsNullOrWhiteSpace(seat1.Name) ? seat1.Name : "Jugador 2";
 
                 GamePlayOneVsOne newGame = new GamePlayOneVsOne(p1, p2);
                 newGame.Coins = session.Bet;
