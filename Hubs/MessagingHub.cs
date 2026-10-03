@@ -531,6 +531,10 @@ namespace PericonAPI.Hubs
             int chosen = int.Parse(daticos[daticos.Length - 1]);
 
             bool callerIsP1 = (Context.ConnectionId == games[numg].IdPOne);
+            if (callerIsP1) games[numg].P1DisconnectedAt = null;
+            else games[numg].P2DisconnectedAt = null;
+            games[numg].LastTurnActionAt = DateTime.UtcNow;
+
             string ownto = Context.ConnectionId;
             string sentto = callerIsP1 ? games[numg].IdPTwo : games[numg].IdPOne;
 
@@ -733,42 +737,54 @@ namespace PericonAPI.Hubs
         public async Task ChangeGame1vs1(GameMessage move) // order = 90
         {
             GameLogger.Log(move.game, "ChangeGame1vs1", $"Cliente: {Context.ConnectionId}, Orden: {move.order}");
-            int numg = FindGame1vs1(move.game);
+            await ChangeGame1vs1Core(move.game, Context.ConnectionId);
+        }
+
+        public static async Task ChangeGame1vs1Core(int gameId, string? callerConnectionId = null)
+        {
+            if (_staticHubContext == null) return;
+            int numg = FindGame1vs1(gameId);
             if (numg < 0 || numg >= games.Count)
             {
-                GameLogger.Log(move.game, "ChangeGame1vs1", $"WARNING: Juego {move.game} no encontrado.");
-                await Clients.Caller.SendAsync("GameAlreadyFinished", new
+                GameLogger.Log(gameId, "ChangeGame1vs1", $"WARNING: Juego {gameId} no encontrado.");
+                if (!string.IsNullOrEmpty(callerConnectionId))
                 {
-                    gameId = move.game,
-                    message = "La partida ya ha concluido.",
-                    redirectTo = "/desk"
-                });
+                    await _staticHubContext.Clients.Client(callerConnectionId).SendAsync("GameAlreadyFinished", new
+                    {
+                        gameId = gameId,
+                        message = "La partida ya ha concluido.",
+                        redirectTo = "/desk"
+                    });
+                }
                 return;
             }
 
             var targetGame = games[numg];
             if (targetGame.HasPaidOut || targetGame.IsFinished || !targetGame.IsActive)
             {
-                Console.WriteLine($"[ChangeGame1vs1] El juego {move.game} ya concluyó o fue liquidado. Notificando a {Context.ConnectionId}");
-                await Clients.Caller.SendAsync("GameAlreadyFinished", new
+                Console.WriteLine($"[ChangeGame1vs1] El juego {gameId} ya concluyó o fue liquidado.");
+                if (!string.IsNullOrEmpty(callerConnectionId))
                 {
-                    gameId = move.game,
-                    message = "Esta partida ya ha concluido y fue liquidada.",
-                    redirectTo = "/desk"
-                });
+                    await _staticHubContext.Clients.Client(callerConnectionId).SendAsync("GameAlreadyFinished", new
+                    {
+                        gameId = gameId,
+                        message = "Esta partida ya ha concluido y fue liquidada.",
+                        redirectTo = "/desk"
+                    });
+                }
                 return;
             }
 
             // Debounce para evitar ejecuciones dobles si ambos clientes llaman ChangeGame1vs1 simultáneamente
             lock (_handChangeLock1vs1)
             {
-                if (_lastHandChangeTime1vs1.TryGetValue(move.game, out DateTime lastChange) &&
+                if (_lastHandChangeTime1vs1.TryGetValue(gameId, out DateTime lastChange) &&
                     (DateTime.UtcNow - lastChange).TotalMilliseconds < 2500)
                 {
-                    GameLogger.Log(move.game, "ChangeGame1vs1", "Ignorando llamada duplicada a ChangeGame1vs1 por debounce.");
+                    GameLogger.Log(gameId, "ChangeGame1vs1", "Ignorando llamada duplicada a ChangeGame1vs1 por debounce.");
                     return;
                 }
-                _lastHandChangeTime1vs1[move.game] = DateTime.UtcNow;
+                _lastHandChangeTime1vs1[gameId] = DateTime.UtcNow;
             }
 
             // Alternancia estricta de la salida ("una y una")
@@ -795,11 +811,13 @@ namespace PericonAPI.Hubs
                 if (p1Active != null && !string.IsNullOrEmpty(p1Active.Id))
                 {
                     games[numg].IdPOne = p1Active.Id;
+                    games[numg].P1DisconnectedAt = null;
                 }
                 var p2Active = users.FirstOrDefault(u => u.Name == games[numg].NamePTwo);
                 if (p2Active != null && !string.IsNullOrEmpty(p2Active.Id))
                 {
                     games[numg].IdPTwo = p2Active.Id;
+                    games[numg].P2DisconnectedAt = null;
                 }
             }
 
@@ -814,15 +832,15 @@ namespace PericonAPI.Hubs
             {
                 GameMessage sentencePOne = new GameMessage
                 {
-                    game = move.game,
+                    game = gameId,
                     order = 87,
                     content = MaskInitHand1vs1(PThree, true) + "-" + PFour + PScore
                 };
                 Console.WriteLine($"[ChangeGame1vs1] Mano {games[numg].HandCount}: Salida corresponde a P{games[numg].HandStarter}. Enviando a POne ({POne})");
-                await Clients.Client(POne).SendAsync("setChangeHand", sentencePOne);
-                await Clients.Client(POne).SendAsync("GameHandUpdated1vs1", new
+                await _staticHubContext.Clients.Client(POne).SendAsync("setChangeHand", sentencePOne);
+                await _staticHubContext.Clients.Client(POne).SendAsync("GameHandUpdated1vs1", new
                 {
-                    game = move.game,
+                    game = gameId,
                     handCards = MaskInitHand1vs1(PThree, true),
                     handStarter = games[numg].HandStarter,
                     pointsOne = games[numg].PointsOne,
@@ -834,15 +852,15 @@ namespace PericonAPI.Hubs
             {
                 GameMessage sentencePTwo = new GameMessage
                 {
-                    game = move.game,
+                    game = gameId,
                     order = 87,
                     content = MaskInitHand1vs1(PThree, false) + "-" + PFive + PScore
                 };
                 Console.WriteLine($"[ChangeGame1vs1] Mano {games[numg].HandCount}: Salida corresponde a P{games[numg].HandStarter}. Enviando a PTwo ({PTwo})");
-                await Clients.Client(PTwo).SendAsync("setChangeHand", sentencePTwo);
-                await Clients.Client(PTwo).SendAsync("GameHandUpdated1vs1", new
+                await _staticHubContext.Clients.Client(PTwo).SendAsync("setChangeHand", sentencePTwo);
+                await _staticHubContext.Clients.Client(PTwo).SendAsync("GameHandUpdated1vs1", new
                 {
-                    game = move.game,
+                    game = gameId,
                     handCards = MaskInitHand1vs1(PThree, false),
                     handStarter = games[numg].HandStarter,
                     pointsOne = games[numg].PointsOne,
@@ -855,7 +873,7 @@ namespace PericonAPI.Hubs
                 _ = Task.Run(async () =>
                 {
                     await Task.Delay(Random.Shared.Next(2400, 3600));
-                    await ExecuteBotMove1vs1(move.game);
+                    await ExecuteBotMove1vs1(gameId);
                 });
             }
         }
@@ -1425,9 +1443,22 @@ namespace PericonAPI.Hubs
             await Groups.AddToGroupAsync(Context.ConnectionId, $"game1vs1_{id}");
             string PZero = FindInitHand(id);
 
-            // Actualizar ConnectionId activo del cliente en la partida
-            if (flag) games[numg].IdPOne = Context.ConnectionId;
-            else games[numg].IdPTwo = Context.ConnectionId;
+            // Actualizar ConnectionId activo del cliente en la partida y reiniciar contadores de desconexión
+            if (flag)
+            {
+                games[numg].IdPOne = Context.ConnectionId;
+                games[numg].P1DisconnectedAt = null;
+            }
+            else
+            {
+                games[numg].IdPTwo = Context.ConnectionId;
+                games[numg].P2DisconnectedAt = null;
+            }
+
+            if (games[numg].IsBotMatch)
+            {
+                games[numg].P2DisconnectedAt = null;
+            }
 
             string targetOpp = flag ? games[numg].IdPTwo : games[numg].IdPOne;
             if (!string.IsNullOrEmpty(targetOpp))
@@ -1486,7 +1517,7 @@ namespace PericonAPI.Hubs
             return result;
         }
 
-        private int FindGame1vs1(int index)
+        private static int FindGame1vs1(int index)
         {
             int result = -1;
             int contador = -1;
@@ -1645,6 +1676,17 @@ namespace PericonAPI.Hubs
             // Asegurar que el socket activo esté vinculado al grupo de la sala 1vs1
             await Groups.AddToGroupAsync(Context.ConnectionId, $"game1vs1_{move.game}");
 
+            if (isPlayerOne)
+            {
+                games[numg].IdPOne = Context.ConnectionId;
+                games[numg].P1DisconnectedAt = null;
+            }
+            else
+            {
+                games[numg].IdPTwo = Context.ConnectionId;
+                games[numg].P2DisconnectedAt = null;
+            }
+
             string targetOpp = isPlayerOne ? games[numg].IdPTwo : games[numg].IdPOne;
             GameMessage sentence = new GameMessage();
 
@@ -1682,6 +1724,9 @@ namespace PericonAPI.Hubs
                 games[numg].LeadPlayer = isPlayerOne ? 1 : 2;
                 games[numg].PlayerTurn = !isPlayerOne; // Pasa el turno al contrincante que responde
                 games[numg].LastTurnActionAt = DateTime.UtcNow;
+
+                if (isPlayerOne) games[numg].CardsOne.RemoveAll(c => c.Id == leadCardId);
+                else games[numg].CardsTwo.RemoveAll(c => c.Id == leadCardId);
 
                 Console.WriteLine($"[RequestCard1vs1 LEAD] Jugador {(isPlayerOne ? 1 : 2)} lanzó carta {leadCardId}. Enviando 84 a rival ({targetOpp})");
 
@@ -1757,6 +1802,11 @@ namespace PericonAPI.Hubs
                 int respCard = cardtwo;
 
                 bool leadIsPlayerOne = (games[numg].LeadPlayer == 1);
+                if (leadIsPlayerOne) games[numg].CardsTwo.RemoveAll(c => c.Id == respCard);
+                else games[numg].CardsOne.RemoveAll(c => c.Id == respCard);
+                // Asegurar que la carta líder también quede descontada
+                if (leadIsPlayerOne) games[numg].CardsOne.RemoveAll(c => c.Id == leadCard);
+                else games[numg].CardsTwo.RemoveAll(c => c.Id == leadCard);
 
                 // Capturar el estado de Tumba al inicio de la baza:
                 bool wasInTumbaOne = games[numg].IsTumbaOne;
@@ -1921,7 +1971,20 @@ namespace PericonAPI.Hubs
                 await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("ResponseCard1vs1", sentence);
                 await Clients.Client(Context.ConnectionId).SendAsync("ReasonRound1vs1", rdef);
 
-                if (games[numg].IsBotMatch && !games[numg].IsFinished && games[numg].PlayerTurn == false && games[numg].RoundOne < 2 && games[numg].RoundTwo < 2)
+                if (games[numg].IsBotMatch && !games[numg].IsFinished && games[numg].RoundOne == 0 && games[numg].RoundTwo == 0)
+                {
+                    int gId = move.game;
+                    _ = Task.Run(async () =>
+                    {
+                        await Task.Delay(3000);
+                        int idx = FindGame1vs1(gId);
+                        if (idx >= 0 && idx < games.Count && !games[idx].IsFinished && games[idx].IsActive && games[idx].RoundOne == 0 && games[idx].RoundTwo == 0)
+                        {
+                            await ChangeGame1vs1Core(gId);
+                        }
+                    });
+                }
+                else if (games[numg].IsBotMatch && !games[numg].IsFinished && games[numg].PlayerTurn == false && games[numg].RoundOne < 2 && games[numg].RoundTwo < 2)
                 {
                     _ = Task.Run(async () =>
                     {
@@ -2604,9 +2667,27 @@ namespace PericonAPI.Hubs
                 {
                     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
                     virtualBots = await db.Users.Where(u => u.IsVirtualBot && u.IsActive).ToListAsync();
+                    if (virtualBots.Count == 0)
+                    {
+                        var botNames = new[] { "joel", "maría", "maria", "gloria", "la gorda", "pedro", "ramón", "ramon" };
+                        virtualBots = await db.Users.Where(u => botNames.Contains(u.Username.ToLower()) && u.IsActive).ToListAsync();
+                        foreach (var b in virtualBots) b.IsVirtualBot = true;
+                        if (virtualBots.Count > 0) await db.SaveChangesAsync();
+                    }
                 }
 
-                if (virtualBots.Count == 0) return;
+                if (virtualBots.Count == 0)
+                {
+                    virtualBots = new List<User>
+                    {
+                        new User { Id = 901, Username = "Joel", Email = "joel.bot@pericon.lat", BotDifficulty = "facil", IsVirtualBot = true, IsActive = true },
+                        new User { Id = 902, Username = "María", Email = "maria.bot@pericon.lat", BotDifficulty = "facil", IsVirtualBot = true, IsActive = true },
+                        new User { Id = 903, Username = "Gloria", Email = "gloria.bot@pericon.lat", BotDifficulty = "facil", IsVirtualBot = true, IsActive = true },
+                        new User { Id = 904, Username = "La Gorda", Email = "lagorda.bot@pericon.lat", BotDifficulty = "facil", IsVirtualBot = true, IsActive = true },
+                        new User { Id = 905, Username = "Pedro", Email = "pedro.bot@pericon.lat", BotDifficulty = "facil", IsVirtualBot = true, IsActive = true },
+                        new User { Id = 906, Username = "Ramón", Email = "ramon.bot@pericon.lat", BotDifficulty = "facil", IsVirtualBot = true, IsActive = true }
+                    };
+                }
 
                 foreach (var item in expired1v1Items)
                 {
@@ -2715,6 +2796,7 @@ namespace PericonAPI.Hubs
                     Console.WriteLine($"[BotMove1vs1 LEAD] Bot '{targetGame.NamePTwo}' lanzó carta {cardToPlay.Id} (Mesa vacía). Esperando respuesta de humano ({targetGame.IdPOne}).");
 
                     await _staticHubContext.Clients.Client(targetGame.IdPOne).SendAsync("ResponseCard1vs1", sentence);
+                    await _staticHubContext.Clients.Group($"game1vs1_{gameId}").SendAsync("ResponseCard1vs1", sentence);
                 }
                 // CASO 2: El bot RESPONDE a la carta en mesa del humano (Pie)
                 else
@@ -2890,10 +2972,22 @@ namespace PericonAPI.Hubs
             targetGame.LeadPlayer = 0;
 
             await _staticHubContext.Clients.Client(targetGame.IdPOne).SendAsync("ResponseCard1vs1", sentence);
-            await _staticHubContext.Clients.Client(targetGame.IdPOne).SendAsync("ReasonRound1vs1", rdef);
+            await _staticHubContext.Clients.Group($"game1vs1_{targetGame.Id}").SendAsync("ResponseCard1vs1", sentence);
 
+            // Si la baza concluyó la mano (baza 2) y el juego continúa, programar nuevo reparto automático tras la pausa
+            if (targetGame.RoundOne == 0 && targetGame.RoundTwo == 0 && !targetGame.IsFinished && !isP1Winner && !isP2Winner)
+            {
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(3000);
+                    if (!targetGame.IsFinished && targetGame.IsActive && targetGame.RoundOne == 0 && targetGame.RoundTwo == 0)
+                    {
+                        await ChangeGame1vs1Core(targetGame.Id);
+                    }
+                });
+            }
             // Si el bot ganó la baza y la mano no concluyó, el bot debe salir con su siguiente carta tras pausa humana
-            if (!trickWinnerIsPlayerOne && targetGame.RoundOne < 2 && targetGame.RoundTwo < 2 && !targetGame.IsFinished)
+            else if (!trickWinnerIsPlayerOne && targetGame.RoundOne < 2 && targetGame.RoundTwo < 2 && !targetGame.IsFinished)
             {
                 _ = Task.Run(async () =>
                 {
@@ -3054,20 +3148,44 @@ namespace PericonAPI.Hubs
 
                     var now = DateTime.UtcNow;
 
-                    // Caso A: Ambos jugadores desconectados por más de 60 segundos -> Reembolso mutuo del 100% de las monedas
-                    if (g.P1DisconnectedAt.HasValue && g.P2DisconnectedAt.HasValue)
+                    // 1. Verificación en tiempo real de conexiones vivas en SignalR:
+                    bool p1Alive = false;
+                    bool p2Alive = false;
+                    lock (users)
+                    {
+                        p1Alive = users.Any(u => u.Id == g.IdPOne ||
+                            (!string.IsNullOrEmpty(g.UserIdPOne) && u.Id.ToString() == g.UserIdPOne) ||
+                            (!string.IsNullOrEmpty(g.NamePOne) && u.Name.Equals(g.NamePOne, StringComparison.OrdinalIgnoreCase)));
+
+                        p2Alive = g.IsBotMatch || users.Any(u => u.Id == g.IdPTwo ||
+                            (!string.IsNullOrEmpty(g.UserIdPTwo) && u.Id.ToString() == g.UserIdPTwo) ||
+                            (!string.IsNullOrEmpty(g.NamePTwo) && u.Name.Equals(g.NamePTwo, StringComparison.OrdinalIgnoreCase)));
+                    }
+
+                    // Si están activos en el servidor, jamás considerar desconectados
+                    if (p1Alive) g.P1DisconnectedAt = null;
+                    if (p2Alive) g.P2DisconnectedAt = null;
+
+                    // Caso A: AMBOS jugadores verdaderamente desconectados (ninguno está en línea) por más de 60 segundos
+                    // -> Reembolso mutuo del 100% de las monedas
+                    if (!p1Alive && !p2Alive && g.P1DisconnectedAt.HasValue && g.P2DisconnectedAt.HasValue)
                     {
                         var p1Elapsed = (now - g.P1DisconnectedAt.Value).TotalSeconds;
                         var p2Elapsed = (now - g.P2DisconnectedAt.Value).TotalSeconds;
                         if (p1Elapsed >= 60 && p2Elapsed >= 60)
                         {
-                            Console.WriteLine($"[GameScavenger] Partida {g.Id} abandonada por ambos jugadores. Reembolsando 100% de apuestas...");
+                            Console.WriteLine($"[GameScavenger] Partida {g.Id} abandonada por ambos jugadores (P1: {p1Elapsed:F0}s, P2: {p2Elapsed:F0}s desconectados). Reembolsando 100% de apuestas...");
                             await RefundAbandonedGame(g);
                             continue;
                         }
                     }
 
-                    // Caso B: Partida zombi o huérfana sin actividad por más de 15 minutos -> Reembolso de seguridad
+                    // Nota: Si un rival se desconecta pero el otro permanece en la sala, NO se fuerza victoria automática
+                    // por temporizador. Se respeta el modal de "Reclamar victoria" para que el jugador conectado decida si
+                    // acepta/reclama o espera pacientemente a que su rival se reconecte con sus mismas cartas.
+
+                    // Caso C: Partida zombi o huérfana sin actividad por más de 15 minutos en el limbo
+                    // -> Reembolso de seguridad para no retener monedas indefinidamente
                     var inactivityMinutes = (now - g.LastTurnActionAt).TotalMinutes;
                     if (inactivityMinutes >= 15)
                     {

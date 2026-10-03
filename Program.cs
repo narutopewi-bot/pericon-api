@@ -573,13 +573,15 @@ using (var scope = app.Services.CreateScope())
             else
             {
                 botUser.IsVirtualBot = true;
+                botUser.IsActive = true;
                 if (string.IsNullOrEmpty(botUser.BotDifficulty)) botUser.BotDifficulty = bDiff;
+                anyBotAdded = true;
             }
         }
         if (anyBotAdded)
         {
             db.SaveChanges();
-            Console.WriteLine("[VirtualBots] 6 Bots Virtuales 1vs1 inicializados en la base de datos.");
+            Console.WriteLine("[VirtualBots] 6 Bots Virtuales 1vs1 inicializados/actualizados en la base de datos.");
         }
     }
     catch (Exception ex)
