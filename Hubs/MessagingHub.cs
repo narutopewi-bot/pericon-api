@@ -86,6 +86,7 @@ namespace PericonAPI.Hubs
         private static IHubContext<MessagingHub>? _staticHubContext;
         private static IServiceScopeFactory? _staticScopeFactory;
         private static System.Threading.Timer? _gameScavengerTimer;
+        private static System.Threading.Timer? _matchmakingBotTimer;
         private static readonly object _scavengerLock = new object();
 
         public static void SetHubContext(IHubContext<MessagingHub> context)
@@ -108,6 +109,11 @@ namespace PericonAPI.Hubs
                 {
                     _gameScavengerTimer = new System.Threading.Timer(ScavengeAbandonedGames, null, TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(10));
                     Console.WriteLine("[GameScavenger] Centinela automático de partidas 1vs1 iniciado (revisión cada 10s).");
+                }
+                if (_matchmakingBotTimer == null)
+                {
+                    _matchmakingBotTimer = new System.Threading.Timer(ProcessMatchmakingQueueWithBots, null, TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(2));
+                    Console.WriteLine("[MatchmakingBots] Centinela de bots virtuales 1vs1 iniciado (revisión de cola cada 2s).");
                 }
             }
         }
@@ -137,6 +143,7 @@ namespace PericonAPI.Hubs
             public string Mode { get; set; } = "1 vs 1";
             public int Bet { get; set; } = 10;
             public DateTime EnqueuedAt { get; set; } = DateTime.UtcNow;
+            public int TargetBotWaitSeconds { get; set; } = Random.Shared.Next(30, 41);
         }
 
         public class Seat2v2
@@ -489,6 +496,15 @@ namespace PericonAPI.Hubs
                 await Clients.Client(sentto).SendAsync("Asked369Game", data);
             }
             await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("Asked369Game", data);
+
+            if (games[numg].IsBotMatch && callerIsP1)
+            {
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(Random.Shared.Next(1800, 2900));
+                    await ExecuteBotAnswerStake1vs1(move.game, move.order);
+                });
+            }
         }
 
         public async Task Answer369Game(GameMessage move)
@@ -655,7 +671,7 @@ namespace PericonAPI.Hubs
 
         // Métodos de desarrollo de los juegos a modo 1 vs 1
 
-        public GamePlayer GetPlayerData(string _id)
+        public static GamePlayer GetPlayerData(string _id)
         {
             lock (users)
             {
@@ -831,6 +847,15 @@ namespace PericonAPI.Hubs
                     handStarter = games[numg].HandStarter,
                     pointsOne = games[numg].PointsOne,
                     pointsTwo = games[numg].PointsTwo
+                });
+            }
+
+            if (games[numg].IsBotMatch && games[numg].HandStarter == 2)
+            {
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(Random.Shared.Next(2400, 3600));
+                    await ExecuteBotMove1vs1(move.game);
                 });
             }
         }
@@ -1425,6 +1450,15 @@ namespace PericonAPI.Hubs
             sentence.order = 81;
             sentence.content = MaskInitHand1vs1(PZero, flag) + "-" + (isMyTurn ? "1" : "0") + $"-{p1}-{p2}";
             await Clients.Client(Context.ConnectionId).SendAsync("SetInitHand", sentence);
+
+            if (numg >= 0 && numg < games.Count && games[numg].IsBotMatch && flag && !isMyTurn)
+            {
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(Random.Shared.Next(2200, 3400));
+                    await ExecuteBotMove1vs1(id);
+                });
+            }
         }
 
         private int FindGame1vs1(string player, bool position)
@@ -1657,6 +1691,15 @@ namespace PericonAPI.Hubs
                     await Clients.Client(targetOpp).SendAsync("ResponseCard1vs1", sentence);
                 }
                 await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("ResponseCard1vs1", sentence);
+
+                if (games[numg].IsBotMatch && games[numg].PlayerTurn == false)
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        await Task.Delay(Random.Shared.Next(1800, 3000));
+                        await ExecuteBotMove1vs1(move.game);
+                    });
+                }
             }
             else
             {
@@ -1878,6 +1921,15 @@ namespace PericonAPI.Hubs
                 }
                 await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("ResponseCard1vs1", sentence);
                 await Clients.Client(Context.ConnectionId).SendAsync("ReasonRound1vs1", rdef);
+
+                if (games[numg].IsBotMatch && !games[numg].IsFinished && games[numg].PlayerTurn == false && games[numg].RoundOne < 2 && games[numg].RoundTwo < 2)
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        await Task.Delay(Random.Shared.Next(1800, 2900));
+                        await ExecuteBotMove1vs1(move.game);
+                    });
+                }
             }
         }
         catch (Exception ex)
@@ -2360,6 +2412,28 @@ namespace PericonAPI.Hubs
                                 CreatedAt = DateTime.UtcNow
                             };
                             db.MatchBetRecords.Add(betRecord);
+
+                            if (game.IsBotMatch)
+                            {
+                                bool humanWon = (winnerConnectionId == game.IdPOne);
+                                var botRecord = new BotMatchRecord
+                                {
+                                    UserId = humanWon ? (finalWinnerDbId ?? (dbWinner?.Id ?? 0)) : (finalLoserDbId ?? (dbLoser?.Id ?? 0)),
+                                    Username = humanWon ? (dbWinner?.Username ?? winnerName) : (dbLoser?.Username ?? loserName),
+                                    BotName = !string.IsNullOrEmpty(game.NamePTwo) ? game.NamePTwo : "Joel",
+                                    BetAmount = bet,
+                                    UserWon = humanWon,
+                                    CoinsWon = humanWon ? (winnerPrize - bet) : 0,
+                                    CoinsLost = humanWon ? 0 : bet,
+                                    HouseProfit = humanWon ? -(winnerPrize - bet) : bet,
+                                    UserCoinsBefore = humanWon ? (winnerNewCoins - (winnerPrize - bet)) : (loserNewCoins + bet),
+                                    UserCoinsAfter = humanWon ? winnerNewCoins : loserNewCoins,
+                                    EndReason = reason,
+                                    CreatedAt = DateTime.UtcNow
+                                };
+                                db.BotMatchRecords.Add(botRecord);
+                            }
+
                             await db.SaveChangesAsync();
 
                             GameLogger.Log(game.Id, "ProcessMatchPayout", $"[{(isSala ? "SALA 100%" : "DUELO 10%")}] Ganador={dbWinner?.Username ?? winnerName} (Saldo={winnerNewCoins}), Perdedor={dbLoser?.Username ?? loserName} (Saldo={loserNewCoins}), Premio={winnerPrize}, Casa={houseCommission}, Razon={reason}");
@@ -2398,7 +2472,10 @@ namespace PericonAPI.Hubs
                         newWins = winnerWins,
                         newLosses = winnerLosses,
                         level = winnerLevel,
-                        message = winnerMessage
+                        message = winnerMessage,
+                        winnerName = finalWinnerName,
+                        loserName = finalLoserName,
+                        rivalName = finalLoserName
                     });
 
                     if (!string.IsNullOrEmpty(loserConnectionId))
@@ -2416,7 +2493,10 @@ namespace PericonAPI.Hubs
                             newWins = loserWins,
                             newLosses = loserLosses,
                             level = loserLevel,
-                            message = loserMessage
+                            message = loserMessage,
+                            winnerName = finalWinnerName,
+                            loserName = finalLoserName,
+                            rivalName = finalWinnerName
                         });
                     }
 
@@ -2475,7 +2555,10 @@ namespace PericonAPI.Hubs
                                 newWins = loserWins,
                                 newLosses = loserLosses,
                                 level = loserLevel,
-                                message = loserMessage
+                                message = loserMessage,
+                                winnerName = finalWinnerName,
+                                loserName = finalLoserName,
+                                rivalName = finalWinnerName
                             });
                         }
                     }
@@ -2484,6 +2567,464 @@ namespace PericonAPI.Hubs
                 {
                     Console.WriteLine($"[ProcessMatchPayout Send Error] {ex.Message}");
                 }
+            }
+        }
+
+        // =========================================================================
+        // MOTOR AUTÓNOMO DE BOTS VIRTUALES 1 VS 1 (Joel, María, Gloria, La Gorda, Pedro, Ramón)
+        // =========================================================================
+
+        private static async void ProcessMatchmakingQueueWithBots(object? state)
+        {
+            if (_staticHubContext == null || _staticScopeFactory == null) return;
+            try
+            {
+                List<MatchQueueItem> expired1v1Items = new List<MatchQueueItem>();
+                DateTime now = DateTime.UtcNow;
+
+                lock (queueLock)
+                {
+                    lock (users)
+                    {
+                        matchmakingQueue.RemoveAll(q => !users.Any(u => u.Id == q.ConnectionId));
+                    }
+
+                    // Identificar jugadores en espera de 1vs1 que ya alcanzaron su ventana aleatoria (30 a 40 segundos)
+                    var candidates = matchmakingQueue.Where(q => q.Mode == "1 vs 1" && (now - q.EnqueuedAt).TotalSeconds >= q.TargetBotWaitSeconds).ToList();
+                    foreach (var item in candidates)
+                    {
+                        matchmakingQueue.Remove(item);
+                        expired1v1Items.Add(item);
+                    }
+                }
+
+                if (expired1v1Items.Count == 0) return;
+
+                List<User> virtualBots = new List<User>();
+                using (var scope = _staticScopeFactory.CreateScope())
+                {
+                    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                    virtualBots = await db.Users.Where(u => u.IsVirtualBot && u.IsActive).ToListAsync();
+                }
+
+                if (virtualBots.Count == 0) return;
+
+                foreach (var item in expired1v1Items)
+                {
+                    var bot = virtualBots[Random.Shared.Next(virtualBots.Count)];
+
+                    string p1 = item.ConnectionId;
+                    string p2 = $"BOT_{bot.Id}_{Guid.NewGuid().ToString("N")[..6]}";
+
+                    GamePlayOneVsOne newGame = new GamePlayOneVsOne(p1, p2);
+                    newGame.Coins = item.Bet;
+                    newGame.IsBotMatch = true;
+                    newGame.BotId = bot.Id;
+                    newGame.BotDifficulty = !string.IsNullOrEmpty(bot.BotDifficulty) ? bot.BotDifficulty : "facil";
+
+                    GamePlayer q1 = GetPlayerData(p1);
+                    string name1 = !string.IsNullOrEmpty(item.PlayerName) && !item.PlayerName.StartsWith("Jugador-")
+                        ? item.PlayerName
+                        : (!string.IsNullOrEmpty(q1.Name) && !q1.Name.StartsWith("Jugador-") ? q1.Name : "Jugador 1");
+
+                    newGame.NamePOne = name1;
+                    newGame.NamePTwo = bot.Username;
+                    newGame.UserIdPOne = item.UserId ?? "";
+                    newGame.UserIdPTwo = bot.Id.ToString();
+                    newGame.EmailPOne = q1.Email ?? "";
+                    newGame.EmailPTwo = bot.Email;
+                    newGame.RoomName = $"match-{newGame.Id}";
+                    newGame.IsFriendlyRoom = false;
+
+                    lock (users)
+                    {
+                        var u1 = users.FirstOrDefault(u => u.Id == p1);
+                        if (u1 != null && !string.IsNullOrEmpty(name1) && !name1.StartsWith("Jugador-")) u1.Name = name1;
+                    }
+
+                    // Sorteo de mano inicial 50% / 50%
+                    Random rng = new Random();
+                    int startP = rng.Next(2) == 0 ? 1 : 2;
+                    newGame.HandStarter = startP;
+                    newGame.PlayerTurn = (startP == 1);
+                    newGame.HandCount = 1;
+
+                    newGame.Deck.RandomCards();
+                    newGame.Id = newGame.GenerateSeed(games);
+                    newGame.ShuffleCards_1vs1();
+
+                    lock (games)
+                    {
+                        games.Add(newGame);
+                    }
+
+                    await _staticHubContext.Groups.AddToGroupAsync(p1, $"game1vs1_{newGame.Id}");
+
+                    Console.WriteLine($"[MatchmakingBot] Humano {p1} ({name1}) emparejado con Bot Virtual '{bot.Username}' (Dificultad: {newGame.BotDifficulty}, Espera: {(now - item.EnqueuedAt).TotalSeconds:F1}s). Juego: {newGame.Id}");
+
+                    GameMessage msgP1 = new GameMessage
+                    {
+                        game = newGame.Id,
+                        order = 99,
+                        content = $"{p1}|{name1}|{p2}|{bot.Username}|1"
+                    };
+
+                    await _staticHubContext.Clients.Client(p1).SendAsync("MatchFound", msgP1);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ProcessMatchmakingQueueWithBots Exception] {ex.Message}");
+            }
+        }
+
+        private static async Task ExecuteBotMove1vs1(int gameId)
+        {
+            if (_staticHubContext == null) return;
+            try
+            {
+                int numg = -1;
+                lock (games)
+                {
+                    numg = games.FindIndex(g => g.Id == gameId);
+                }
+                if (numg < 0 || numg >= games.Count) return;
+
+                var targetGame = games[numg];
+                if (!targetGame.IsActive || targetGame.HasPaidOut || targetGame.IsFinished || !targetGame.IsBotMatch) return;
+
+                // CASO 1: El bot sale de MANO (Lead play) -> La mesa está vacía
+                if (targetGame.CurrentLeadMove == null)
+                {
+                    if (targetGame.CardsTwo.Count == 0) return;
+
+                    Card cardToPlay = targetGame.PopCardTwo(false);
+                    targetGame.CardPlayed = cardToPlay;
+
+                    GameMessage sentence = new GameMessage
+                    {
+                        game = gameId,
+                        order = 84,
+                        content = $"{targetGame.IdPTwo} {targetGame.IdPOne} {cardToPlay.Id} 0"
+                    };
+
+                    targetGame.CurrentLeadMove = sentence;
+                    targetGame.LeadPlayer = 2; // Bot es P2
+                    targetGame.PlayerTurn = true; // Turno pasa al humano para responder
+                    targetGame.LastTurnActionAt = DateTime.UtcNow;
+
+                    Console.WriteLine($"[BotMove1vs1 LEAD] Bot '{targetGame.NamePTwo}' lanzó carta {cardToPlay.Id} (Mesa vacía). Esperando respuesta de humano ({targetGame.IdPOne}).");
+
+                    await _staticHubContext.Clients.Client(targetGame.IdPOne).SendAsync("ResponseCard1vs1", sentence);
+                }
+                // CASO 2: El bot RESPONDE a la carta en mesa del humano (Pie)
+                else
+                {
+                    if (targetGame.LeadPlayer != 1) return; // Solo responder si el humano fue el que salió
+
+                    int leadCardId = 0;
+                    if (!string.IsNullOrEmpty(targetGame.CurrentLeadMove.content))
+                    {
+                        var parts = targetGame.CurrentLeadMove.content.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                        if (parts.Length > 2 && int.TryParse(parts[2], out int parsedC))
+                        {
+                            leadCardId = parsedC;
+                        }
+                    }
+
+                    Card botCard = targetGame.PopCardTwo(false, leadCardId);
+                    int respCardId = botCard.Id;
+
+                    Console.WriteLine($"[BotMove1vs1 RESP] Bot '{targetGame.NamePTwo}' responde con carta {respCardId} a la salida {leadCardId} del humano.");
+
+                    await ResolveBotResponsePlay1vs1(numg, leadCardId, respCardId);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ExecuteBotMove1vs1 Exception] {ex.Message}");
+            }
+        }
+
+        private static async Task ResolveBotResponsePlay1vs1(int numg, int cardone, int cardtwo)
+        {
+            if (numg < 0 || numg >= games.Count || _staticHubContext == null) return;
+            var targetGame = games[numg];
+
+            int cardzero = targetGame.Life?.Id ?? 0;
+            string rone = targetGame.RoundOne.ToString();
+            string rtwo = targetGame.RoundTwo.ToString();
+            string pone = targetGame.PointsOne.ToString();
+            string ptwo = targetGame.PointsTwo.ToString();
+            string mdef = "";
+            string rdef = "";
+
+            bool wasInTumbaOne = targetGame.IsTumbaOne;
+            bool wasInTumbaTwo = targetGame.IsTumbaTwo;
+
+            bool isTumbaMulti = wasInTumbaOne || wasInTumbaTwo ||
+                               targetGame.PointsOne >= 9 || targetGame.PointsTwo >= 9 ||
+                               (targetGame.IsTumbaDeParaAtrasOne && targetGame.PointsOne == 8) ||
+                               (targetGame.IsTumbaDeParaAtrasTwo && targetGame.PointsTwo == 8);
+
+            bool isCogida = false;
+            int cogidaWinner = 0;
+            if (!isTumbaMulti && ((cardone == 7 && cardtwo == 0) || (cardone == 0 && cardtwo == 7)))
+            {
+                isCogida = true;
+                cogidaWinner = (cardone == 0) ? 1 : 2;
+                if (cogidaWinner == 1) targetGame.PointsOne += 3;
+                else targetGame.PointsTwo += 3;
+            }
+
+            // cardone = carta de salida del humano, cardtwo = respuesta del bot
+            string cardwin = GamePlayOneVsOne.DetermineGame1vs1(cardone, cardtwo, cardzero, true);
+            mdef = cardwin;
+
+            bool trickWinnerIsPlayerOne = (cardwin == "1");
+
+            targetGame.PlayerTurn = trickWinnerIsPlayerOne;
+            targetGame.LastTurnActionAt = DateTime.UtcNow;
+
+            int stake = targetGame.CurrentStake > 0 ? targetGame.CurrentStake : 1;
+
+            bool isP1Winner = false;
+            bool isP2Winner = false;
+
+            if (trickWinnerIsPlayerOne)
+            {
+                targetGame.RoundOne++;
+                rone = targetGame.RoundOne.ToString();
+                if (targetGame.RoundOne == 2)
+                {
+                    mdef = "3";
+                    targetGame.RoundOne = 0;
+                    targetGame.RoundTwo = 0;
+
+                    if (wasInTumbaOne && wasInTumbaTwo)
+                    {
+                        mdef = "5";
+                        isP1Winner = true;
+                    }
+                    else if (wasInTumbaOne)
+                    {
+                        mdef = "5";
+                        isP1Winner = true;
+                    }
+                    else if (wasInTumbaTwo)
+                    {
+                        int oldP1 = targetGame.PointsOne;
+                        int oldP2 = targetGame.PointsTwo;
+                        targetGame.PointsTwo = Math.Max(0, targetGame.PointsTwo - 3);
+                        targetGame.PointsOne += 3;
+                        targetGame.UpdateTumbaStatus(oldP1, oldP2);
+                    }
+                    else
+                    {
+                        int oldP1 = targetGame.PointsOne;
+                        int oldP2 = targetGame.PointsTwo;
+                        targetGame.PointsOne += stake;
+                        targetGame.UpdateTumbaStatus(oldP1, oldP2);
+                    }
+
+                    if (isP1Winner)
+                    {
+                        await ProcessMatchPayoutCore(numg, targetGame.IdPOne, targetGame.IdPTwo, "VictoriaPorPuntos");
+                    }
+                }
+            }
+            else
+            {
+                targetGame.RoundTwo++;
+                rtwo = targetGame.RoundTwo.ToString();
+                if (targetGame.RoundTwo == 2)
+                {
+                    mdef = "2";
+                    targetGame.RoundOne = 0;
+                    targetGame.RoundTwo = 0;
+
+                    if (wasInTumbaOne && wasInTumbaTwo)
+                    {
+                        mdef = "4";
+                        isP2Winner = true;
+                    }
+                    else if (wasInTumbaTwo)
+                    {
+                        mdef = "4";
+                        isP2Winner = true;
+                    }
+                    else if (wasInTumbaOne)
+                    {
+                        int oldP1 = targetGame.PointsOne;
+                        int oldP2 = targetGame.PointsTwo;
+                        targetGame.PointsOne = Math.Max(0, targetGame.PointsOne - 3);
+                        targetGame.PointsTwo += 3;
+                        targetGame.UpdateTumbaStatus(oldP1, oldP2);
+                    }
+                    else
+                    {
+                        int oldP1 = targetGame.PointsOne;
+                        int oldP2 = targetGame.PointsTwo;
+                        targetGame.PointsTwo += stake;
+                        targetGame.UpdateTumbaStatus(oldP1, oldP2);
+                    }
+
+                    if (isP2Winner)
+                    {
+                        await ProcessMatchPayoutCore(numg, targetGame.IdPTwo, targetGame.IdPOne, "VictoriaPorPuntos");
+                    }
+                }
+            }
+
+            pone = targetGame.PointsOne.ToString();
+            ptwo = targetGame.PointsTwo.ToString();
+
+            GameMessage sentence = new GameMessage
+            {
+                game = targetGame.Id,
+                order = 85,
+                content = $"{cardone} {cardtwo} {cardzero} {cardwin} {mdef} {rone} {rtwo} {pone} {ptwo}"
+            };
+            rdef = $"{cardwin} {mdef} {rone} {rtwo} {pone} {ptwo}";
+
+            targetGame.CurrentLeadMove = null;
+            targetGame.LeadPlayer = 0;
+
+            await _staticHubContext.Clients.Client(targetGame.IdPOne).SendAsync("ResponseCard1vs1", sentence);
+            await _staticHubContext.Clients.Client(targetGame.IdPOne).SendAsync("ReasonRound1vs1", rdef);
+
+            // Si el bot ganó la baza y la mano no concluyó, el bot debe salir con su siguiente carta tras pausa humana
+            if (!trickWinnerIsPlayerOne && targetGame.RoundOne < 2 && targetGame.RoundTwo < 2 && !targetGame.IsFinished)
+            {
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(Random.Shared.Next(1800, 2900));
+                    await ExecuteBotMove1vs1(targetGame.Id);
+                });
+            }
+        }
+
+        private static async Task ExecuteBotAnswerStake1vs1(int gameId, int order)
+        {
+            if (_staticHubContext == null) return;
+            try
+            {
+                int numg = -1;
+                lock (games)
+                {
+                    numg = games.FindIndex(g => g.Id == gameId);
+                }
+                if (numg < 0 || numg >= games.Count) return;
+                var g = games[numg];
+                if (!g.IsActive || g.HasPaidOut || g.IsFinished) return;
+
+                int handScore = 0;
+                foreach (var c in g.CardsTwo)
+                {
+                    handScore += GamePlayOneVsOne.EvaluateCard(c.Id, g.Life.Id);
+                }
+
+                string diff = !string.IsNullOrEmpty(g.BotDifficulty) ? g.BotDifficulty : GamePlayOneVsOne.BotDifficultyMode;
+                double acceptProb = diff switch
+                {
+                    "facil" => 0.35,
+                    "dificil" => 0.65,
+                    _ => 0.50
+                };
+
+                if (handScore >= 45) acceptProb += 0.30;
+                else if (handScore <= 20) acceptProb -= 0.20;
+
+                bool accept = Random.Shared.NextDouble() < acceptProb;
+
+                int chosen = 0;
+                if (order == 70 || order == 73) chosen = accept ? 2 : 3;
+                else if (order == 71 || order == 74) chosen = accept ? 5 : 6;
+                else if (order == 72 || order == 75) chosen = accept ? 8 : 9;
+                else chosen = accept ? 2 : 3;
+
+                await ProcessStakeAnswer1vs1Internal(numg, chosen);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ExecuteBotAnswerStake1vs1 Exception] {ex.Message}");
+            }
+        }
+
+        private static async Task ProcessStakeAnswer1vs1Internal(int numg, int chosen)
+        {
+            if (numg < 0 || numg >= games.Count || _staticHubContext == null) return;
+            var g = games[numg];
+            if (!g.IsActive || g.HasPaidOut || g.IsFinished) return;
+
+            GameMessage data = new GameMessage
+            {
+                game = g.Id,
+                order = 77
+            };
+
+            int oldP1 = g.PointsOne;
+            int oldP2 = g.PointsTwo;
+
+            switch (chosen)
+            {
+                case 2: // Bot acepta 3
+                    g.CurrentStake = 3;
+                    g.Ask369 = 3;
+                    g.LastStakeAsker = 1;
+                    g.PendingAsk369Message = null;
+                    data.content = $"2 {g.PointsOne} {g.PointsTwo}";
+                    await _staticHubContext.Clients.Client(g.IdPOne).SendAsync("Answered369Game", data);
+                    break;
+                case 3: // Bot rechaza 3 -> P1 (humano) gana 1 punto
+                    g.Ask369 = -1;
+                    g.LastStakeAsker = 0;
+                    g.RoundOne = 0;
+                    g.RoundTwo = 0;
+                    g.PendingAsk369Message = null;
+                    g.PointsOne += 1;
+                    g.UpdateTumbaStatus(oldP1, oldP2);
+                    data.content = $"3 {g.PointsOne} {g.PointsTwo}";
+                    await _staticHubContext.Clients.Client(g.IdPOne).SendAsync("Answered369Game", data);
+                    break;
+                case 5: // Bot acepta 6
+                    g.CurrentStake = 6;
+                    g.Ask369 = 6;
+                    g.LastStakeAsker = 1;
+                    g.PendingAsk369Message = null;
+                    data.content = $"5 {g.PointsOne} {g.PointsTwo}";
+                    await _staticHubContext.Clients.Client(g.IdPOne).SendAsync("Answered369Game", data);
+                    break;
+                case 6: // Bot rechaza 6 -> P1 gana 3 puntos pactados
+                    g.Ask369 = -1;
+                    g.LastStakeAsker = 0;
+                    g.RoundOne = 0;
+                    g.RoundTwo = 0;
+                    g.PendingAsk369Message = null;
+                    g.PointsOne += 3;
+                    g.UpdateTumbaStatus(oldP1, oldP2);
+                    data.content = $"6 {g.PointsOne} {g.PointsTwo}";
+                    await _staticHubContext.Clients.Client(g.IdPOne).SendAsync("Answered369Game", data);
+                    break;
+                case 8: // Bot acepta 9
+                    g.CurrentStake = 9;
+                    g.Ask369 = 9;
+                    g.LastStakeAsker = 1;
+                    g.PendingAsk369Message = null;
+                    data.content = $"8 {g.PointsOne} {g.PointsTwo}";
+                    await _staticHubContext.Clients.Client(g.IdPOne).SendAsync("Answered369Game", data);
+                    break;
+                case 9: // Bot rechaza 9 -> P1 gana 6 puntos pactados
+                    g.Ask369 = -1;
+                    g.LastStakeAsker = 0;
+                    g.RoundOne = 0;
+                    g.RoundTwo = 0;
+                    g.PendingAsk369Message = null;
+                    g.PointsOne += 6;
+                    g.UpdateTumbaStatus(oldP1, oldP2);
+                    data.content = $"9 {g.PointsOne} {g.PointsTwo}";
+                    await _staticHubContext.Clients.Client(g.IdPOne).SendAsync("Answered369Game", data);
+                    break;
             }
         }
 
@@ -3224,6 +3765,14 @@ namespace PericonAPI.Hubs
                     newGame2v2.Name2 = n2;
                     newGame2v2.Name3 = n3;
                     newGame2v2.Name4 = n4;
+                    newGame2v2.UserId1 = shuffled[0].UserId ?? "";
+                    newGame2v2.UserId2 = shuffled[1].UserId ?? "";
+                    newGame2v2.UserId3 = shuffled[2].UserId ?? "";
+                    newGame2v2.UserId4 = shuffled[3].UserId ?? "";
+                    newGame2v2.Email1 = GetPlayerData(p1)?.Email ?? "";
+                    newGame2v2.Email2 = GetPlayerData(p2)?.Email ?? "";
+                    newGame2v2.Email3 = GetPlayerData(p3)?.Email ?? "";
+                    newGame2v2.Email4 = GetPlayerData(p4)?.Email ?? "";
 
                     newGame2v2.Id = newGame2v2.GenerateSeed(games2vs2);
                     newGame2v2.ShuffleCards_2vs2();

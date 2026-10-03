@@ -222,6 +222,80 @@ namespace PericonAPI.Controllers
             });
         }
 
+        public class UpdateBotDifficultyRequest
+        {
+            public int BotId { get; set; }
+            public string Difficulty { get; set; } = "facil";
+            public bool? IsActive { get; set; }
+        }
+
+        [HttpGet("virtual-bots")]
+        public async Task<IActionResult> GetVirtualBots()
+        {
+            var bots = await _context.Users
+                .Where(u => u.IsVirtualBot)
+                .OrderBy(u => u.Id)
+                .ToListAsync();
+
+            var botMatches = await _context.BotMatchRecords.ToListAsync();
+
+            var result = bots.Select(b =>
+            {
+                var matches = botMatches.Where(m => m.BotName.Equals(b.Username, StringComparison.OrdinalIgnoreCase)).ToList();
+                int totalMatches = matches.Count;
+                int botWins = matches.Count(m => !m.UserWon);
+                int botLosses = matches.Count(m => m.UserWon);
+                int houseProfit = matches.Sum(m => m.HouseProfit);
+                double winRate = totalMatches > 0 ? Math.Round((double)botWins / totalMatches * 100, 1) : 0;
+
+                return new
+                {
+                    id = b.Id,
+                    username = b.Username,
+                    avatarUrl = b.AvatarUrl,
+                    level = b.GetCalculatedLevel(),
+                    coins = b.Coins,
+                    isActive = b.IsActive,
+                    difficulty = b.BotDifficulty ?? "facil",
+                    totalMatches,
+                    botWins,
+                    botLosses,
+                    winRate,
+                    houseProfit
+                };
+            }).ToList();
+
+            return Ok(result);
+        }
+
+        [HttpPost("virtual-bots/difficulty")]
+        public async Task<IActionResult> UpdateVirtualBotDifficulty([FromBody] UpdateBotDifficultyRequest request)
+        {
+            if (request == null || request.BotId <= 0)
+                return BadRequest(new { message = "ID de bot inválido." });
+
+            var bot = await _context.Users.FirstOrDefaultAsync(u => u.Id == request.BotId && u.IsVirtualBot);
+            if (bot == null)
+                return NotFound(new { message = "Bot no encontrado." });
+
+            if (!string.IsNullOrWhiteSpace(request.Difficulty))
+            {
+                var diff = request.Difficulty.Trim().ToLowerInvariant();
+                if (diff == "facil" || diff == "medio" || diff == "dificil")
+                {
+                    bot.BotDifficulty = diff;
+                }
+            }
+
+            if (request.IsActive.HasValue)
+            {
+                bot.IsActive = request.IsActive.Value;
+            }
+
+            await _context.SaveChangesAsync();
+            return Ok(new { success = true, message = $"Configuración de {bot.Username} actualizada.", bot });
+        }
+
         [HttpGet("bot-stabilization")]
         public async Task<IActionResult> GetBotStabilization()
         {
@@ -341,8 +415,99 @@ namespace PericonAPI.Controllers
             {
                 success = true,
                 message = $"Usuario '{clean}' removido de la lista de estabilización.",
-                stabilizedUsers = GamePlayOneVsOne.StabilizedUsers,
-                stabilizedUserIds = GamePlayOneVsOne.StabilizedUserIds
+            });
+        }
+
+        [HttpGet("vip-users")]
+        public async Task<IActionResult> GetVipUsers()
+        {
+            var vipIds = GamePlayOneVsOne.FavoredVipUserIds.ToList();
+            var vipNames = GamePlayOneVsOne.FavoredVipUsers.ToList();
+            var vipEmails = GamePlayOneVsOne.FavoredVipEmails.ToList();
+
+            var usersFromDb = await _context.Users
+                .Where(u => vipIds.Contains(u.Id) || vipNames.Contains(u.Username) || (u.Email != null && vipEmails.Contains(u.Email)))
+                .Select(u => new
+                {
+                    u.Id,
+                    u.Username,
+                    u.Email,
+                    u.AvatarUrl,
+                    u.Coins,
+                    u.Wins,
+                    u.Losses
+                })
+                .ToListAsync();
+
+            return Ok(new
+            {
+                success = true,
+                vipUsers = usersFromDb,
+                configuredIds = vipIds,
+                configuredUsernames = vipNames,
+                configuredEmails = vipEmails
+            });
+        }
+
+        [HttpPost("vip-users")]
+        public async Task<IActionResult> AddVipUser([FromBody] ManageStabilizationRequest req)
+        {
+            if (string.IsNullOrWhiteSpace(req.Username) && req.UserId <= 0)
+            {
+                return BadRequest(new { message = "Debe especificar un nombre de usuario o ID." });
+            }
+
+            string uname = req.Username?.Trim() ?? "";
+            int uid = req.UserId;
+            string email = "";
+
+            if (uid <= 0 && !string.IsNullOrEmpty(uname))
+            {
+                var dbU = await _context.Users.FirstOrDefaultAsync(u => u.Username.ToLower() == uname.ToLower());
+                if (dbU != null) { uid = dbU.Id; email = dbU.Email ?? ""; }
+            }
+            else if (uid > 0)
+            {
+                var dbU = await _context.Users.FindAsync(uid);
+                if (dbU != null) { uname = dbU.Username; email = dbU.Email ?? ""; }
+            }
+
+            GamePlayOneVsOne.AddFavoredVipUser(uname, uid, email);
+
+            return Ok(new
+            {
+                success = true,
+                message = $"Usuario VIP '{uname}' (ID {uid}) añadido con ventaja exclusiva.",
+                vipUsers = GamePlayOneVsOne.FavoredVipUsers,
+                vipUserIds = GamePlayOneVsOne.FavoredVipUserIds,
+                vipEmails = GamePlayOneVsOne.FavoredVipEmails
+            });
+        }
+
+        [HttpDelete("vip-users/{identifier}")]
+        public IActionResult RemoveVipUser(string identifier)
+        {
+            if (string.IsNullOrWhiteSpace(identifier))
+            {
+                return BadRequest(new { message = "Identificador requerido." });
+            }
+
+            string clean = identifier.Trim();
+            if (int.TryParse(clean, out int uid))
+            {
+                GamePlayOneVsOne.RemoveFavoredVipUser("", uid);
+            }
+            else
+            {
+                GamePlayOneVsOne.RemoveFavoredVipUser(clean, 0, clean.Contains("@") ? clean : null);
+            }
+
+            return Ok(new
+            {
+                success = true,
+                message = $"Usuario VIP '{clean}' removido de la ventaja exclusiva.",
+                vipUsers = GamePlayOneVsOne.FavoredVipUsers,
+                vipUserIds = GamePlayOneVsOne.FavoredVipUserIds
             });
         }
 

@@ -45,6 +45,11 @@ namespace PericonAPI.Models
 
         public bool IsAdmin { get; set; } = false;
 
+        public bool IsVirtualBot { get; set; } = false;
+
+        [MaxLength(20)]
+        public string BotDifficulty { get; set; } = "facil"; // facil, medio, dificil
+
         public DateTime? LastDailyClaim { get; set; }
 
         public bool HasClaimedInstagramReward { get; set; } = false;

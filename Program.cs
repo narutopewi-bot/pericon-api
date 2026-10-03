@@ -134,6 +134,8 @@ using (var scope = app.Services.CreateScope())
         try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN HasClaimedInstagramReward INTEGER NOT NULL DEFAULT 0;"); } catch { }
         try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN InstagramHandle TEXT NULL;"); } catch { }
         try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN BonusCoins INTEGER NOT NULL DEFAULT 0;"); } catch { }
+        try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN IsVirtualBot INTEGER NOT NULL DEFAULT 0;"); } catch { }
+        try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN BotDifficulty TEXT NOT NULL DEFAULT 'facil';"); } catch { }
         try
         {
             db.Database.ExecuteSqlRaw(@"
@@ -323,6 +325,8 @@ using (var scope = app.Services.CreateScope())
         try
         {
             db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""BonusCoins"" INTEGER NOT NULL DEFAULT 0;");
+            db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""IsVirtualBot"" BOOLEAN NOT NULL DEFAULT FALSE;");
+            db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""BotDifficulty"" VARCHAR(20) NOT NULL DEFAULT 'facil';");
         }
         catch { }
 
@@ -527,6 +531,60 @@ using (var scope = app.Services.CreateScope())
     catch (Exception ex)
     {
         Console.WriteLine($"[Guardian Setup Error] {ex.Message}");
+    }
+
+    // Garantizar existencia de los Bots Virtuales 1 vs 1 (Joel, María, Gloria, La Gorda, Pedro, Ramón)
+    try
+    {
+        var virtualBots = new (string Username, string Email, string Level, int Wins, int Losses, int Coins, string Avatar, string Diff)[]
+        {
+            ("Joel", "joel.bot@pericon.lat", "Llanero Respetado", 24, 15, 1450, "/avatar.png", "facil"),
+            ("María", "maria.bot@pericon.lat", "Doña de la Mesa", 19, 12, 1120, "/avatar.png", "facil"),
+            ("Gloria", "gloria.bot@pericon.lat", "Capataz del Hato", 29, 18, 1890, "/avatar.png", "facil"),
+            ("La Gorda", "lagorda.bot@pericon.lat", "Dueña de la Hierra", 38, 22, 2350, "/avatar.png", "facil"),
+            ("Pedro", "pedro.bot@pericon.lat", "Patrón de Casona", 27, 16, 1600, "/avatar.png", "facil"),
+            ("Ramón", "ramon.bot@pericon.lat", "Catador de Cocuy", 31, 20, 1780, "/avatar.png", "facil")
+        };
+
+        bool anyBotAdded = false;
+        foreach (var (bName, bEmail, bLevel, bWins, bLosses, bCoins, bAvatar, bDiff) in virtualBots)
+        {
+            var botUser = db.Users.FirstOrDefault(u => u.Username.ToLower() == bName.ToLower());
+            if (botUser == null)
+            {
+                db.Users.Add(new User
+                {
+                    Username = bName,
+                    Email = bEmail,
+                    PasswordHash = BCrypt.Net.BCrypt.HashPassword($"BotPass.{bName}.2026"),
+                    Coins = bCoins,
+                    Wins = bWins,
+                    Losses = bLosses,
+                    Level = bLevel,
+                    AvatarUrl = bAvatar,
+                    IsActive = true,
+                    IsAdmin = false,
+                    IsVirtualBot = true,
+                    BotDifficulty = bDiff,
+                    CreatedAt = DateTime.UtcNow.AddDays(-15)
+                });
+                anyBotAdded = true;
+            }
+            else
+            {
+                botUser.IsVirtualBot = true;
+                if (string.IsNullOrEmpty(botUser.BotDifficulty)) botUser.BotDifficulty = bDiff;
+            }
+        }
+        if (anyBotAdded)
+        {
+            db.SaveChanges();
+            Console.WriteLine("[VirtualBots] 6 Bots Virtuales 1vs1 inicializados en la base de datos.");
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[VirtualBots Seed Error] {ex.Message}");
     }
 
     // Garantizar código promocional inicial de bienvenida

@@ -23,6 +23,16 @@ namespace PericonAPI.Models
         public string Name3 { get; set; } = "Compañero";
         public string Name4 { get; set; } = "Rival 2";
 
+        public string Email1 { get; set; } = string.Empty;
+        public string Email2 { get; set; } = string.Empty;
+        public string Email3 { get; set; } = string.Empty;
+        public string Email4 { get; set; } = string.Empty;
+
+        public string UserId1 { get; set; } = string.Empty;
+        public string UserId2 { get; set; } = string.Empty;
+        public string UserId3 { get; set; } = string.Empty;
+        public string UserId4 { get; set; } = string.Empty;
+
         public bool IsBot1 { get; set; } = false;
         public bool IsBot2 { get; set; } = false;
         public bool IsBot3 { get; set; } = false;
@@ -182,17 +192,17 @@ namespace PericonAPI.Models
 
         public void ApplyVipSubtleAdvantage_2vs2(int lifeId)
         {
-            var players = new (List<Card> hand, string name)[]
+            var players = new (List<Card> hand, string name, string userId, string email)[]
             {
-                (Cards1, Name1),
-                (Cards2, Name2),
-                (Cards3, Name3),
-                (Cards4, Name4)
+                (Cards1, Name1, UserId1, Email1),
+                (Cards2, Name2, UserId2, Email2),
+                (Cards3, Name3, UserId3, Email3),
+                (Cards4, Name4, UserId4, Email4)
             };
 
             foreach (var p in players)
             {
-                if (GamePlayOneVsOne.IsFavoredVipUser(0, p.name, null, null))
+                if (GamePlayOneVsOne.IsFavoredVipUser(0, p.name, p.userId, p.email))
                 {
                     // 1. Inyectar al menos 1 triunfo sutil / basurita si no tiene triunfos
                     int trumps = p.hand.Count(c => GamePlayOneVsOne.EvaluateCard(c.Id, lifeId) >= 11);
