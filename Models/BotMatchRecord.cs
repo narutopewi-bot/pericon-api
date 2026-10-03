@@ -10,8 +10,9 @@ namespace PericonAPI.Models
         public string BotName { get; set; } = "Pericón (Bot IA)";
         public int BetAmount { get; set; }
         public bool UserWon { get; set; }
-        public int CoinsWon { get; set; }        // Monedas ganadas por el usuario (+bet si ganó, 0 si perdió)
+        public int CoinsWon { get; set; }        // Monedas ganadas por el usuario (+premio neto si ganó, 0 si perdió)
         public int CoinsLost { get; set; }       // Monedas perdidas por el usuario (0 si ganó, bet si perdió)
+        public int HouseCommission { get; set; } = 0; // 10% de comisión de la casa por jugar contra el bot
         public int HouseProfit { get; set; }     // Impacto neto en la casa (+CoinsLost cuando bot gana, -CoinsWon cuando usuario gana)
         public int UserCoinsBefore { get; set; }
         public int UserCoinsAfter { get; set; }

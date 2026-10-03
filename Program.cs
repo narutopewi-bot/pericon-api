@@ -253,6 +253,7 @@ using (var scope = app.Services.CreateScope())
                     UserWon INTEGER NOT NULL,
                     CoinsWon INTEGER NOT NULL,
                     CoinsLost INTEGER NOT NULL,
+                    HouseCommission INTEGER NOT NULL DEFAULT 0,
                     HouseProfit INTEGER NOT NULL,
                     UserCoinsBefore INTEGER NOT NULL,
                     UserCoinsAfter INTEGER NOT NULL,
@@ -358,6 +359,7 @@ using (var scope = app.Services.CreateScope())
                     ""UserWon"" BOOLEAN NOT NULL,
                     ""CoinsWon"" INT NOT NULL,
                     ""CoinsLost"" INT NOT NULL,
+                    ""HouseCommission"" INT NOT NULL DEFAULT 0,
                     ""HouseProfit"" INT NOT NULL,
                     ""UserCoinsBefore"" INT NOT NULL,
                     ""UserCoinsAfter"" INT NOT NULL,
@@ -494,6 +496,20 @@ using (var scope = app.Services.CreateScope())
             Console.WriteLine($"[AutoSeed Error] {ex.Message}");
         }
     }
+
+    // Migración automática: Columna HouseCommission en BotMatchRecords (10% de comisión por jugar contra el bot)
+    try
+    {
+        if (db.Database.IsSqlite())
+        {
+            db.Database.ExecuteSqlRaw("ALTER TABLE BotMatchRecords ADD COLUMN HouseCommission INTEGER NOT NULL DEFAULT 0;");
+        }
+        else
+        {
+            db.Database.ExecuteSqlRaw(@"ALTER TABLE ""BotMatchRecords"" ADD COLUMN IF NOT EXISTS ""HouseCommission"" INT NOT NULL DEFAULT 0;");
+        }
+    }
+    catch { }
 
     // Garantizar existencia y credenciales del usuario Administrador 'Guardian'
     try

@@ -2623,6 +2623,7 @@ namespace PericonAPI.Hubs
                                     UserWon = humanWon,
                                     CoinsWon = humanWon ? (winnerPrize - bet) : 0,
                                     CoinsLost = humanWon ? 0 : bet,
+                                    HouseCommission = houseCommission,
                                     HouseProfit = humanWon ? -(winnerPrize - bet) : bet,
                                     UserCoinsBefore = humanWon ? (winnerNewCoins - (winnerPrize - bet)) : (loserNewCoins + bet),
                                     UserCoinsAfter = humanWon ? winnerNewCoins : loserNewCoins,

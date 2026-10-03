@@ -120,15 +120,26 @@ namespace PericonAPI.Controllers
             int coinsBefore = user.Coins;
             int coinsWon = 0;
             int coinsLost = 0;
+            int houseCommission = 0;
             int houseProfit = 0;
 
             if (dto.Won)
             {
                 user.Wins += 1;
-                user.Coins += bet;
-                coinsWon = bet;
+                houseCommission = (int)Math.Round(bet * 0.10);
+                int userPrize = bet - houseCommission;
+
+                // Si el frontend ya calculó el cambio neto con comisión descontada:
+                if (dto.CoinsChange > 0 && dto.CoinsChange <= bet)
+                {
+                    userPrize = dto.CoinsChange;
+                    houseCommission = Math.Max(0, bet - userPrize);
+                }
+
+                user.Coins += userPrize;
+                coinsWon = userPrize;
                 coinsLost = 0;
-                houseProfit = -bet; // La casa pagó el premio
+                houseProfit = -userPrize; // Impacto neto para la casa tras retener el 10% de comisión
             }
             else
             {
@@ -139,7 +150,8 @@ namespace PericonAPI.Controllers
                 user.BonusCoins = Math.Max(0, user.BonusCoins - lossDeduction);
                 coinsWon = 0;
                 coinsLost = lossDeduction;
-                houseProfit = lossDeduction; // La casa retuvo la apuesta
+                houseCommission = 0;
+                houseProfit = lossDeduction; // La casa retuvo la apuesta completa
             }
 
             user.Level = user.GetCalculatedLevel();
@@ -153,10 +165,11 @@ namespace PericonAPI.Controllers
                 UserWon = dto.Won,
                 CoinsWon = coinsWon,
                 CoinsLost = coinsLost,
+                HouseCommission = houseCommission,
                 HouseProfit = houseProfit,
                 UserCoinsBefore = coinsBefore,
                 UserCoinsAfter = user.Coins,
-                EndReason = !string.IsNullOrWhiteSpace(dto.EndReason) ? dto.EndReason : (dto.Won ? "Victoria del Jugador" : "Victoria de la Máquina"),
+                EndReason = !string.IsNullOrWhiteSpace(dto.EndReason) ? dto.EndReason : (dto.Won ? "Victoria del Jugador (Comisión 10%)" : "Victoria de la Máquina"),
                 CreatedAt = DateTime.UtcNow
             };
 

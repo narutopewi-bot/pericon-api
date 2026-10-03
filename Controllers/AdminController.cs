@@ -70,6 +70,7 @@ namespace PericonAPI.Controllers
             var totalBotMatches = botMatches.Count;
             var totalBotCoinsWagered = botMatches.Sum(m => m.BetAmount);
             var totalBotHouseProfit = botMatches.Sum(m => m.HouseProfit);
+            var totalBotHouseCommissions = botMatches.Sum(m => m.HouseCommission);
             var totalBotUserWins = botMatches.Count(m => m.UserWon);
             var totalBotWins = botMatches.Count(m => !m.UserWon);
 
@@ -110,6 +111,7 @@ namespace PericonAPI.Controllers
                 totalBotMatches,
                 totalBotCoinsWagered,
                 totalBotHouseProfit,
+                totalBotHouseCommissions,
                 totalBotUserWins,
                 totalBotWins,
                 combinedTotalMatches,
@@ -624,6 +626,7 @@ namespace PericonAPI.Controllers
             var totalCoinsWagered = allList.Sum(m => m.BetAmount);
             var totalCoinsWonByUser = allList.Sum(m => m.CoinsWon);
             var totalCoinsWonByHouse = allList.Sum(m => m.CoinsLost);
+            var totalHouseCommission = allList.Sum(m => m.HouseCommission);
             var netHouseProfit = allList.Sum(m => m.HouseProfit);
 
             // CÁLCULO DIARIO (Hora de Venezuela UTC-4): Inicia en Cero a la medianoche
@@ -641,6 +644,7 @@ namespace PericonAPI.Controllers
             var todayCoinsWagered = todayList.Sum(m => m.BetAmount);
             var todayCoinsWonByUser = todayList.Sum(m => m.CoinsWon);
             var todayCoinsWonByHouse = todayList.Sum(m => m.CoinsLost);
+            var todayHouseCommission = todayList.Sum(m => m.HouseCommission);
             var todayNetHouseProfit = todayList.Sum(m => m.HouseProfit);
 
             var todaySummary = new
@@ -654,6 +658,7 @@ namespace PericonAPI.Controllers
                 totalCoinsWagered = todayCoinsWagered,
                 coinsWonByUser = todayCoinsWonByUser,
                 coinsWonByHouse = todayCoinsWonByHouse,
+                houseCommission = todayHouseCommission,
                 netHouseProfit = todayNetHouseProfit,
                 targetWinRate = 60.0
             };
@@ -680,6 +685,7 @@ namespace PericonAPI.Controllers
                         totalCoinsWagered = g.Sum(m => m.BetAmount),
                         coinsWonByUser = g.Sum(m => m.CoinsWon),
                         coinsWonByHouse = g.Sum(m => m.CoinsLost),
+                        houseCommission = g.Sum(m => m.HouseCommission),
                         netHouseProfit = g.Sum(m => m.HouseProfit)
                     };
                 })
@@ -697,6 +703,7 @@ namespace PericonAPI.Controllers
                     userWon = m.UserWon,
                     coinsWon = m.CoinsWon,
                     coinsLost = m.CoinsLost,
+                    houseCommission = m.HouseCommission,
                     houseProfit = m.HouseProfit,
                     userCoinsBefore = m.UserCoinsBefore,
                     userCoinsAfter = m.UserCoinsAfter,
@@ -717,6 +724,7 @@ namespace PericonAPI.Controllers
                     totalCoinsWagered,
                     totalCoinsWonByUser,
                     totalCoinsWonByHouse,
+                    totalHouseCommission,
                     netHouseProfit
                 },
                 todaySummary,
@@ -1220,6 +1228,7 @@ namespace PericonAPI.Controllers
             var totalBotMatches = botMatches.Count;
             var totalBotWagered = botMatches.Sum(m => m.BetAmount);
             var totalBotHouseProfit = botMatches.Sum(m => m.HouseProfit);
+            var totalBotHouseCommissions = botMatches.Sum(m => m.HouseCommission);
 
             var userCoinsInCirculation = await _context.Users.SumAsync(u => u.Coins);
 
@@ -1250,6 +1259,7 @@ namespace PericonAPI.Controllers
                     totalBotMatchesPlayed = totalBotMatches,
                     totalBotCoinsWagered = totalBotWagered,
                     totalBotHouseProfit = totalBotHouseProfit,
+                    totalBotHouseCommissions = totalBotHouseCommissions,
                     totalCombinedProfit = totalCommissions + totalBotHouseProfit
                 }
             });
