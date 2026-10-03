@@ -779,9 +779,9 @@ namespace PericonAPI.Hubs
             lock (_handChangeLock1vs1)
             {
                 if (_lastHandChangeTime1vs1.TryGetValue(gameId, out DateTime lastChange) &&
-                    (DateTime.UtcNow - lastChange).TotalMilliseconds < 2500)
+                    (DateTime.UtcNow - lastChange).TotalMilliseconds < 6000)
                 {
-                    GameLogger.Log(gameId, "ChangeGame1vs1", "Ignorando llamada duplicada a ChangeGame1vs1 por debounce.");
+                    GameLogger.Log(gameId, "ChangeGame1vs1", "Ignorando llamada duplicada a ChangeGame1vs1 por debounce (6s).");
                     return;
                 }
                 _lastHandChangeTime1vs1[gameId] = DateTime.UtcNow;
@@ -1968,15 +1968,18 @@ namespace PericonAPI.Hubs
                 {
                     await Clients.Client(targetOpp).SendAsync("ResponseCard1vs1", sentence);
                 }
-                await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("ResponseCard1vs1", sentence);
+                else
+                {
+                    await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("ResponseCard1vs1", sentence);
+                }
                 await Clients.Client(Context.ConnectionId).SendAsync("ReasonRound1vs1", rdef);
 
-                if (games[numg].IsBotMatch && !games[numg].IsFinished && games[numg].RoundOne == 0 && games[numg].RoundTwo == 0)
+                if (!games[numg].IsFinished && games[numg].RoundOne == 0 && games[numg].RoundTwo == 0)
                 {
                     int gId = move.game;
                     _ = Task.Run(async () =>
                     {
-                        await Task.Delay(3000);
+                        await Task.Delay(4500);
                         int idx = FindGame1vs1(gId);
                         if (idx >= 0 && idx < games.Count && !games[idx].IsFinished && games[idx].IsActive && games[idx].RoundOne == 0 && games[idx].RoundTwo == 0)
                         {
@@ -2972,14 +2975,13 @@ namespace PericonAPI.Hubs
             targetGame.LeadPlayer = 0;
 
             await _staticHubContext.Clients.Client(targetGame.IdPOne).SendAsync("ResponseCard1vs1", sentence);
-            await _staticHubContext.Clients.Group($"game1vs1_{targetGame.Id}").SendAsync("ResponseCard1vs1", sentence);
 
             // Si la baza concluyó la mano (baza 2) y el juego continúa, programar nuevo reparto automático tras la pausa
             if (targetGame.RoundOne == 0 && targetGame.RoundTwo == 0 && !targetGame.IsFinished && !isP1Winner && !isP2Winner)
             {
                 _ = Task.Run(async () =>
                 {
-                    await Task.Delay(3000);
+                    await Task.Delay(4500);
                     if (!targetGame.IsFinished && targetGame.IsActive && targetGame.RoundOne == 0 && targetGame.RoundTwo == 0)
                     {
                         await ChangeGame1vs1Core(targetGame.Id);
