@@ -2590,17 +2590,22 @@ namespace PericonAPI.Hubs
 
                         if (dbWinner != null || dbLoser != null)
                         {
+                            string p1NameFallback = !string.IsNullOrWhiteSpace(game.NamePOne) ? game.NamePOne : SearchPlayer(game.IdPOne).Name;
+                            string p2NameFallback = !string.IsNullOrWhiteSpace(game.NamePTwo) ? game.NamePTwo : SearchPlayer(game.IdPTwo).Name;
+                            string winUser = dbWinner?.Username ?? (!string.IsNullOrWhiteSpace(winnerName) ? winnerName : (!string.IsNullOrWhiteSpace(finalWinnerName) ? finalWinnerName : "Desconocido"));
+                            string loseUser = dbLoser?.Username ?? (!string.IsNullOrWhiteSpace(loserName) ? loserName : (!string.IsNullOrWhiteSpace(finalLoserName) ? finalLoserName : "Desconocido"));
+
                             var betRecord = new MatchBetRecord
                             {
                                 GameId = game.Id,
-                                PlayerOneName = !string.IsNullOrEmpty(game.NamePOne) ? game.NamePOne : SearchPlayer(game.IdPOne).Name,
-                                PlayerTwoName = !string.IsNullOrEmpty(game.NamePTwo) ? game.NamePTwo : SearchPlayer(game.IdPTwo).Name,
+                                PlayerOneName = !string.IsNullOrWhiteSpace(p1NameFallback) ? p1NameFallback : "Jugador 1",
+                                PlayerTwoName = !string.IsNullOrWhiteSpace(p2NameFallback) ? p2NameFallback : "Jugador 2",
                                 BetPerPlayer = bet,
                                 TotalPot = totalPot,
                                 HouseCommission = houseCommission,
                                 WinnerPrize = winnerPrize,
-                                WinnerUsername = dbWinner?.Username ?? winnerName,
-                                LoserUsername = dbLoser?.Username ?? loserName,
+                                WinnerUsername = !string.IsNullOrWhiteSpace(winUser) ? winUser : "Desconocido",
+                                LoserUsername = !string.IsNullOrWhiteSpace(loseUser) ? loseUser : "Desconocido",
                                 EndReason = isSala ? $"[SALA 100%] {reason}" : reason,
                                 CreatedAt = DateTime.UtcNow
                             };
@@ -3270,7 +3275,7 @@ namespace PericonAPI.Hubs
                 List<GamePlayOneVsOne> activeGames;
                 lock (games)
                 {
-                    activeGames = games.Where(g => g.IsActive && !g.HasPaidOut && !g.IsFinished).ToList();
+                    activeGames = games.Where(g => !g.IsSolitaire && g.IsActive && !g.HasPaidOut && !g.IsFinished).ToList();
                 }
 
                 foreach (var g in activeGames)
@@ -3412,7 +3417,7 @@ namespace PericonAPI.Hubs
 
         private static async Task RefundAbandonedGame(GamePlayOneVsOne game)
         {
-            if (game == null || !game.IsActive || game.HasPaidOut || game.IsFinished) return;
+            if (game == null || !game.IsActive || game.HasPaidOut || game.IsFinished || game.IsSolitaire || string.IsNullOrEmpty(game.IdPTwo)) return;
 
             game.IsActive = false;
             game.HasPaidOut = true;
@@ -3455,8 +3460,8 @@ namespace PericonAPI.Hubs
                             var refundRecord = new MatchBetRecord
                             {
                                 GameId = game.Id,
-                                PlayerOneName = game.NamePOne ?? "P1",
-                                PlayerTwoName = game.NamePTwo ?? "P2",
+                                PlayerOneName = !string.IsNullOrWhiteSpace(game.NamePOne) ? game.NamePOne : (dbP1?.Username ?? "Jugador 1"),
+                                PlayerTwoName = !string.IsNullOrWhiteSpace(game.NamePTwo) ? game.NamePTwo : (dbP2?.Username ?? "Jugador 2"),
                                 BetPerPlayer = bet,
                                 TotalPot = bet * 2,
                                 HouseCommission = 0,
@@ -4317,6 +4322,8 @@ namespace PericonAPI.Hubs
             lock (games)
             {
                 var activeGame = games.FirstOrDefault(g =>
+                    !g.IsSolitaire && !g.IsBotMatch &&
+                    !string.IsNullOrEmpty(g.IdPTwo) && !string.IsNullOrEmpty(g.NamePTwo) &&
                     g.IsActive && !g.IsFinished && !g.HasPaidOut &&
                     ((!string.IsNullOrEmpty(userId) && (g.UserIdPOne == userId || g.UserIdPTwo == userId)) ||
                      (!string.IsNullOrEmpty(playerName) && (g.NamePOne.Equals(playerName, StringComparison.OrdinalIgnoreCase) || g.NamePTwo.Equals(playerName, StringComparison.OrdinalIgnoreCase))))
@@ -4393,6 +4400,15 @@ namespace PericonAPI.Hubs
 
             var game = games[numg];
             if (!game.IsActive || game.IsFinished || game.HasPaidOut) return;
+
+            // BLINDAJE: Si es solitario, bot o no hay un segundo jugador humano real en la partida, cancelar limpiamente sin multas ni cobros
+            if (game.IsSolitaire || game.IsBotMatch || string.IsNullOrEmpty(game.IdPTwo) || string.IsNullOrEmpty(game.NamePTwo))
+            {
+                Console.WriteLine($"[AbandonActiveMatch1vs1] Partida {gameId} es solitaria o incompleta. Cancelando sin penalización.");
+                game.IsActive = false;
+                game.IsFinished = true;
+                return;
+            }
 
             if (Context.ConnectionId == game.IdPOne) isPlayerOne = true;
             else if (Context.ConnectionId == game.IdPTwo) isPlayerOne = false;
