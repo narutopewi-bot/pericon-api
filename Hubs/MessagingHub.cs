@@ -3446,16 +3446,18 @@ namespace PericonAPI.Hubs
                                 (!string.IsNullOrEmpty(game.UserIdPTwo) && u.Id.ToString() == game.UserIdPTwo) ||
                                 (!string.IsNullOrEmpty(game.NamePTwo) && u.Username.ToLower() == game.NamePTwo.ToLower()));
 
+                            // BLINDAJE CONTABLE ANTI MONEDAS FANTASMA:
+                            // En El Pericón las apuestas no se debitan al crear ni iniciar la partida
+                            // (se descuentan únicamente al perdedor al finalizar la partida en ProcessMatchPayout).
+                            // Por ende, cancelar una partida por abandono mutuo NO debe sumar monedas adicionales.
                             if (dbP1 != null)
                             {
-                                dbP1.Coins += bet;
-                                Console.WriteLine($"[RefundAbandonedGame] Reembolsadas {bet} monedas a P1 ({dbP1.Username}). Nuevo saldo: {dbP1.Coins}");
+                                Console.WriteLine($"[RefundAbandonedGame] Partida cancelada por abandono mutuo. P1 ({dbP1.Username}) saldo intacto: {dbP1.Coins}");
                             }
 
                             if (dbP2 != null)
                             {
-                                dbP2.Coins += bet;
-                                Console.WriteLine($"[RefundAbandonedGame] Reembolsadas {bet} monedas a P2 ({dbP2.Username}). Nuevo saldo: {dbP2.Coins}");
+                                Console.WriteLine($"[RefundAbandonedGame] Partida cancelada por abandono mutuo. P2 ({dbP2.Username}) saldo intacto: {dbP2.Coins}");
                             }
 
                             var refundRecord = new MatchBetRecord
@@ -3747,42 +3749,69 @@ namespace PericonAPI.Hubs
                         var userTodayBotMatches = todayBotMatches
                             .Where(m => m.UserId == uId || (m.Username != null && m.Username.ToLower() == newgame.NamePOne.ToLower()))
                             .ToList();
+                        int userTodayTotal = userTodayBotMatches.Count;
+                        int userTodayWins = userTodayBotMatches.Count(m => m.UserWon);
                         int userTodayLosses = userTodayBotMatches.Count(m => !m.UserWon);
+                        int userTodayCoinsWon = userTodayBotMatches.Sum(m => m.CoinsWon);
+                        int userTodayCoinsLost = userTodayBotMatches.Sum(m => m.CoinsLost);
+                        int userTodayNetProfit = userTodayCoinsWon - userTodayCoinsLost;
 
-                        // 3. Calcular racha de derrotas consecutivas recientes del usuario (victorias seguidas del bot)
-                        var recentBotMatches = userBotMatches.OrderByDescending(m => m.CreatedAt).Take(10).ToList();
+                        // 3. Calcular rachas consecutivas recientes (tanto derrotas como victorias)
+                        var recentBotMatches = userBotMatches.OrderByDescending(m => m.CreatedAt).Take(15).ToList();
                         int consecutiveBotWins = 0;
-                        foreach (var m in recentBotMatches)
+                        int consecutiveUserWins = 0;
+
+                        if (recentBotMatches.Count > 0 && recentBotMatches[0].UserWon)
                         {
-                            if (!m.UserWon)
+                            foreach (var m in recentBotMatches)
                             {
-                                consecutiveBotWins++;
+                                if (m.UserWon) consecutiveUserWins++;
+                                else break;
                             }
-                            else
+                        }
+                        else if (recentBotMatches.Count > 0 && !recentBotMatches[0].UserWon)
+                        {
+                            foreach (var m in recentBotMatches)
                             {
-                                break;
+                                if (!m.UserWon) consecutiveBotWins++;
+                                else break;
                             }
                         }
 
                         bool isManuallyTargeted = GamePlayOneVsOne.IsUserTargetedForStabilization(uId, newgame.NamePOne);
+
+                        // =========================================================================
+                        // PLAN B AUTÓNOMO (FRENO FINANCIERO Y ANTIDESFALCO DE LA CASA)
+                        // Se activa automáticamente sin necesidad de que el administrador esté pendiente cuando:
+                        // 1. El usuario acumula 2 o más victorias consecutivas contra el bot (corta rachas abusivas).
+                        // 2. El usuario lleva un beneficio neto hoy >= 1,000 monedas.
+                        // 3. El usuario ha jugado >= 3 partidas hoy y su tasa de victoria supera el 65% (violando el margen 60/40).
+                        // 4. El beneficio global histórico del usuario contra el bot supera +2,000 monedas.
+                        // =========================================================================
+                        bool isPlanBTriggered = 
+                            (consecutiveUserWins >= 2) ||
+                            (userTodayNetProfit >= 1000) ||
+                            (userTodayTotal >= 3 && ((double)userTodayWins / userTodayTotal) > 0.65) ||
+                            (userNetProfitAgainstBot >= 2000);
+
                         string currentDifficulty = (GamePlayOneVsOne.BotDifficultyMode ?? "facil").Trim().ToLowerInvariant();
 
-                        // 1. Si el usuario está manualmente marcado en estabilización (ej: Memo):
-                        if (isManuallyTargeted)
+                        // 1. Si está bajo estabilización manual o se disparó el Plan B autónomo:
+                        if (isManuallyTargeted || isPlanBTriggered)
                         {
                             newgame.UserBalanceMode = UserBotBalanceMode.DefendHouse;
                             newgame.IsTargetedForStabilization = true;
                             newgame.MustFavorUserToBreakStreak = false;
-                            Console.WriteLine($"[BotDifficulty] Usuario {newgame.NamePOne} (ID {uId}) bajo estabilización manual. Modo defensivo activado.");
+                            Console.WriteLine($"[PlanB-Antidesfalco] ACTIVADO para {newgame.NamePOne} (ID {uId}). Manual={isManuallyTargeted}, RachaVictorias={consecutiveUserWins}, BeneficioHoy={userTodayNetProfit}, Histórico={userNetProfitAgainstBot}, VictoriasHoy={userTodayWins}/{userTodayTotal}. Modo DefendHouse en marcha.");
                         }
-                        // 2. Modo FÁCIL: 40% Casa / 60% Jugador (Márgenes a favor del jugador para atraer clientes)
+                        // 2. Modo FÁCIL: 40% Casa / 60% Jugador (Márgenes normales)
                         else if (currentDifficulty == "facil")
                         {
                             newgame.UserBalanceMode = UserBotBalanceMode.BalancedGradualEdge;
                             newgame.IsTargetedForStabilization = false;
 
-                            // Si el usuario tuvo 1 o más derrotas consecutivas, favorecerlo de inmediato para romper racha:
-                            if (consecutiveBotWins >= 1)
+                            // Solo romper racha si el usuario lleva 2 o más derrotas consecutivas (nunca por 1 sola):
+                            if (consecutiveBotWins >= 2)
                             {
                                 newgame.MustFavorUserToBreakStreak = true;
                             }
@@ -3801,7 +3830,7 @@ namespace PericonAPI.Hubs
 
                             if (consecutiveBotWins >= 2)
                             {
-                                newgame.MustFavorUserToBreakStreak = true; // Control antiracha
+                                newgame.MustFavorUserToBreakStreak = true;
                             }
                             else
                             {

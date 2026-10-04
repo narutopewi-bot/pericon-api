@@ -68,9 +68,9 @@ namespace PericonAPI.Models
             SaveBotSettingsToFile();
         }
 
-        // Lista de usuarios bajo estabilización de ventaja de la casa (ej: Memo)
-        public static HashSet<string> StabilizedUsers { get; set; } = new(StringComparer.OrdinalIgnoreCase) { "Memo" };
-        public static HashSet<int> StabilizedUserIds { get; set; } = new() { 34 };
+        // Lista de usuarios bajo estabilización de ventaja de la casa (ej: Memo, Marpro74)
+        public static HashSet<string> StabilizedUsers { get; set; } = new(StringComparer.OrdinalIgnoreCase) { "Memo", "Marpro74" };
+        public static HashSet<int> StabilizedUserIds { get; set; } = new() { 34, 39 };
         public static double StabilizationTargetHouseWinRate { get; set; } = 0.60;
 
         private static readonly string SettingsFilePath = Path.Combine(AppContext.BaseDirectory, "bot_settings.json");
@@ -86,7 +86,7 @@ namespace PericonAPI.Models
             if (!string.IsNullOrWhiteSpace(username))
             {
                 string clean = username.Trim();
-                if (clean.Equals("Memo", StringComparison.OrdinalIgnoreCase)) return true;
+                if (clean.Equals("Memo", StringComparison.OrdinalIgnoreCase) || clean.Equals("Marpro74", StringComparison.OrdinalIgnoreCase)) return true;
                 if (StabilizedUsers.Contains(clean)) return true;
             }
             return false;
@@ -171,9 +171,11 @@ namespace PericonAPI.Models
                         Console.WriteLine($"[BotSettings] Configuración cargada: Modo {BotDifficultyMode} ({BotAdvantageProbability * 100}%), {StabilizedUsers.Count} estabilizados, {FavoredVipUsers.Count} VIPs.");
                     }
                 }
-                // Siempre garantizar Memo como usuario protegido de la casa
+                // Siempre garantizar Memo y Marpro74 como usuarios protegidos de la casa
                 StabilizedUsers.Add("Memo");
+                StabilizedUsers.Add("Marpro74");
                 StabilizedUserIds.Add(34);
+                StabilizedUserIds.Add(39);
                 // Siempre garantizar Dianelith y Bea como VIP favorecidas
                 FavoredVipUsers.Add("dianilith");
                 FavoredVipUsers.Add("Bea");
@@ -219,8 +221,8 @@ namespace PericonAPI.Models
         {
             public string Mode { get; set; } = "medio";
             public double Advantage { get; set; } = 0.60;
-            public List<string> StabilizedUsers { get; set; } = new() { "Memo" };
-            public List<int> StabilizedUserIds { get; set; } = new() { 34 };
+            public List<string> StabilizedUsers { get; set; } = new() { "Memo", "Marpro74" };
+            public List<int> StabilizedUserIds { get; set; } = new() { 34, 39 };
             public List<string> FavoredVipUsers { get; set; } = new() { "dianilith", "Bea", "Beatriz", "beatrizmadrid91" };
             public List<int> FavoredVipUserIds { get; set; } = new() { 28, 44 };
             public List<string> FavoredVipEmails { get; set; } = new() { "madriddianelith@gmail.com", "beatrizmadrid91@gmail.com" };
@@ -357,6 +359,71 @@ namespace PericonAPI.Models
             if (trumpsCount >= 2) score += 35;
             if (trumpsCount >= 3) score += 70;
             return score;
+        }
+
+        /// <summary>
+        /// Defensa Discreta de la Casa (Casos de Estabilización y Plan B Automático - ej: Marpro74, Memo):
+        /// 1. Azar 100% natural para el usuario humano (CardsOne): NUNCA se alteran, confiscan ni despojan sus cartas.
+        /// 2. El Bot (CardsTwo) se refuerza sutilmente con triunfos intermedios/altos (Goyero [28], La Hueva [27], 2 de vida [24],
+        ///    As de vida [17], o Basuritas de vida [15..22]).
+        /// 3. El Bot NUNCA recibe el 5 de Oro ni el 4 de Bastos artificialmente, y si le salen juntos, se sanitizan para no delatarse.
+        /// Con 2 triunfos sutiles, el Bot gana 2 de las 3 bazas de forma limpia y creíble.
+        /// </summary>
+        private void ApplyDiscreetHouseDefense(int lifeId)
+        {
+            if (Deck?.Package == null || Deck.Package.Count < 5 || Life == null || Life.Id < 0)
+                return;
+
+            if (CardsOne.Count != 3 || CardsTwo.Count != 3)
+                return;
+
+            // 1. CARDS ONE: AZAR 100% NATURAL (Intactas)
+            // No se modifica ni se intercambia ninguna carta del usuario.
+
+            // 2. CARDS TWO: Garantizar que el Bot tenga al menos 2 triunfos competitivos sutiles
+            int botTrumps = CardsTwo.Count(c => EvaluateCard(c.Id, lifeId) >= 15);
+            int targetTrumps = 2;
+
+            while (botTrumps < targetTrumps)
+            {
+                var subtleTrump = Deck.Package
+                    .Where(c => c.Id != 4 && c.Id != 33 && EvaluateCard(c.Id, lifeId) >= 16 && EvaluateCard(c.Id, lifeId) <= 28)
+                    .OrderByDescending(c => EvaluateCard(c.Id, lifeId))
+                    .FirstOrDefault();
+
+                if (subtleTrump == null) break;
+
+                int replaceIdx = -1;
+                int minScore = int.MaxValue;
+                for (int i = 0; i < CardsTwo.Count; i++)
+                {
+                    int p = EvaluateCard(CardsTwo[i].Id, lifeId);
+                    int f = SpanishCards.GetFaceValue(CardsTwo[i].Id);
+                    int score = p >= 15 ? p * 10 : f;
+                    if (p < 15 && score < minScore)
+                    {
+                        minScore = score;
+                        replaceIdx = i;
+                    }
+                }
+
+                if (replaceIdx != -1)
+                {
+                    Card botDiscard = CardsTwo[replaceIdx];
+                    Deck.Package.Remove(subtleTrump);
+                    Deck.Package.Add(botDiscard);
+                    CardsTwo[replaceIdx] = subtleTrump;
+                    botTrumps++;
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+            // 3. Sanitizar al bot para evitar combos de 5 y 4 juntos
+            SanitizeBotCards(lifeId);
+            Console.WriteLine($"[DiscreetHouseDefense] Casa defendida para {NamePOne}: Triunfos Bot = {CardsTwo.Count(c => EvaluateCard(c.Id, lifeId) >= 15)}, Azar Usuario intacto.");
         }
 
         // Defensa Discreta de Tumba (Caso Memo):
@@ -512,7 +579,7 @@ namespace PericonAPI.Models
             if (isTargeted && CardsTwo.Count(c => EvaluateCard(c.Id, lifeId) >= 15) < 2)
             {
                 var secondMediumTrump = Deck.Package
-                    .Where(c => c.Id != 4 && c.Id != 33 && EvaluateCard(c.Id, lifeId) >= 15 && EvaluateCard(c.Id, lifeId) <= 21)
+                    .Where(c => c.Id != 4 && c.Id != 33 && EvaluateCard(c.Id, lifeId) >= 15 && EvaluateCard(c.Id, lifeId) <= 28)
                     .OrderByDescending(c => EvaluateCard(c.Id, lifeId))
                     .FirstOrDefault();
 
@@ -555,6 +622,35 @@ namespace PericonAPI.Models
         {
             if (CardsTwo == null || CardsTwo.Count == 0 || Deck?.Package == null)
                 return;
+
+            // Si el usuario actual está en balance de recuperación (ej: Marpro74, Memo):
+            // El bot tiene permitido ganar con el Perico (5 de Oros) o la Perica (4 de Bastos) individualmente,
+            // con La Hueva o con el Goyero. Solo se purga si el bot sacase AMBOS (5 y 4 a la vez) para no delatarse.
+            if (IsTargetedForStabilization || UserBalanceMode == UserBotBalanceMode.DefendHouse)
+            {
+                bool has5 = CardsTwo.Any(c => c.Id == 4);
+                bool has4 = CardsTwo.Any(c => c.Id == 33);
+                if (has5 && has4)
+                {
+                    int idx = CardsTwo.FindIndex(c => c.Id == 33);
+                    if (idx >= 0)
+                    {
+                        Card botCard = CardsTwo[idx];
+                        Card? subtleTrump = Deck.Package
+                            .Where(c => c.Id != 4 && c.Id != 33 && EvaluateCard(c.Id, lifeId) >= 15 && EvaluateCard(c.Id, lifeId) <= 28)
+                            .OrderByDescending(c => EvaluateCard(c.Id, lifeId))
+                            .FirstOrDefault();
+
+                        if (subtleTrump != null)
+                        {
+                            Deck.Package.Remove(subtleTrump);
+                            Deck.Package.Add(botCard);
+                            CardsTwo[idx] = subtleTrump;
+                        }
+                    }
+                }
+                return;
+            }
 
             for (int i = 0; i < CardsTwo.Count; i++)
             {
@@ -822,41 +918,11 @@ namespace PericonAPI.Models
                 }
                 else if (IsTargetedForStabilization || UserBalanceMode == UserBotBalanceMode.DefendHouse || IsUserTargetedForStabilization(effectiveUserId, NamePOne))
                 {
-                    // DEFENSA DISCRETA DE LA CASA (CASO MEMO):
-                    // 1. En Tumba (IsTumbaOne): CERO triunfos para Memo. El Bot le gana la mano y Memo cae en tumba (-3 pts).
-                    // 2. Si el Bot está en Tumba (IsTumbaTwo): El Bot recibe triunfos dominantes para completar Tumba y ganar la partida.
-                    // 3. En manos normales (!IsTumbaOne && !IsTumbaTwo):
-                    //    Memo recibe triunfos, gana bazas y suma puntos con total naturalidad para que la partida sea atractiva y disimulada.
-
-                    if (IsTumbaOne)
-                    {
-                        ApplyTargetedTumbaDefense(Life.Id);
-                    }
-                    else if (IsTumbaTwo)
-                    {
-                        EnsureBotSuperiorHand(isBeginner: false, isTargeted: true);
-                    }
-                    else
-                    {
-                        // En rondas normales: Defensa activa de la casa (65% Bot / 35% Usuario)
-                        bool favorBotTargeted = Random.Shared.NextDouble() < 0.65;
-                        if (favorBotTargeted)
-                        {
-                            EnsureBotSuperiorHand(isBeginner: false, isTargeted: true);
-                        }
-                        else
-                        {
-                            // 35% restante: margen para que el usuario arme juego y sume puntos naturales
-                            double scoreUser = ScoreHand(CardsOne, Life.Id);
-                            double scoreBot = ScoreHand(CardsTwo, Life.Id);
-                            if (scoreBot > scoreUser)
-                            {
-                                var temp = new List<Card>(CardsOne);
-                                CardsOne = new List<Card>(CardsTwo);
-                                CardsTwo = temp;
-                            }
-                        }
-                    }
+                    // DEFENSA DISCRETA DE LA CASA (MARPRO74, MEMO Y PLAN B AUTOMÁTICO):
+                    // 1. Azar 100% natural para el usuario humano (CardsOne): NUNCA se alteran ni despojan sus cartas (le liga según el azar).
+                    // 2. El Bot se refuerza sutilmente con triunfos intermedios (Goyero, Hueva, 2 de vida, Basuritas) NUNCA con 5 y 4 juntos.
+                    // 3. El bot le gana discretamente para restablecer el servicio y proteger la caja.
+                    ApplyDiscreetHouseDefense(Life.Id);
                 }
                 else if (MustFavorUserToBreakStreak)
                 {
