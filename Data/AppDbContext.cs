@@ -20,6 +20,10 @@ namespace PericonAPI.Data
         public DbSet<SystemAnnouncement> SystemAnnouncements { get; set; }
         public DbSet<PlayerFeedback> PlayerFeedbacks { get; set; }
         public DbSet<SystemSetting> SystemSettings { get; set; }
+        public DbSet<Tournament> Tournaments { get; set; }
+        public DbSet<TournamentParticipant> TournamentParticipants { get; set; }
+        public DbSet<TournamentMatch> TournamentMatches { get; set; }
+        public DbSet<ReferralRecord> ReferralRecords { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

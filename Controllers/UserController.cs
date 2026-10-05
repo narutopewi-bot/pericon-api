@@ -211,11 +211,32 @@ namespace PericonAPI.Controllers
                 var nextClaimTime = user.LastDailyClaim.Value.AddHours(24);
                 var diff = nextClaimTime - DateTime.UtcNow;
                 var hoursLeft = Math.Max(1, (int)diff.TotalHours);
-                return BadRequest(new { message = $"Ya reclamaste tu bono diario de hoy. Podrás reclamar 10 monedas nuevamente en {hoursLeft} horas." });
+                return BadRequest(new { message = $"Ya reclamaste tu recompensa de hoy. Podrás reclamar nuevamente en {hoursLeft} horas." });
             }
 
-            const int dailyBonus = 10;
-            user.Coins += dailyBonus;
+            // Cálculo de racha: si pasaron más de 48 horas desde el último reclamo, la racha se reinicia a 1
+            if (user.LastDailyClaim.HasValue && (DateTime.UtcNow - user.LastDailyClaim.Value).TotalHours > 48)
+            {
+                user.DailyStreak = 1;
+            }
+            else
+            {
+                user.DailyStreak = (user.DailyStreak % 7) + 1;
+            }
+
+            int streakBonus = user.DailyStreak switch
+            {
+                1 => 30,
+                2 => 40,
+                3 => 50,
+                4 => 65,
+                5 => 80,
+                6 => 100,
+                7 => 150, // Giro especial de Ruleta del Chivo
+                _ => 30
+            };
+
+            user.Coins += streakBonus;
             user.LastDailyClaim = DateTime.UtcNow;
             await _context.SaveChangesAsync();
 
@@ -223,8 +244,103 @@ namespace PericonAPI.Controllers
             {
                 id = user.Id,
                 coins = user.Coins,
-                bonus = dailyBonus,
-                message = "¡Has recibido tus 10 monedas diarias de cortesía del Chivo! 🐐💰"
+                bonus = streakBonus,
+                streak = user.DailyStreak,
+                isRoulette = user.DailyStreak == 7,
+                message = user.DailyStreak == 7
+                    ? "¡Racha de 7 días completada! 🐐🎰 ¡Has desbloqueado el Giro de la Ruleta del Chivo (+150 monedas)!"
+                    : $"¡Día {user.DailyStreak} de Racha! Has recibido {streakBonus} monedas de cortesía. 🐐💰"
+            });
+        }
+
+        [HttpPost("apply-referral")]
+        public async Task<IActionResult> ApplyReferral([FromBody] ApplyReferralDto dto)
+        {
+            if (dto == null || dto.UserId <= 0 || string.IsNullOrWhiteSpace(dto.Code))
+            {
+                return BadRequest(new { message = "Código de referido inválido." });
+            }
+
+            var user = await _context.Users.FindAsync(dto.UserId);
+            if (user == null)
+            {
+                return NotFound(new { message = "Usuario no encontrado." });
+            }
+
+            if (user.ReferredByUserId.HasValue)
+            {
+                return BadRequest(new { message = "Ya has canjeado un código de referido anteriormente." });
+            }
+
+            var cleanCode = dto.Code.Trim().ToUpperInvariant();
+            var referrer = await _context.Users.FirstOrDefaultAsync(u => 
+                (u.ReferralCode != null && u.ReferralCode.ToUpper() == cleanCode) ||
+                u.Username.ToUpper() == cleanCode);
+
+            if (referrer == null || referrer.Id == user.Id)
+            {
+                return BadRequest(new { message = "Código de referido no encontrado o no puedes auto-referirte." });
+            }
+
+            user.ReferredByUserId = referrer.Id;
+            user.BonusCoins += 100; // 100 BonusCoins promocionales para apostar
+            user.Coins += 100;
+
+            var referralRec = new ReferralRecord
+            {
+                ReferrerUserId = referrer.Id,
+                ReferredUserId = user.Id,
+                ReferralCode = cleanCode,
+                ReferredUsername = user.Username,
+                CoinsAwardedReferred = 100,
+                CoinsAwardedReferrer = 150,
+                Status = "Pendiente",
+                CreatedAt = DateTime.UtcNow
+            };
+            _context.ReferralRecords.Add(referralRec);
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                message = $"¡Código de {referrer.Username} aplicado con éxito! Has recibido 100 monedas de bono para jugar.",
+                coins = user.Coins,
+                bonusCoins = user.BonusCoins
+            });
+        }
+
+        [HttpGet("referral-info/{userId}")]
+        public async Task<IActionResult> GetReferralInfo(int userId)
+        {
+            var user = await _context.Users.FindAsync(userId);
+            if (user == null) return NotFound();
+
+            if (string.IsNullOrEmpty(user.ReferralCode))
+            {
+                user.ReferralCode = user.Username.ToUpper();
+                await _context.SaveChangesAsync();
+            }
+
+            var referrals = await _context.ReferralRecords
+                .Where(r => r.ReferrerUserId == user.Id)
+                .OrderByDescending(r => r.CreatedAt)
+                .ToListAsync();
+
+            int totalReferred = referrals.Count;
+            int totalCoinsEarned = referrals.Where(r => r.Status == "Calificado").Sum(r => r.CoinsAwardedReferrer);
+
+            return Ok(new
+            {
+                referralCode = user.ReferralCode,
+                referralUrl = $"https://pericon.lat/r/{user.ReferralCode}",
+                totalReferred,
+                totalCoinsEarned,
+                referrals = referrals.Select(r => new
+                {
+                    username = r.ReferredUsername,
+                    status = r.Status,
+                    reward = r.CoinsAwardedReferrer,
+                    date = r.CreatedAt.ToString("yyyy-MM-dd")
+                })
             });
         }
 
@@ -559,5 +675,11 @@ namespace PericonAPI.Controllers
     public class ClaimDailyDto
     {
         public int UserId { get; set; }
+    }
+
+    public class ApplyReferralDto
+    {
+        public int UserId { get; set; }
+        public string Code { get; set; } = string.Empty;
     }
 }

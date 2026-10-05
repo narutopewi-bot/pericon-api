@@ -51,6 +51,11 @@ namespace PericonAPI.Models
         public string BotDifficulty { get; set; } = "facil"; // facil, medio, dificil
 
         public DateTime? LastDailyClaim { get; set; }
+        public int DailyStreak { get; set; } = 0;
+
+        [MaxLength(20)]
+        public string? ReferralCode { get; set; }
+        public int? ReferredByUserId { get; set; }
 
         public bool HasClaimedInstagramReward { get; set; } = false;
 

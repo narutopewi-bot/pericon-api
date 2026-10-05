@@ -511,6 +511,171 @@ using (var scope = app.Services.CreateScope())
     }
     catch { }
 
+    // Migración automática: Tablas de Torneo, Referidos y Columnas de Racha en Users
+    try
+    {
+        if (db.Database.IsSqlite())
+        {
+            try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN DailyStreak INTEGER NOT NULL DEFAULT 0;"); } catch { }
+            try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN ReferralCode TEXT NULL;"); } catch { }
+            try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN ReferredByUserId INTEGER NULL;"); } catch { }
+
+            db.Database.ExecuteSqlRaw(@"
+                CREATE TABLE IF NOT EXISTS Tournaments (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    Name TEXT NOT NULL,
+                    IsPrivate INTEGER NOT NULL DEFAULT 1,
+                    Password TEXT NOT NULL DEFAULT 'PERICON2026',
+                    BuyInCoins INTEGER NOT NULL DEFAULT 50,
+                    MaxParticipants INTEGER NOT NULL DEFAULT 8,
+                    CurrentParticipants INTEGER NOT NULL DEFAULT 0,
+                    Status TEXT NOT NULL DEFAULT 'Inscripciones',
+                    TotalPot INTEGER NOT NULL DEFAULT 0,
+                    HouseCommission INTEGER NOT NULL DEFAULT 0,
+                    WinnerUserId INTEGER NULL,
+                    WinnerUsername TEXT NULL,
+                    RunnerUpUserId INTEGER NULL,
+                    RunnerUpUsername TEXT NULL,
+                    CreatedAt TEXT NOT NULL,
+                    StartedAt TEXT NULL,
+                    FinishedAt TEXT NULL
+                );
+                CREATE TABLE IF NOT EXISTS TournamentParticipants (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    TournamentId INTEGER NOT NULL,
+                    UserId INTEGER NOT NULL,
+                    Username TEXT NOT NULL,
+                    AvatarUrl TEXT NULL,
+                    SlotIndex INTEGER NOT NULL DEFAULT 0,
+                    IsEliminated INTEGER NOT NULL DEFAULT 0,
+                    EliminatedInRound TEXT NULL,
+                    JoinedAt TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS TournamentMatches (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    TournamentId INTEGER NOT NULL,
+                    Round TEXT NOT NULL,
+                    MatchIndex INTEGER NOT NULL DEFAULT 0,
+                    PlayerOneId INTEGER NULL,
+                    PlayerOneUsername TEXT NULL,
+                    PlayerOneScore INTEGER NOT NULL DEFAULT 0,
+                    PlayerTwoId INTEGER NULL,
+                    PlayerTwoUsername TEXT NULL,
+                    PlayerTwoScore INTEGER NOT NULL DEFAULT 0,
+                    WinnerId INTEGER NULL,
+                    WinnerUsername TEXT NULL,
+                    Status TEXT NOT NULL DEFAULT 'Pendiente',
+                    GameId INTEGER NULL,
+                    UpdatedAt TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS ReferralRecords (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ReferrerUserId INTEGER NOT NULL,
+                    ReferredUserId INTEGER NOT NULL,
+                    ReferralCode TEXT NOT NULL,
+                    ReferredUsername TEXT NOT NULL,
+                    CoinsAwardedReferred INTEGER NOT NULL DEFAULT 100,
+                    CoinsAwardedReferrer INTEGER NOT NULL DEFAULT 150,
+                    Status TEXT NOT NULL DEFAULT 'Pendiente',
+                    CreatedAt TEXT NOT NULL,
+                    QualifiedAt TEXT NULL
+                );
+            ");
+        }
+        else
+        {
+            try { db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""DailyStreak"" INT NOT NULL DEFAULT 0;"); } catch { }
+            try { db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""ReferralCode"" VARCHAR(20) NULL;"); } catch { }
+            try { db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""ReferredByUserId"" INT NULL;"); } catch { }
+
+            db.Database.ExecuteSqlRaw(@"
+                CREATE TABLE IF NOT EXISTS ""Tournaments"" (
+                    ""Id"" SERIAL PRIMARY KEY,
+                    ""Name"" VARCHAR(100) NOT NULL,
+                    ""IsPrivate"" BOOLEAN NOT NULL DEFAULT TRUE,
+                    ""Password"" VARCHAR(50) NOT NULL DEFAULT 'PERICON2026',
+                    ""BuyInCoins"" INT NOT NULL DEFAULT 50,
+                    ""MaxParticipants"" INT NOT NULL DEFAULT 8,
+                    ""CurrentParticipants"" INT NOT NULL DEFAULT 0,
+                    ""Status"" VARCHAR(30) NOT NULL DEFAULT 'Inscripciones',
+                    ""TotalPot"" INT NOT NULL DEFAULT 0,
+                    ""HouseCommission"" INT NOT NULL DEFAULT 0,
+                    ""WinnerUserId"" INT NULL,
+                    ""WinnerUsername"" VARCHAR(50) NULL,
+                    ""RunnerUpUserId"" INT NULL,
+                    ""RunnerUpUsername"" VARCHAR(50) NULL,
+                    ""CreatedAt"" TIMESTAMP NOT NULL DEFAULT NOW(),
+                    ""StartedAt"" TIMESTAMP NULL,
+                    ""FinishedAt"" TIMESTAMP NULL
+                );
+                CREATE TABLE IF NOT EXISTS ""TournamentParticipants"" (
+                    ""Id"" SERIAL PRIMARY KEY,
+                    ""TournamentId"" INT NOT NULL,
+                    ""UserId"" INT NOT NULL,
+                    ""Username"" VARCHAR(50) NOT NULL,
+                    ""AvatarUrl"" VARCHAR(255) NULL,
+                    ""SlotIndex"" INT NOT NULL DEFAULT 0,
+                    ""IsEliminated"" BOOLEAN NOT NULL DEFAULT FALSE,
+                    ""EliminatedInRound"" VARCHAR(30) NULL,
+                    ""JoinedAt"" TIMESTAMP NOT NULL DEFAULT NOW()
+                );
+                CREATE TABLE IF NOT EXISTS ""TournamentMatches"" (
+                    ""Id"" SERIAL PRIMARY KEY,
+                    ""TournamentId"" INT NOT NULL,
+                    ""Round"" VARCHAR(30) NOT NULL,
+                    ""MatchIndex"" INT NOT NULL DEFAULT 0,
+                    ""PlayerOneId"" INT NULL,
+                    ""PlayerOneUsername"" VARCHAR(50) NULL,
+                    ""PlayerOneScore"" INT NOT NULL DEFAULT 0,
+                    ""PlayerTwoId"" INT NULL,
+                    ""PlayerTwoUsername"" VARCHAR(50) NULL,
+                    ""PlayerTwoScore"" INT NOT NULL DEFAULT 0,
+                    ""WinnerId"" INT NULL,
+                    ""WinnerUsername"" VARCHAR(50) NULL,
+                    ""Status"" VARCHAR(30) NOT NULL DEFAULT 'Pendiente',
+                    ""GameId"" INT NULL,
+                    ""UpdatedAt"" TIMESTAMP NOT NULL DEFAULT NOW()
+                );
+                CREATE TABLE IF NOT EXISTS ""ReferralRecords"" (
+                    ""Id"" SERIAL PRIMARY KEY,
+                    ""ReferrerUserId"" INT NOT NULL,
+                    ""ReferredUserId"" INT NOT NULL,
+                    ""ReferralCode"" VARCHAR(30) NOT NULL,
+                    ""ReferredUsername"" VARCHAR(50) NOT NULL,
+                    ""CoinsAwardedReferred"" INT NOT NULL DEFAULT 100,
+                    ""CoinsAwardedReferrer"" INT NOT NULL DEFAULT 150,
+                    ""Status"" VARCHAR(30) NOT NULL DEFAULT 'Pendiente',
+                    ""CreatedAt"" TIMESTAMP NOT NULL DEFAULT NOW(),
+                    ""QualifiedAt"" TIMESTAMP NULL
+                );
+            ");
+        }
+
+        // Semillero del Torneo Piloto si no existe ninguno
+        if (!db.Tournaments.Any())
+        {
+            db.Tournaments.Add(new Tournament
+            {
+                Name = "Torneo Piloto Casona (Privado)",
+                IsPrivate = true,
+                Password = "PERICON2026",
+                BuyInCoins = 50,
+                MaxParticipants = 8,
+                CurrentParticipants = 0,
+                Status = "Inscripciones",
+                TotalPot = 400,
+                HouseCommission = 40,
+                CreatedAt = DateTime.UtcNow
+            });
+            db.SaveChanges();
+            Console.WriteLine("[Torneos] Torneo Piloto Casona sembrado exitosamente con contraseña PERICON2026.");
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[Tournaments & Referrals Migration Error] {ex.Message}");
+    }
+
     // Garantizar existencia y credenciales del usuario Administrador 'Guardian'
     try
     {
