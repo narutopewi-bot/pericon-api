@@ -2104,7 +2104,8 @@ namespace PericonAPI.Hubs
                 {
                     _ = Task.Run(async () =>
                     {
-                        await Task.Delay(Random.Shared.Next(1800, 2900));
+                        // Espera a que termine la animación de limpieza del cliente (2.2s + 0.85s = ~3.05s)
+                        await Task.Delay(Random.Shared.Next(3800, 4400));
                         await ExecuteBotMove1vs1(move.game);
                     });
                 }
@@ -3124,12 +3125,14 @@ namespace PericonAPI.Hubs
                     }
                 });
             }
-            // Si el bot ganó la baza y la mano no concluyó, el bot debe salir con su siguiente carta tras pausa humana
+            // Si el bot ganó la baza y la mano no concluyó, el bot debe salir con su siguiente carta tras la pausa visual del cliente
             else if (!trickWinnerIsPlayerOne && targetGame.RoundOne < 2 && targetGame.RoundTwo < 2 && !targetGame.IsFinished)
             {
                 _ = Task.Run(async () =>
                 {
-                    await Task.Delay(Random.Shared.Next(1800, 2900));
+                    // Espera calculada: la pausa del cliente dura 2200ms + 850ms de retorno al mazo = 3050ms.
+                    // Al esperar entre 3800ms y 4400ms, la mesa queda 100% limpia y sin solapamiento de cartas.
+                    await Task.Delay(Random.Shared.Next(3800, 4400));
                     await ExecuteBotMove1vs1(targetGame.Id);
                 });
             }
