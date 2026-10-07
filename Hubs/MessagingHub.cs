@@ -565,6 +565,15 @@ namespace PericonAPI.Hubs
                     await Clients.Client(ownto).SendAsync("EndAsk369Round", data);
                     if (!string.IsNullOrEmpty(sentto)) await Clients.Client(sentto).SendAsync("Answered369Game", data);
                     await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("Answered369Game", data);
+
+                    if (games[numg].IsBotMatch && callerIsP1)
+                    {
+                        _ = Task.Run(async () =>
+                        {
+                            await Task.Delay(Random.Shared.Next(1200, 2000));
+                            await ExecuteBotMove1vs1(move.game);
+                        });
+                    }
                     break;
                 case 3: // Rechaza 3 -> Quien pidió 3 (rival de caller) gana 1 punto
                     games[numg].Ask369 = -1;
@@ -588,6 +597,15 @@ namespace PericonAPI.Hubs
                     games[numg].PendingAsk369Message = data;
                     if (!string.IsNullOrEmpty(sentto)) await Clients.Client(sentto).SendAsync("Asked369Game", data);
                     await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("Asked369Game", data);
+
+                    if (games[numg].IsBotMatch && callerIsP1)
+                    {
+                        _ = Task.Run(async () =>
+                        {
+                            await Task.Delay(Random.Shared.Next(1800, 2800));
+                            await ExecuteBotAnswerStake1vs1(move.game, 74);
+                        });
+                    }
                     break;
                 case 5: // Acepta 6
                     games[numg].CurrentStake = 6;
@@ -598,6 +616,15 @@ namespace PericonAPI.Hubs
                     await Clients.Client(ownto).SendAsync("EndAsk369Round", data);
                     if (!string.IsNullOrEmpty(sentto)) await Clients.Client(sentto).SendAsync("Answered369Game", data);
                     await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("Answered369Game", data);
+
+                    if (games[numg].IsBotMatch && callerIsP1)
+                    {
+                        _ = Task.Run(async () =>
+                        {
+                            await Task.Delay(Random.Shared.Next(1200, 2000));
+                            await ExecuteBotMove1vs1(move.game);
+                        });
+                    }
                     break;
                 case 6: // Rechaza 6 -> Quien propuso 6 gana las 3 piedras ya pactadas
                     games[numg].Ask369 = -1;
@@ -621,6 +648,15 @@ namespace PericonAPI.Hubs
                     games[numg].PendingAsk369Message = data;
                     if (!string.IsNullOrEmpty(sentto)) await Clients.Client(sentto).SendAsync("Asked369Game", data);
                     await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("Asked369Game", data);
+
+                    if (games[numg].IsBotMatch && callerIsP1)
+                    {
+                        _ = Task.Run(async () =>
+                        {
+                            await Task.Delay(Random.Shared.Next(1800, 2800));
+                            await ExecuteBotAnswerStake1vs1(move.game, 75);
+                        });
+                    }
                     break;
                 case 8: // Acepta 9
                     games[numg].CurrentStake = 9;
@@ -631,6 +667,15 @@ namespace PericonAPI.Hubs
                     await Clients.Client(ownto).SendAsync("EndAsk369Round", data);
                     if (!string.IsNullOrEmpty(sentto)) await Clients.Client(sentto).SendAsync("Answered369Game", data);
                     await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("Answered369Game", data);
+
+                    if (games[numg].IsBotMatch && callerIsP1)
+                    {
+                        _ = Task.Run(async () =>
+                        {
+                            await Task.Delay(Random.Shared.Next(1200, 2000));
+                            await ExecuteBotMove1vs1(move.game);
+                        });
+                    }
                     break;
                 case 9: // Rechaza 9 -> Quien propuso 9 gana las 6 piedras ya pactadas
                     games[numg].Ask369 = -1;
@@ -2912,6 +2957,97 @@ namespace PericonAPI.Hubs
             }
         }
 
+        private static async Task<bool> MaybeExecuteBotInitiateAsk1vs1(GamePlayOneVsOne g)
+        {
+            if (_staticHubContext == null || g == null) return false;
+            if (!g.IsActive || g.HasPaidOut || g.IsFinished || !g.IsBotMatch || g.IsHandTransitioning) return false;
+
+            // Solo se puede pedir si la apuesta actual es 1 y nadie tiene un reto pendiente
+            if (g.CurrentStake != 1 || g.Ask369 != 0 || g.PendingAsk369Message != null) return false;
+
+            // El bot no puede volver a pedir si ya fue el último retador sin respuesta
+            if (g.LastStakeAsker == 2) return false;
+
+            // No pedir si la mano ya está en su última carta o resuelta
+            if (g.CardsTwo.Count < 2) return false;
+
+            int lifeId = g.Life?.Id ?? -1;
+            if (lifeId < 0) return false;
+
+            int handScore = 0;
+            int trumpsCount = 0;
+            int maxTrumpPower = 0;
+            foreach (var c in g.CardsTwo)
+            {
+                int p = GamePlayOneVsOne.EvaluateCard(c.Id, lifeId);
+                handScore += p;
+                if (p >= 11) trumpsCount++;
+                if (p > maxTrumpPower) maxTrumpPower = p;
+            }
+
+            string diff = !string.IsNullOrEmpty(g.BotDifficulty) ? g.BotDifficulty : GamePlayOneVsOne.BotDifficultyMode;
+
+            // Probabilidad base de cantar según fortaleza de la mano y momento
+            bool shouldAsk = false;
+
+            // CASO A: Mano dominante en Baza 1 (Mano o Pie con cartas fuertes)
+            // 2 o más triunfos, o un triunfo superior (>= 22, p.ej. 2 de vida / 3 de vida / Rey)
+            if (trumpsCount >= 2 || maxTrumpPower >= 22 || handScore >= 45)
+            {
+                double askProb = diff == "facil" ? 0.45 : (diff == "dificil" ? 0.75 : 0.60);
+                shouldAsk = Random.Shared.NextDouble() < askProb;
+            }
+            // CASO B: En Baza 2, si el Bot ganó la primera baza (RoundTwo >= 1)
+            else if (g.RoundTwo >= 1 && (trumpsCount >= 1 || handScore >= 25))
+            {
+                double askProb = diff == "facil" ? 0.55 : (diff == "dificil" ? 0.85 : 0.70);
+                shouldAsk = Random.Shared.NextDouble() < askProb;
+            }
+            // CASO C: Farol humano (Bluff) - 10% en manos flojas o blancas para simular psicología real
+            else if (handScore < 30)
+            {
+                double bluffProb = diff == "facil" ? 0.05 : 0.10;
+                shouldAsk = Random.Shared.NextDouble() < bluffProb;
+                if (shouldAsk)
+                {
+                    Console.WriteLine($"[Bot Bluff] Bot '{g.NamePTwo}' ejecuta farol (score: {handScore}). Pide '¡Dame tres!'");
+                }
+            }
+
+            if (!shouldAsk) return false;
+
+            Console.WriteLine($"[BotInitiateAsk1vs1] Bot '{g.NamePTwo}' canta 'Dame tres' en partida {g.Id}. Triunfos: {trumpsCount}, Score: {handScore}");
+
+            // Delay natural de pensamiento humano (1.4s a 2.3s)
+            await Task.Delay(Random.Shared.Next(1400, 2300));
+
+            // Revalidar estado tras el delay
+            if (!g.IsActive || g.HasPaidOut || g.IsFinished || g.CurrentStake != 1 || g.Ask369 != 0 || g.PendingAsk369Message != null)
+            {
+                return false;
+            }
+
+            g.Ask369 = 1;
+            g.LastStakeAsker = 2; // Bot es 2
+            g.LastTurnActionAt = DateTime.UtcNow;
+
+            GameMessage askData = new GameMessage
+            {
+                game = g.Id,
+                order = 76,
+                content = "1"
+            };
+            g.PendingAsk369Message = askData;
+
+            if (!string.IsNullOrEmpty(g.IdPOne))
+            {
+                await _staticHubContext.Clients.Client(g.IdPOne).SendAsync("Asked369Game", askData);
+            }
+            await _staticHubContext.Clients.Group($"game1vs1_{g.Id}").SendAsync("Asked369Game", askData);
+
+            return true;
+        }
+
         private static async Task ExecuteBotMove1vs1(int gameId)
         {
             if (_staticHubContext == null) return;
@@ -2926,6 +3062,16 @@ namespace PericonAPI.Hubs
 
                 var targetGame = games[numg];
                 if (!targetGame.IsActive || targetGame.HasPaidOut || targetGame.IsFinished || !targetGame.IsBotMatch) return;
+
+                // Si hay un reto 3-6-9 pendiente en pantalla, no lanzar cartas hasta que se resuelva
+                if (targetGame.PendingAsk369Message != null) return;
+
+                // EVALUACIÓN DE RETO ('Dame tres') DEL BOT ANTES DE JUGAR:
+                if (await MaybeExecuteBotInitiateAsk1vs1(targetGame))
+                {
+                    // El bot cantó 'Dame tres'. Esperar respuesta del humano antes de lanzar carta.
+                    return;
+                }
 
                 // CASO 1: El bot sale de MANO (Lead play) -> La mesa está vacía
                 if (targetGame.CurrentLeadMove == null)
@@ -3173,9 +3319,12 @@ namespace PericonAPI.Hubs
                 }
 
                 int handScore = 0;
+                int trumpsCount = 0;
                 foreach (var c in g.CardsTwo)
                 {
-                    handScore += GamePlayOneVsOne.EvaluateCard(c.Id, g.Life.Id);
+                    int p = GamePlayOneVsOne.EvaluateCard(c.Id, g.Life.Id);
+                    handScore += p;
+                    if (p >= 11) trumpsCount++;
                 }
 
                 string diff = !string.IsNullOrEmpty(g.BotDifficulty) ? g.BotDifficulty : GamePlayOneVsOne.BotDifficultyMode;
@@ -3192,7 +3341,20 @@ namespace PericonAPI.Hubs
                 bool accept = Random.Shared.NextDouble() < acceptProb;
 
                 int chosen = 0;
-                if (order == 70 || order == 73) chosen = accept ? 2 : 3;
+                if (order == 70 || order == 73)
+                {
+                    // Humano pidió 3.
+                    // Si el bot tiene mano dominante (score >= 50 o 2 triunfos) y accept es true:
+                    // Con ~35% de probabilidad el bot revira a 6 ("¡Quiero seis!")
+                    if (accept && (handScore >= 50 || trumpsCount >= 2) && Random.Shared.NextDouble() < 0.35)
+                    {
+                        chosen = 4; // Bot revira a 6!
+                    }
+                    else
+                    {
+                        chosen = accept ? 2 : 3;
+                    }
+                }
                 else if (order == 71 || order == 74) chosen = accept ? 5 : 6;
                 else if (order == 72 || order == 75) chosen = accept ? 8 : 9;
                 else chosen = accept ? 2 : 3;
@@ -3229,6 +3391,20 @@ namespace PericonAPI.Hubs
                     g.PendingAsk369Message = null;
                     data.content = $"2 {g.PointsOne} {g.PointsTwo}";
                     await _staticHubContext.Clients.Client(g.IdPOne).SendAsync("Answered369Game", data);
+                    // Si al bot le toca jugar ahora (de mano o en respuesta a carta en mesa), reanudar su movimiento:
+                    if (g.IsBotMatch)
+                    {
+                        bool isBotTurn = (g.CurrentLeadMove == null && ((g.RoundOne == 0 && g.RoundTwo == 0 && g.HandStarter == 2) || (g.LeadPlayer == 2)))
+                                      || (g.CurrentLeadMove != null && g.LeadPlayer == 1);
+                        if (isBotTurn)
+                        {
+                            _ = Task.Run(async () =>
+                            {
+                                await Task.Delay(Random.Shared.Next(1400, 2200));
+                                await ExecuteBotMove1vs1(g.Id);
+                            });
+                        }
+                    }
                     break;
                 case 3: // Bot rechaza 3 -> P1 (humano) gana 1 punto
                     g.Ask369 = -1;
@@ -3241,6 +3417,17 @@ namespace PericonAPI.Hubs
                     data.content = $"3 {g.PointsOne} {g.PointsTwo}";
                     await _staticHubContext.Clients.Client(g.IdPOne).SendAsync("Answered369Game", data);
                     break;
+                case 4: // Bot revira a 6 (propone 6 al humano)
+                    g.LastStakeAsker = 2; // Bot pide 6
+                    data.order = 76;
+                    data.content = "4";
+                    g.PendingAsk369Message = data;
+                    if (!string.IsNullOrEmpty(g.IdPOne))
+                    {
+                        await _staticHubContext.Clients.Client(g.IdPOne).SendAsync("Asked369Game", data);
+                    }
+                    await _staticHubContext.Clients.Group($"game1vs1_{g.Id}").SendAsync("Asked369Game", data);
+                    break;
                 case 5: // Bot acepta 6
                     g.CurrentStake = 6;
                     g.Ask369 = 6;
@@ -3248,6 +3435,19 @@ namespace PericonAPI.Hubs
                     g.PendingAsk369Message = null;
                     data.content = $"5 {g.PointsOne} {g.PointsTwo}";
                     await _staticHubContext.Clients.Client(g.IdPOne).SendAsync("Answered369Game", data);
+                    if (g.IsBotMatch)
+                    {
+                        bool isBotTurn = (g.CurrentLeadMove == null && ((g.RoundOne == 0 && g.RoundTwo == 0 && g.HandStarter == 2) || (g.LeadPlayer == 2)))
+                                      || (g.CurrentLeadMove != null && g.LeadPlayer == 1);
+                        if (isBotTurn)
+                        {
+                            _ = Task.Run(async () =>
+                            {
+                                await Task.Delay(Random.Shared.Next(1400, 2200));
+                                await ExecuteBotMove1vs1(g.Id);
+                            });
+                        }
+                    }
                     break;
                 case 6: // Bot rechaza 6 -> P1 gana 3 puntos pactados
                     g.Ask369 = -1;
@@ -3267,6 +3467,19 @@ namespace PericonAPI.Hubs
                     g.PendingAsk369Message = null;
                     data.content = $"8 {g.PointsOne} {g.PointsTwo}";
                     await _staticHubContext.Clients.Client(g.IdPOne).SendAsync("Answered369Game", data);
+                    if (g.IsBotMatch)
+                    {
+                        bool isBotTurn = (g.CurrentLeadMove == null && ((g.RoundOne == 0 && g.RoundTwo == 0 && g.HandStarter == 2) || (g.LeadPlayer == 2)))
+                                      || (g.CurrentLeadMove != null && g.LeadPlayer == 1);
+                        if (isBotTurn)
+                        {
+                            _ = Task.Run(async () =>
+                            {
+                                await Task.Delay(Random.Shared.Next(1400, 2200));
+                                await ExecuteBotMove1vs1(g.Id);
+                            });
+                        }
+                    }
                     break;
                 case 9: // Bot rechaza 9 -> P1 gana 6 puntos pactados
                     g.Ask369 = -1;

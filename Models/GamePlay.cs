@@ -515,6 +515,64 @@ namespace PericonAPI.Models
             Console.WriteLine($"[TumbaDefense] Bloqueo de Tumba ejecutado para Memo: Triunfos Memo = {CardsOne.Count(c => EvaluateCard(c.Id, lifeId) > 0)}, Triunfos Bot = {CardsTwo.Count(c => EvaluateCard(c.Id, lifeId) >= 15)}");
         }
 
+        /// <summary>
+        /// Distribución de cartas realista y humana (Tri-modal):
+        /// - Tier 1 (~28% de manos): Mano Natural / Blanca. El bot juega lo que le tocó al azar puro, permitiendo que el usuario gane limpio.
+        /// - Tier 2 (~48% de manos): Mano Intermedia / Disputada. Mano balanceada baza a baza.
+        /// - Tier 3 (~24% de manos): Mano Fuerte / Dominante. El bot obtiene ventaja real y activa su instinto agresivo de apostar ("Dame 3").
+        /// </summary>
+        private void ApplyRealisticBotDistribution(string diff)
+        {
+            if (Deck?.Package == null || Life == null || Life.Id < 0 || CardsOne.Count != 3 || CardsTwo.Count != 3)
+                return;
+
+            int lifeId = Life.Id;
+            double roll = Random.Shared.NextDouble();
+            double whiteThreshold = diff == "facil" ? 0.36 : (diff == "dificil" ? 0.22 : 0.28);
+            double strongThreshold = diff == "facil" ? 0.82 : (diff == "dificil" ? 0.68 : 0.74);
+
+            if (roll < whiteThreshold)
+            {
+                // TIER 1: MANO TOTALMENTE NATURAL / BLANCA
+                // Cero manipulación. Si el bot no tiene triunfos, se queda con 0 triunfos.
+                Console.WriteLine($"[RealisticBotDistribution] Tier 1 (Natural/Blanca): Triunfos Bot = {CardsTwo.Count(c => EvaluateCard(c.Id, lifeId) > 0)}");
+                return;
+            }
+            else if (roll < strongThreshold)
+            {
+                // TIER 2: MANO INTERMEDIA / DISPUTADA
+                // Si el usuario tiene una mano monstruosa (score >= 55) y el bot tiene 0 triunfos,
+                // darle un triunfo menor/intermedio al azar (12 a 17) para que pelee una baza.
+                double scoreUser = ScoreHand(CardsOne, lifeId);
+                int botTrumps = CardsTwo.Count(c => EvaluateCard(c.Id, lifeId) > 0);
+                if (scoreUser >= 55 && botTrumps == 0 && Deck.Package.Count > 0)
+                {
+                    var modestTrumps = Deck.Package
+                        .Where(c => c.Id != 4 && c.Id != 33 && EvaluateCard(c.Id, lifeId) >= 12 && EvaluateCard(c.Id, lifeId) <= 17)
+                        .ToList();
+                    if (modestTrumps.Count > 0)
+                    {
+                        var chosenTrump = modestTrumps[Random.Shared.Next(modestTrumps.Count)];
+                        int replaceIdx = CardsTwo.FindIndex(c => EvaluateCard(c.Id, lifeId) == 0);
+                        if (replaceIdx >= 0)
+                        {
+                            Card oldC = CardsTwo[replaceIdx];
+                            Deck.Package.Remove(chosenTrump);
+                            Deck.Package.Add(oldC);
+                            CardsTwo[replaceIdx] = chosenTrump;
+                        }
+                    }
+                }
+                Console.WriteLine($"[RealisticBotDistribution] Tier 2 (Intermedia): Triunfos Bot = {CardsTwo.Count(c => EvaluateCard(c.Id, lifeId) > 0)}");
+            }
+            else
+            {
+                // TIER 3: MANO FUERTE / DOMINANTE (Ventaja real de la casa y gatillo para 'Dame 3')
+                EnsureBotSuperiorHand(isBeginner: (diff == "facil"), isTargeted: false);
+                Console.WriteLine($"[RealisticBotDistribution] Tier 3 (Dominante): Triunfos Bot = {CardsTwo.Count(c => EvaluateCard(c.Id, lifeId) > 0)}");
+            }
+        }
+
         // Asegura que el Bot posea cartas competitivas sin manipulación evidente
         // REGLA DE ORO: Las dos cartas supremas (5 de Oros - Id 4 y 4 de Bastos - Id 33) NUNCA se inyectan artificialmente;
         // solo pueden aparecer por puro azar del mazo original.
@@ -538,16 +596,19 @@ namespace PericonAPI.Models
                 CardsTwo = temp;
             }
 
-            // 1. Si el bot no tiene ningún triunfo sólido (>= 16) y la mano amerita ventaja:
+            // 1. Si el bot no tiene ningún triunfo sólido (>= 15) y la mano amerita ventaja:
             int botTrumpsCount = CardsTwo.Count(c => EvaluateCard(c.Id, lifeId) >= 15);
             if (botTrumpsCount < 1)
             {
-                // Buscar en el mazo un triunfo INTERMEDIO / NATURAL
+                // Buscar en el mazo un triunfo INTERMEDIO / NATURAL al azar
                 // Excluyendo terminantemente el 5 de Oros (Id 4) y el 4 de Bastos (Id 33)
-                var mediumTrump = Deck.Package
-                    .Where(c => c.Id != 4 && c.Id != 33 && EvaluateCard(c.Id, lifeId) >= 16 && EvaluateCard(c.Id, lifeId) <= 24)
-                    .OrderByDescending(c => EvaluateCard(c.Id, lifeId))
-                    .FirstOrDefault();
+                var candidateTrumps = Deck.Package
+                    .Where(c => c.Id != 4 && c.Id != 33 && EvaluateCard(c.Id, lifeId) >= 14 && EvaluateCard(c.Id, lifeId) <= 22)
+                    .ToList();
+
+                Card? mediumTrump = candidateTrumps.Count > 0
+                    ? candidateTrumps[Random.Shared.Next(candidateTrumps.Count)]
+                    : null;
 
                 if (mediumTrump != null)
                 {
@@ -578,10 +639,13 @@ namespace PericonAPI.Models
             // 2. Si es un jugador bajo defensa financiera (isTargeted) y el bot solo tiene 1 triunfo, otorgarle un segundo triunfo medio
             if (isTargeted && CardsTwo.Count(c => EvaluateCard(c.Id, lifeId) >= 15) < 2)
             {
-                var secondMediumTrump = Deck.Package
-                    .Where(c => c.Id != 4 && c.Id != 33 && EvaluateCard(c.Id, lifeId) >= 15 && EvaluateCard(c.Id, lifeId) <= 28)
-                    .OrderByDescending(c => EvaluateCard(c.Id, lifeId))
-                    .FirstOrDefault();
+                var candidateSeconds = Deck.Package
+                    .Where(c => c.Id != 4 && c.Id != 33 && EvaluateCard(c.Id, lifeId) >= 14 && EvaluateCard(c.Id, lifeId) <= 22)
+                    .ToList();
+
+                Card? secondMediumTrump = candidateSeconds.Count > 0
+                    ? candidateSeconds[Random.Shared.Next(candidateSeconds.Count)]
+                    : null;
 
                 if (secondMediumTrump != null)
                 {
@@ -659,21 +723,15 @@ namespace PericonAPI.Models
                 {
                     Card botCard = CardsTwo[i];
 
-                    // Buscar en el mazo un triunfo sutil/mediano disponible (poder entre 15 y 24: malilla, hueva, 7, 6, 5, 4 de vida, As de vida)
+                    // Buscar en el mazo un triunfo sutil/mediano disponible (poder entre 14 y 22: malilla, hueva, 7, 6, 5, 4 de vida, As de vida)
                     // Excluyendo terminantemente el 4 y el 33
-                    Card? subtleTrump = Deck.Package
-                        .Where(c => c.Id != 4 && c.Id != 33 && EvaluateCard(c.Id, lifeId) >= 15 && EvaluateCard(c.Id, lifeId) <= 24)
-                        .OrderByDescending(c => EvaluateCard(c.Id, lifeId))
-                        .FirstOrDefault();
+                    var subtleTrumps = Deck.Package
+                        .Where(c => c.Id != 4 && c.Id != 33 && EvaluateCard(c.Id, lifeId) >= 14 && EvaluateCard(c.Id, lifeId) <= 22)
+                        .ToList();
 
-                    // Si no hay triunfos en ese rango, buscar una figura o carta común que no sea 4 ni 33
-                    if (subtleTrump == null)
-                    {
-                        subtleTrump = Deck.Package
-                            .Where(c => c.Id != 4 && c.Id != 33)
-                            .OrderByDescending(c => EvaluateCard(c.Id, lifeId))
-                            .FirstOrDefault();
-                    }
+                    Card? subtleTrump = subtleTrumps.Count > 0
+                        ? subtleTrumps[Random.Shared.Next(subtleTrumps.Count)]
+                        : Deck.Package.Where(c => c.Id != 4 && c.Id != 33).FirstOrDefault();
 
                     if (subtleTrump != null)
                     {
@@ -935,42 +993,10 @@ namespace PericonAPI.Models
                 }
                 else
                 {
-                    // COMPORTAMIENTO BASADO EN LOS BOTONES DE DIFICULTAD
+                    // COMPORTAMIENTO BASADO EN LOS BOTONES DE DIFICULTAD CON DISTRIBUCIÓN REALISTA
                     bool isEasy = (BotDifficultyMode == "facil");
-                    double favorProb;
-
-                    if (isEasy)
-                    {
-                        favorProb = 0.40;
-                    }
-                    else if (BotDifficultyMode == "dificil")
-                    {
-                        favorProb = 0.65;
-                        if (IsTumbaTwo) favorProb = 0.75;
-                    }
-                    else
-                    {
-                        favorProb = 0.50;
-                        if (IsTumbaTwo) favorProb = 0.60;
-                    }
-
-                    bool favorBot = Random.Shared.NextDouble() < favorProb;
-
-                    if (favorBot)
-                    {
-                        EnsureBotSuperiorHand(isEasy, false);
-                    }
-                    else
-                    {
-                        double scoreUser = ScoreHand(CardsOne, Life.Id);
-                        double scoreBot = ScoreHand(CardsTwo, Life.Id);
-                        if (scoreBot > scoreUser)
-                        {
-                            var temp = new List<Card>(CardsOne);
-                            CardsOne = new List<Card>(CardsTwo);
-                            CardsTwo = temp;
-                        }
-                    }
+                    string diffMode = isEasy ? "facil" : BotDifficultyMode;
+                    ApplyRealisticBotDistribution(diffMode);
                 }
             }
 
@@ -1084,9 +1110,7 @@ namespace PericonAPI.Models
             Life = z;
 
             // 2. Extraer las 6 cartas (3 para P1, 3 para P2) con sorteo ponderado probabilístico
-            // Las cartas de triunfo o figuras tienen un peso relativo superior (~1.65x)
-            // de modo que aumentan naturalmente las posibilidades de ligar triunfos y jugadas de valor,
-            // pero siempre manteniendo la posibilidad real de que a un jugador no le caiga nada (blancas).
+            // Con un leve sesgo natural (~1.15x) para dar fluidez y juego sin saturar de triunfos
             Card OutWeightedCard()
             {
                 if (Deck.Package.Count == 0)
@@ -1108,11 +1132,11 @@ namespace PericonAPI.Models
                     double weight = 1.0;
                     if (power >= 11) // Triunfo (Perico, Perica, palo de la Vida, Golleros)
                     {
-                        weight = 1.65; // ~65% más de probabilidad de salir en las manos
+                        weight = 1.15; // Probabilidad sutil y natural
                     }
                     else if (SpanishCards.GetFaceValue(cardId) >= 10) // Figuras mayores blancas (Sota, Caballo, Rey)
                     {
-                        weight = 1.25;
+                        weight = 1.10;
                     }
 
                     totalWeight += weight;
@@ -1147,29 +1171,7 @@ namespace PericonAPI.Models
             if (IsBotMatch)
             {
                 string diff = !string.IsNullOrEmpty(BotDifficulty) ? BotDifficulty : BotDifficultyMode;
-                double favorProb = diff switch
-                {
-                    "facil" => 0.40, // 40% Casa / 60% Jugador (a favor del usuario)
-                    "dificil" => 0.65, // 65% Casa / 35% Jugador
-                    _ => 0.50 // 50% Casa / 50% Jugador (medio)
-                };
-
-                bool favorBot = Random.Shared.NextDouble() < favorProb;
-                if (favorBot)
-                {
-                    EnsureBotSuperiorHand(isBeginner: (diff == "facil"), isTargeted: false);
-                }
-                else
-                {
-                    double scoreUser = ScoreHand(CardsOne, Life.Id);
-                    double scoreBot = ScoreHand(CardsTwo, Life.Id);
-                    if (scoreBot > scoreUser)
-                    {
-                        var temp = new List<Card>(CardsOne);
-                        CardsOne = new List<Card>(CardsTwo);
-                        CardsTwo = temp;
-                    }
-                }
+                ApplyRealisticBotDistribution(diff);
                 SanitizeBotCards(Life.Id);
             }
             else if (NamePTwo?.Equals("Pericon", StringComparison.OrdinalIgnoreCase) == true)
