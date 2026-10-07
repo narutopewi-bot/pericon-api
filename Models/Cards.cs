@@ -1,6 +1,6 @@
 namespace PericonAPI.Models
 {
-    public class Card
+    public class Card : IEquatable<Card>
     {
         public int Id { get; set; }
         public int Value { get; set; }
@@ -15,6 +15,21 @@ namespace PericonAPI.Models
             Id = -1; Name = String.Empty; Description = String.Empty; 
             IsPlayed = false; Value = 0; Point = 0;
         }
+
+        public bool Equals(Card? other)
+        {
+            if (other is null) return false;
+            if (ReferenceEquals(this, other)) return true;
+            return Id == other.Id && Id != -1;
+        }
+
+        public override bool Equals(object? obj) => obj is Card other && Equals(other);
+
+        public override int GetHashCode() => Id != -1 ? Id.GetHashCode() : base.GetHashCode();
+
+        public static bool operator ==(Card? left, Card? right) => Equals(left, right);
+
+        public static bool operator !=(Card? left, Card? right) => !Equals(left, right);
     }
     public class SpanishCards
     {

@@ -796,6 +796,13 @@ namespace PericonAPI.Hubs
                 _lastHandChangeTime1vs1[gameId] = DateTime.UtcNow;
             }
 
+            // BLINDAJE: Si la mano aún está en pleno juego activo (hay carta en mesa o bazas en curso) y no está en transición oficial:
+            if (!targetGame.IsHandTransitioning && (targetGame.CurrentLeadMove != null || targetGame.RoundOne > 0 || targetGame.RoundTwo > 0))
+            {
+                GameLogger.Log(gameId, "ChangeGame1vs1", "Ignorando ChangeGame1vs1: la mano aún está en pleno juego activo.");
+                return;
+            }
+
             // Alternancia estricta de la salida ("una y una")
             games[numg].HandStarter = (games[numg].HandStarter == 1) ? 2 : 1;
             games[numg].PlayerTurn = (games[numg].HandStarter == 1);
@@ -970,8 +977,9 @@ namespace PericonAPI.Hubs
                 }
             }
 
-            // Si la mano ya está repartida y no se ha jugado ninguna carta aún, reenviar la mano existente en lugar de barajar de nuevo
-            if (targetGame.CardsOne.Count == 3 && targetGame.CardsTwo.Count == 3 && targetGame.RoundOne == 0 && targetGame.RoundTwo == 0)
+            // Si la mano ya está en curso, repartida o tiene jugadas vivas, reenviar el estado existente en lugar de barajar de nuevo
+            bool handAlreadyActive = (targetGame.RoundOne > 0 || targetGame.RoundTwo > 0 || targetGame.CurrentLeadMove != null || (targetGame.CardsOne.Count > 0 && targetGame.CardsTwo.Count > 0));
+            if (handAlreadyActive && !string.IsNullOrEmpty(targetGame.InitHand))
             {
                 string pOne = targetGame.IdPOne;
                 string pTwo = targetGame.IdPTwo;
@@ -996,7 +1004,11 @@ namespace PericonAPI.Hubs
                         pointsOne = targetGame.PointsOne,
                         pointsTwo = targetGame.PointsTwo
                     });
-                    Console.WriteLine($"[RequestNewHand1vs1] Mano ya repartida reenviada exitosamente a POne ({caller})");
+                    if (targetGame.CurrentLeadMove != null)
+                    {
+                        await Clients.Caller.SendAsync("ResponseCard1vs1", targetGame.CurrentLeadMove);
+                    }
+                    Console.WriteLine($"[RequestNewHand1vs1] Mano activa preservada y reenviada a POne ({caller}) sin rebarajar.");
                     return;
                 }
                 else if (caller == pTwo)
@@ -1017,7 +1029,11 @@ namespace PericonAPI.Hubs
                         pointsOne = targetGame.PointsOne,
                         pointsTwo = targetGame.PointsTwo
                     });
-                    Console.WriteLine($"[RequestNewHand1vs1] Mano ya repartida reenviada exitosamente a PTwo ({caller})");
+                    if (targetGame.CurrentLeadMove != null)
+                    {
+                        await Clients.Caller.SendAsync("ResponseCard1vs1", targetGame.CurrentLeadMove);
+                    }
+                    Console.WriteLine($"[RequestNewHand1vs1] Mano activa preservada y reenviada a PTwo ({caller}) sin rebarajar.");
                     return;
                 }
             }

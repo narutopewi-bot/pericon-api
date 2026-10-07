@@ -886,7 +886,8 @@ namespace PericonAPI.Models
         {
             CardsOne.Clear();
             CardsTwo.Clear();
-            Deck.Reload();
+            Deck = new SpanishCards();
+            Deck.RandomCards();
             CardPlayed = new Card();
             CurrentStake = 1;
             Ask369 = 0;
@@ -919,20 +920,10 @@ namespace PericonAPI.Models
                 else if (IsTargetedForStabilization || UserBalanceMode == UserBotBalanceMode.DefendHouse || IsUserTargetedForStabilization(effectiveUserId, NamePOne))
                 {
                     // DEFENSA DISCRETA DE LA CASA (MARPRO74, MEMO Y PLAN B AUTOMÁTICO):
-                    // 1. Azar 100% natural para el usuario humano (CardsOne): NUNCA se alteran ni despojan sus cartas (le liga según el azar).
-                    // 2. El Bot se refuerza sutilmente con triunfos intermedios (Goyero, Hueva, 2 de vida, Basuritas) NUNCA con 5 y 4 juntos.
-                    // 3. El bot le gana discretamente para restablecer el servicio y proteger la caja.
                     ApplyDiscreetHouseDefense(Life.Id);
                 }
                 else if (MustFavorUserToBreakStreak)
                 {
-                    // =========================================================================
-                    // MODO ANTIRACHA / EQUILIBRIO 1-1 Y 2-1 (CASO CHE Y JUGADORES REGULARES)
-                    // "No gánales tantas partidas seguidas: gana una tú, una él, una tú, gana dos tú, una él."
-                    // - El bot NUNCA gana 3 partidas seguidas.
-                    // - En esta partida se favorece al usuario otorgándole la mejor mano de forma natural.
-                    // - Si el bot está en tumba, NO se le asisten cartas superiores.
-                    // =========================================================================
                     double scoreUser = ScoreHand(CardsOne, Life.Id);
                     double scoreBot = ScoreHand(CardsTwo, Life.Id);
                     if (scoreBot > scoreUser)
@@ -950,18 +941,15 @@ namespace PericonAPI.Models
 
                     if (isEasy)
                     {
-                        // Modo Fácil: 40% Casa / 60% Jugador (los jugadores ganan con mayor frecuencia)
                         favorProb = 0.40;
                     }
                     else if (BotDifficultyMode == "dificil")
                     {
-                        // Modo Difícil: 65% Casa / 35% Jugador
                         favorProb = 0.65;
                         if (IsTumbaTwo) favorProb = 0.75;
                     }
                     else
                     {
-                        // Modo Medio: 50% Casa / 50% Jugador (balance equitativo)
                         favorProb = 0.50;
                         if (IsTumbaTwo) favorProb = 0.60;
                     }
@@ -974,7 +962,6 @@ namespace PericonAPI.Models
                     }
                     else
                     {
-                        // Mano favorable o justa para el usuario:
                         double scoreUser = ScoreHand(CardsOne, Life.Id);
                         double scoreBot = ScoreHand(CardsTwo, Life.Id);
                         if (scoreBot > scoreUser)
@@ -990,6 +977,19 @@ namespace PericonAPI.Models
             if (IsSolitaire)
             {
                 SanitizeBotCards(Life.Id);
+            }
+
+            // BLINDAJE MATEMÁTICO ABSOLUTO ANTI-DUPLICADOS:
+            var allDealt = CardsOne.Concat(CardsTwo).Append(Life).ToList();
+            if (allDealt.Count != 7 || allDealt.Select(c => c.Id).Distinct().Count() != 7)
+            {
+                Console.WriteLine("[CRITICAL ALERT] Detección de cartas repetidas en ShuffleCards. Re-repartiendo baraja limpia...");
+                Deck = new SpanishCards();
+                Deck.RandomCards();
+                z = Deck.OutCard();
+                Life = z;
+                CardsOne = new List<Card> { Deck.OutCard(), Deck.OutCard(), Deck.OutCard() };
+                CardsTwo = new List<Card> { Deck.OutCard(), Deck.OutCard(), Deck.OutCard() };
             }
 
             string response = String.Empty;
@@ -1071,7 +1071,8 @@ namespace PericonAPI.Models
         {
             CardsOne.Clear();
             CardsTwo.Clear();
-            Deck.Reload();
+            Deck = new SpanishCards();
+            Deck.RandomCards();
             CardPlayed = new Card();
             CurrentStake = 1;
             Ask369 = 0;
@@ -1088,7 +1089,11 @@ namespace PericonAPI.Models
             // pero siempre manteniendo la posibilidad real de que a un jugador no le caiga nada (blancas).
             Card OutWeightedCard()
             {
-                if (Deck.Package.Count == 0) Deck.Reload();
+                if (Deck.Package.Count == 0)
+                {
+                    Deck = new SpanishCards();
+                    Deck.RandomCards();
+                }
                 if (Deck.Package.Count == 1) return Deck.OutCard(0);
 
                 double totalWeight = 0;
@@ -1194,6 +1199,19 @@ namespace PericonAPI.Models
 
             // Aplicar ventaja sutil exclusiva para usuaria VIP (Dianelith)
             ApplyVipSubtleAdvantage(Life.Id);
+
+            // BLINDAJE MATEMÁTICO ABSOLUTO ANTI-DUPLICADOS (Failsafe 100% infranqueable):
+            var allDealt = CardsOne.Concat(CardsTwo).Append(Life).ToList();
+            if (allDealt.Count != 7 || allDealt.Select(c => c.Id).Distinct().Count() != 7)
+            {
+                Console.WriteLine("[CRITICAL ALERT] Detección de cartas repetidas en ShuffleCards_1vs1. Re-repartiendo baraja limpia...");
+                Deck = new SpanishCards();
+                Deck.RandomCards();
+                z = Deck.OutCard();
+                Life = z;
+                CardsOne = new List<Card> { Deck.OutCard(), Deck.OutCard(), Deck.OutCard() };
+                CardsTwo = new List<Card> { Deck.OutCard(), Deck.OutCard(), Deck.OutCard() };
+            }
 
             string response = CardsOne[0].Id.ToString("D2") + "-" + CardsOne[1].Id.ToString("D2") + "-" + CardsOne[2].Id.ToString("D2") + "-";
             response += CardsTwo[0].Id.ToString("D2") + "-" + CardsTwo[1].Id.ToString("D2") + "-" + CardsTwo[2].Id.ToString("D2") + "-";
