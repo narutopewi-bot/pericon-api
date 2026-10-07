@@ -3328,15 +3328,27 @@ namespace PericonAPI.Hubs
                 }
 
                 string diff = !string.IsNullOrEmpty(g.BotDifficulty) ? g.BotDifficulty : GamePlayOneVsOne.BotDifficultyMode;
-                double acceptProb = diff switch
-                {
-                    "facil" => 0.35,
-                    "dificil" => 0.65,
-                    _ => 0.50
-                };
 
-                if (handScore >= 45) acceptProb += 0.30;
-                else if (handScore <= 20) acceptProb -= 0.20;
+                // CRITERIO HUMANO: Si no tiene triunfos ni mano (blanca), un jugador inteligente rechaza (No quiero)
+                // cediendo 1 piedra para no perder 3. Si tiene mano fuerte, acepta con firmeza.
+                double acceptProb;
+                if (trumpsCount == 0 && handScore <= 24)
+                {
+                    acceptProb = 0.04; // 96% de rechazo (prudencia humana: no regalar puntos gratis)
+                }
+                else if (trumpsCount >= 2 || handScore >= 45)
+                {
+                    acceptProb = 0.92; // Mano dominante: acepta casi siempre
+                }
+                else
+                {
+                    acceptProb = diff switch
+                    {
+                        "facil" => 0.40,
+                        "dificil" => 0.65,
+                        _ => 0.50
+                    };
+                }
 
                 bool accept = Random.Shared.NextDouble() < acceptProb;
 
