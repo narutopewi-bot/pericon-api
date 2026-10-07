@@ -2968,8 +2968,8 @@ namespace PericonAPI.Hubs
             // El bot no puede volver a pedir si ya fue el último retador sin respuesta
             if (g.LastStakeAsker == 2) return false;
 
-            // No pedir si la mano ya está en su última carta o resuelta
-            if (g.CardsTwo.Count < 2) return false;
+            // No pedir si no le quedan cartas al bot
+            if (g.CardsTwo.Count == 0) return false;
 
             int lifeId = g.Life?.Id ?? -1;
             if (lifeId < 0) return false;
@@ -2987,30 +2987,80 @@ namespace PericonAPI.Hubs
 
             string diff = !string.IsNullOrEmpty(g.BotDifficulty) ? g.BotDifficulty : GamePlayOneVsOne.BotDifficultyMode;
 
+            // Detección de respuesta a carta lanzada por el humano (Pie):
+            bool isBotResponding = (g.CurrentLeadMove != null && g.LeadPlayer == 1);
+            int leadCardId = -1;
+            if (isBotResponding && !string.IsNullOrEmpty(g.CurrentLeadMove?.content))
+            {
+                var parts = g.CurrentLeadMove.content.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length > 2 && int.TryParse(parts[2], out int parsedC))
+                {
+                    leadCardId = parsedC;
+                }
+            }
+
+            bool botHasWinningCard = false;
+            if (isBotResponding && leadCardId >= 0)
+            {
+                botHasWinningCard = g.CardsTwo.Any(c => GamePlayOneVsOne.DetermineWinner(leadCardId, c.Id, lifeId, true) == "00");
+            }
+
             // Probabilidad base de cantar según fortaleza de la mano y momento
             bool shouldAsk = false;
 
-            // CASO A: Mano dominante en Baza 1 (Mano o Pie con cartas fuertes)
-            // 2 o más triunfos, o un triunfo superior (>= 22, p.ej. 2 de vida / 3 de vida / Rey)
-            if (trumpsCount >= 2 || maxTrumpPower >= 22 || handScore >= 45)
+            // TIP TÁCTICO HUMANO: Remate definitivo cuando el rival ya lanzó primero y el bot tiene en mano la carta que la mata.
+            // Caso 1: Última baza (CardsTwo.Count == 1). El rival lanzó su última carta y la carta del bot la mata con 100% certeza.
+            // Caso 2: Segunda baza (CardsTwo.Count == 2), habiendo ganado el bot la 1ra baza (RoundTwo >= 1). Ganar esta baza liquida la mano (2-0).
+            if (isBotResponding && botHasWinningCard)
             {
-                double askProb = diff == "facil" ? 0.45 : (diff == "dificil" ? 0.75 : 0.60);
-                shouldAsk = Random.Shared.NextDouble() < askProb;
+                bool isDefinitiveTrick = (g.CardsTwo.Count == 1) || (g.RoundTwo >= 1);
+                if (isDefinitiveTrick)
+                {
+                    // Alta probabilidad humana: ~85% de rematar con 'Dame tres' para forzar retiro o cobrar 3 piedras
+                    double killerAskProb = diff == "facil" ? 0.75 : (diff == "dificil" ? 0.92 : 0.85);
+                    shouldAsk = Random.Shared.NextDouble() < killerAskProb;
+                    if (shouldAsk)
+                    {
+                        Console.WriteLine($"[Bot Killer Ask] Bot '{g.NamePTwo}' detecta baza definitiva ganada frente a carta rival {leadCardId} (bazas bot: {g.RoundTwo}, cartas: {g.CardsTwo.Count}). Canta '¡Dame tres!'");
+                    }
+                }
             }
-            // CASO B: En Baza 2, si el Bot ganó la primera baza (RoundTwo >= 1)
-            else if (g.RoundTwo >= 1 && (trumpsCount >= 1 || handScore >= 25))
+
+            // Si no fue remate definitivo de respuesta, evaluar jugadas de desarrollo:
+            if (!shouldAsk && g.CardsTwo.Count >= 2)
             {
-                double askProb = diff == "facil" ? 0.55 : (diff == "dificil" ? 0.85 : 0.70);
-                shouldAsk = Random.Shared.NextDouble() < askProb;
+                // CASO A: Mano dominante en Baza 1 (Mano o Pie con cartas fuertes)
+                // 2 o más triunfos, o un triunfo superior (>= 22, p.ej. 2 de vida / 3 de vida / Rey)
+                if (trumpsCount >= 2 || maxTrumpPower >= 22 || handScore >= 45)
+                {
+                    double askProb = diff == "facil" ? 0.45 : (diff == "dificil" ? 0.75 : 0.60);
+                    shouldAsk = Random.Shared.NextDouble() < askProb;
+                }
+                // CASO B: En Baza 2, si el Bot ganó la primera baza (RoundTwo >= 1)
+                else if (g.RoundTwo >= 1 && (trumpsCount >= 1 || handScore >= 25))
+                {
+                    double askProb = diff == "facil" ? 0.55 : (diff == "dificil" ? 0.85 : 0.70);
+                    shouldAsk = Random.Shared.NextDouble() < askProb;
+                }
+                // CASO C: Farol humano (Bluff) - 10% en manos flojas o blancas para simular psicología real
+                else if (handScore < 30)
+                {
+                    double bluffProb = diff == "facil" ? 0.05 : 0.10;
+                    shouldAsk = Random.Shared.NextDouble() < bluffProb;
+                    if (shouldAsk)
+                    {
+                        Console.WriteLine($"[Bot Bluff] Bot '{g.NamePTwo}' ejecuta farol (score: {handScore}). Pide '¡Dame tres!'");
+                    }
+                }
             }
-            // CASO C: Farol humano (Bluff) - 10% en manos flojas o blancas para simular psicología real
-            else if (handScore < 30)
+            // En última baza saliendo de mano el bot con carta mayor (>= 22) tras ganar baza previa:
+            else if (!shouldAsk && g.CardsTwo.Count == 1 && !isBotResponding && maxTrumpPower >= 22 && g.RoundTwo >= 1)
             {
-                double bluffProb = diff == "facil" ? 0.05 : 0.10;
-                shouldAsk = Random.Shared.NextDouble() < bluffProb;
+                double leadAskProb = diff == "facil" ? 0.60 : 0.80;
+                shouldAsk = Random.Shared.NextDouble() < leadAskProb;
                 if (shouldAsk)
                 {
-                    Console.WriteLine($"[Bot Bluff] Bot '{g.NamePTwo}' ejecuta farol (score: {handScore}). Pide '¡Dame tres!'");
+                    Console.WriteLine($"[Bot Lead Last Trick Ask] Bot '{g.NamePTwo}' sale en última baza con triunfo mayor {maxTrumpPower}. Canta '¡Dame tres!'");
                 }
             }
 
@@ -3348,6 +3398,23 @@ namespace PericonAPI.Hubs
                         "dificil" => 0.65,
                         _ => 0.50
                     };
+                }
+
+                // Si el humano reta o revira teniendo ya su carta lanzada en mesa, y el bot tiene en mano la carta que la mata en baza decisiva:
+                if (g.CurrentLeadMove != null && g.LeadPlayer == 1 && !string.IsNullOrEmpty(g.CurrentLeadMove.content))
+                {
+                    int oppLeadCard = -1;
+                    var parts = g.CurrentLeadMove.content.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (parts.Length > 2 && int.TryParse(parts[2], out int parsedC)) oppLeadCard = parsedC;
+                    if (oppLeadCard >= 0)
+                    {
+                        bool hasKillerCard = g.CardsTwo.Any(c => GamePlayOneVsOne.DetermineWinner(oppLeadCard, c.Id, g.Life.Id, true) == "00");
+                        bool isHandDeciding = (g.RoundTwo >= 1) || (g.CardsTwo.Count == 1);
+                        if (hasKillerCard && isHandDeciding)
+                        {
+                            acceptProb = 0.98; // Baza y mano ganadas en mano: el bot acepta con máxima convicción
+                        }
+                    }
                 }
 
                 bool accept = Random.Shared.NextDouble() < acceptProb;
