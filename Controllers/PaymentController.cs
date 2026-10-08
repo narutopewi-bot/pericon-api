@@ -542,6 +542,37 @@ namespace PericonAPI.Controllers
                 });
             }
 
+            // REGLA FINANCIERA 4: Límite estricto de un (1) retiro diario por usuario
+            // Solo se permite realizar una (1) solicitud de retiro por día calendario (hora de Venezuela).
+            var todayVzlaStart = VenezuelaTime.Now.Date;
+            var todayVzlaEnd = todayVzlaStart.AddDays(1);
+
+            bool alreadyWithdrewToday = await _context.PaymentWithdrawals
+                .AnyAsync(w => w.UserId == dto.UserId
+                            && w.CreatedAt >= todayVzlaStart
+                            && w.CreatedAt < todayVzlaEnd
+                            && w.Status != "RECHAZADO");
+
+            if (alreadyWithdrewToday && !user.IsAdmin && user.Username.ToLower() != "guardian")
+            {
+                return BadRequest(new
+                {
+                    message = "Por política de control y seguridad financiera, solo se permite realizar un (1) retiro diario por usuario. Ya registraste una solicitud de retiro el día de hoy. Podrás realizar una nueva solicitud a partir de mañana dentro del horario operativo (6:00 AM a 9:30 PM)."
+                });
+            }
+
+            // REGLA FINANCIERA 5: Control de retiros pendientes concurrentes
+            bool hasPendingWithdrawal = await _context.PaymentWithdrawals
+                .AnyAsync(w => w.UserId == dto.UserId && w.Status == "PENDIENTE");
+
+            if (hasPendingWithdrawal && !user.IsAdmin && user.Username.ToLower() != "guardian")
+            {
+                return BadRequest(new
+                {
+                    message = "Ya tienes una solicitud de retiro previa en estado PENDIENTE de revisión por el administrador. Por seguridad operativa, debes esperar a que sea procesada antes de solicitar un nuevo retiro."
+                });
+            }
+
             // Descontar monedas de inmediato para evitar doble gasto
             user.Coins -= dto.CoinsAmount;
 
@@ -607,6 +638,64 @@ namespace PericonAPI.Controllers
                 .ToListAsync();
 
             return Ok(list);
+        }
+
+        [HttpGet("withdrawal-eligibility/{userId}")]
+        public async Task<IActionResult> GetWithdrawalEligibility(int userId)
+        {
+            var user = await _context.Users.FindAsync(userId);
+            if (user == null)
+            {
+                return NotFound(new { message = "Usuario no encontrado." });
+            }
+
+            var todayVzlaStart = VenezuelaTime.Now.Date;
+            var todayVzlaEnd = todayVzlaStart.AddDays(1);
+
+            var todayWithdrawal = await _context.PaymentWithdrawals
+                .Where(w => w.UserId == userId && w.CreatedAt >= todayVzlaStart && w.CreatedAt < todayVzlaEnd && w.Status != "RECHAZADO")
+                .OrderByDescending(w => w.CreatedAt)
+                .FirstOrDefaultAsync();
+
+            var pendingWithdrawal = await _context.PaymentWithdrawals
+                .Where(w => w.UserId == userId && w.Status == "PENDIENTE")
+                .OrderByDescending(w => w.CreatedAt)
+                .FirstOrDefaultAsync();
+
+            bool hasApprovedDeposit = await _context.PaymentRecharges
+                .AnyAsync(r => r.UserId == userId && r.Status == "APROBADO");
+
+            bool isExempt = user.IsAdmin || user.Username.ToLower() == "guardian";
+
+            bool canWithdraw = isExempt || (todayWithdrawal == null && pendingWithdrawal == null && hasApprovedDeposit && user.GetRetirableCoins() >= MIN_WITHDRAWAL_COINS);
+
+            return Ok(new
+            {
+                canWithdraw,
+                alreadyWithdrewToday = todayWithdrawal != null,
+                hasPendingWithdrawal = pendingWithdrawal != null,
+                hasApprovedDeposit,
+                todayWithdrawal = todayWithdrawal == null ? null : new
+                {
+                    todayWithdrawal.Id,
+                    todayWithdrawal.AmountBs,
+                    todayWithdrawal.CoinsAmount,
+                    todayWithdrawal.Status,
+                    todayWithdrawal.CreatedAt
+                },
+                pendingWithdrawal = pendingWithdrawal == null ? null : new
+                {
+                    pendingWithdrawal.Id,
+                    pendingWithdrawal.AmountBs,
+                    pendingWithdrawal.CoinsAmount,
+                    pendingWithdrawal.Status,
+                    pendingWithdrawal.CreatedAt
+                },
+                operatingHoursOpen = VenezuelaTime.IsWithinOperatingHours(),
+                retirableCoins = user.GetRetirableCoins(),
+                coins = user.Coins,
+                bonusCoins = user.BonusCoins
+            });
         }
 
         [HttpGet("operating-hours")]
