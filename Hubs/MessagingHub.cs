@@ -3053,6 +3053,13 @@ namespace PericonAPI.Hubs
             if (_staticHubContext == null || g == null) return false;
             if (!g.IsActive || g.HasPaidOut || g.IsFinished || !g.IsBotMatch || g.IsHandTransitioning) return false;
 
+            // En Tumba jamás está permitido pedir (regla inviolable del Pericón Llanero)
+            if (g.IsTumbaOne || g.IsTumbaTwo || g.PointsOne >= 9 || g.PointsTwo >= 9 ||
+                (g.IsTumbaDeParaAtrasOne && g.PointsOne == 8) || (g.IsTumbaDeParaAtrasTwo && g.PointsTwo == 8))
+            {
+                return false;
+            }
+
             // Solo se puede pedir si la apuesta actual es 1 y nadie tiene un reto pendiente
             if (g.CurrentStake != 1 || g.Ask369 != 0 || g.PendingAsk369Message != null) return false;
 
@@ -3456,6 +3463,14 @@ namespace PericonAPI.Hubs
                 if (!g.IsActive || g.HasPaidOut || g.IsFinished || g.IsHandTransitioning || g.RoundOne >= 2 || (g.CardsTwo.Count == 0 && g.RoundOne > g.RoundTwo))
                 {
                     Console.WriteLine($"[ExecuteBotAnswerStake1vs1] Pedir ignorado/rechazado: mano ya resuelta o en transición.");
+                    return;
+                }
+
+                // En Tumba jamás se puede pedir ni tramitar retos de apuesta
+                if (g.IsTumbaOne || g.IsTumbaTwo || g.PointsOne >= 9 || g.PointsTwo >= 9 ||
+                    (g.IsTumbaDeParaAtrasOne && g.PointsOne == 8) || (g.IsTumbaDeParaAtrasTwo && g.PointsTwo == 8))
+                {
+                    Console.WriteLine($"[ExecuteBotAnswerStake1vs1] Pedir ignorado: la partida se encuentra en estado de Tumba.");
                     return;
                 }
 
