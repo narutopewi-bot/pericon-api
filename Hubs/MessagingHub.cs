@@ -1299,6 +1299,11 @@ namespace PericonAPI.Hubs
                 targetGame.IsActive = true;
             }
 
+            if (targetGame.IsBotMatch)
+            {
+                isPlayerOne = true;
+            }
+
             if (isPlayerOne)
             {
                 games[numg].IdPOne = Context.ConnectionId;
@@ -1416,7 +1421,7 @@ namespace PericonAPI.Hubs
 
             bool isP1 = (Context.ConnectionId == games[numg].IdPOne);
             bool isP2 = (Context.ConnectionId == games[numg].IdPTwo);
-            bool isCallerP1 = isP1 || (!isP2 && games[numg].NamePOne == SearchPlayer(Context.ConnectionId)?.Name);
+            bool isCallerP1 = games[numg].IsBotMatch || isP1 || (!isP2 && games[numg].NamePOne == SearchPlayer(Context.ConnectionId)?.Name);
 
             // Re-vincular socket activo y limpiar estado de desconexión
             if (isCallerP1)
@@ -1428,6 +1433,18 @@ namespace PericonAPI.Hubs
             {
                 games[numg].IdPTwo = Context.ConnectionId;
                 games[numg].P2DisconnectedAt = null;
+            }
+
+            // Proactividad Anti-Stuck: Si es partida contra bot y el bot está en su turno sin jugar por >3s, rescatarlo de inmediato
+            if (games[numg].IsBotMatch && !games[numg].PlayerTurn && !games[numg].IsFinished && games[numg].IsActive)
+            {
+                var botDelay = (DateTime.UtcNow - games[numg].LastTurnActionAt).TotalSeconds;
+                if (botDelay >= 3)
+                {
+                    Console.WriteLine($"[SyncTable1vs1] Rescatando bot '{games[numg].NamePTwo}' inactivo por {botDelay:F1}s en juego {gameId}...");
+                    games[numg].LastTurnActionAt = DateTime.UtcNow;
+                    _ = Task.Run(async () => await ExecuteBotMove1vs1(gameId));
+                }
             }
 
             // Notificar al oponente que su rival ha reconectado activamente para cerrar el modal de gracia
@@ -1671,6 +1688,11 @@ namespace PericonAPI.Hubs
             string PZero = FindInitHand(id);
 
             // Actualizar ConnectionId activo del cliente en la partida y reiniciar contadores de desconexión
+            if (games[numg].IsBotMatch)
+            {
+                flag = true;
+            }
+
             if (flag)
             {
                 games[numg].IdPOne = Context.ConnectionId;
@@ -2465,16 +2487,30 @@ namespace PericonAPI.Hubs
             }
             else
             {
-                // Inactividad durante el turno regular: debe haber transcurrido al menos 50s desde la última acción de turno
+                // Inactividad durante el turno regular:
                 var elapsedInactivity = (DateTime.UtcNow - game.LastTurnActionAt).TotalSeconds;
-                if (elapsedInactivity < 50)
+                if (game.IsBotMatch)
                 {
-                    int remain = Math.Max(1, 55 - (int)elapsedInactivity);
-                    Console.WriteLine($"[ClaimOpponentTimeout1vs1] RECHAZADO para {caller}: Turno y gracia activos ({remain}s restantes).");
-                    await Clients.Caller.SendAsync("ClaimRejected", new { 
-                        message = $"Tu contrincante aún tiene tiempo de juego y gracia activo ({remain}s restantes)." 
-                    });
-                    return;
+                    // En partidas contra Bot virtual, no aplica período de gracia por microcorte/red.
+                    // Si el bot no jugó dentro del tiempo de turno normal (28s), se adjudica la victoria de inmediato.
+                    if (elapsedInactivity < 28)
+                    {
+                        Console.WriteLine($"[ClaimOpponentTimeout1vs1] RECHAZADO contra Bot: Turno de bot aún en progreso ({elapsedInactivity:F1}s).");
+                        return;
+                    }
+                }
+                else
+                {
+                    // En partidas contra humanos, debe haber transcurrido al menos 50s desde la última acción de turno
+                    if (elapsedInactivity < 50)
+                    {
+                        int remain = Math.Max(1, 55 - (int)elapsedInactivity);
+                        Console.WriteLine($"[ClaimOpponentTimeout1vs1] RECHAZADO para {caller}: Turno y gracia activos ({remain}s restantes).");
+                        await Clients.Caller.SendAsync("ClaimRejected", new { 
+                            message = $"Tu contrincante aún tiene tiempo de juego y gracia activo ({remain}s restantes)." 
+                        });
+                        return;
+                    }
                 }
             }
 
@@ -3750,7 +3786,21 @@ namespace PericonAPI.Hubs
                         }
                     }
 
-                    // Caso C: Auto-descongelamiento de partidas activas (Anti-Stuck Watchdog)
+                    // Caso C.1: Anti-Stuck Rápido para Bots Virtuales
+                    // Si es partida contra bot y el bot está en su turno por más de 6s, forzar su jugada inmediatamente
+                    if (g.IsBotMatch && !g.IsFinished && g.IsActive && g.PlayerTurn == false)
+                    {
+                        var botElapsed = (now - g.LastTurnActionAt).TotalSeconds;
+                        if (botElapsed >= 6)
+                        {
+                            Console.WriteLine($"[GameScavenger] Bot '{g.NamePTwo}' en juego {g.Id} trabado por {botElapsed:F1}s (Lead: {g.CurrentLeadMove == null}). Forzando movimiento...");
+                            g.LastTurnActionAt = DateTime.UtcNow;
+                            _ = Task.Run(async () => await ExecuteBotMove1vs1(g.Id));
+                            continue;
+                        }
+                    }
+
+                    // Caso C.2: Auto-descongelamiento de partidas activas entre humanos (Anti-Stuck Watchdog)
                     // Si el jugador está conectado pero la partida lleva más de 35s sin acción:
                     if (p1Alive && (now - g.LastTurnActionAt).TotalSeconds >= 35)
                     {
@@ -3761,19 +3811,6 @@ namespace PericonAPI.Hubs
                             g.LastTurnActionAt = DateTime.UtcNow;
                             await ChangeGame1vs1Core(g.Id);
                             continue;
-                        }
-                        // Si es partida contra bot y el bot no ha jugado:
-                        if (g.IsBotMatch && !g.IsFinished && g.IsActive)
-                        {
-                            bool isBotLead = (g.CurrentLeadMove == null && ((g.RoundOne == 0 && g.RoundTwo == 0 && g.HandStarter == 2) || (g.LeadPlayer == 2)));
-                            bool isBotResponse = (g.CurrentLeadMove != null && g.LeadPlayer == 1);
-                            if (isBotLead || isBotResponse)
-                            {
-                                Console.WriteLine($"[GameScavenger] Partida {g.Id} destrabada: forzando movimiento del bot...");
-                                g.LastTurnActionAt = DateTime.UtcNow;
-                                await ExecuteBotMove1vs1(g.Id);
-                                continue;
-                            }
                         }
                     }
 
