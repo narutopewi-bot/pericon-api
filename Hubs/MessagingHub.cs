@@ -1148,13 +1148,28 @@ namespace PericonAPI.Hubs
             int numg = FindGame1vs1(gameId);
             if (numg < 0 || numg >= games.Count) return;
 
+            var g = games[numg];
             string caller = Context.ConnectionId;
-            bool callerIsP1 = (caller == games[numg].IdPOne);
-            string targetOpp = callerIsP1 ? games[numg].IdPTwo : games[numg].IdPOne;
+            bool callerIsP1 = (caller == g.IdPOne);
+            int callerNum = callerIsP1 ? 1 : 2;
+            string targetOpp = callerIsP1 ? g.IdPTwo : g.IdPOne;
             string reqName = !string.IsNullOrWhiteSpace(requesterName)
                 ? requesterName
-                : (callerIsP1 ? (!string.IsNullOrEmpty(games[numg].NamePOne) ? games[numg].NamePOne : "Tu rival")
-                              : (!string.IsNullOrEmpty(games[numg].NamePTwo) ? games[numg].NamePTwo : "Tu rival"));
+                : (callerIsP1 ? (!string.IsNullOrEmpty(g.NamePOne) ? g.NamePOne : "Tu rival")
+                              : (!string.IsNullOrEmpty(g.NamePTwo) ? g.NamePTwo : "Tu rival"));
+
+            // 1. CASO CONTRA BOT VIRTUAL:
+            if (g.IsBotMatch)
+            {
+                GameLogger.Log(gameId, "RequestRevancha1vs1", "Revancha contra bot detectada. El bot acepta automáticamente.");
+                await Clients.Caller.SendAsync("RevanchaRequestedPending1vs1", new { requesterName = reqName });
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(1200);
+                    await ExecuteAcceptRevancha1vs1(gameId, g.NamePTwo ?? "Bot");
+                });
+                return;
+            }
 
             if (string.IsNullOrEmpty(targetOpp))
             {
@@ -1162,6 +1177,32 @@ namespace PericonAPI.Hubs
                 return;
             }
 
+            // 2. CASO PETICIÓN MUTUA SIMULTÁNEA: Si el rival ya había pedido revancha recientemente (< 35s),
+            // ¡ambos quieren jugar de nuevo! Se activa aceptación mutua automática sin deadlocks.
+            if (g.RematchRequestedBy != 0 && g.RematchRequestedBy != callerNum &&
+                g.RematchRequestedAt.HasValue && (DateTime.UtcNow - g.RematchRequestedAt.Value).TotalSeconds < 35)
+            {
+                GameLogger.Log(gameId, "RequestRevancha1vs1", "Ambos jugadores solicitaron revancha simultáneamente. Aceptación mutua automática activada.");
+                await ExecuteAcceptRevancha1vs1(gameId, reqName);
+                return;
+            }
+
+            // 3. CASO REPETIDO POR EL MISMO JUGADOR: Ya está pendiente
+            if (g.RematchRequestedBy == callerNum &&
+                g.RematchRequestedAt.HasValue && (DateTime.UtcNow - g.RematchRequestedAt.Value).TotalSeconds < 35)
+            {
+                await Clients.Caller.SendAsync("RevanchaRequestedPending1vs1", new { requesterName = reqName });
+                return;
+            }
+
+            // 4. NUEVA PETICIÓN DE REVANCHA HUMANO vs HUMANO:
+            g.RematchRequestedBy = callerNum;
+            g.RematchRequestedAt = DateTime.UtcNow;
+
+            // Confirmar al solicitante que la petición está en curso
+            await Clients.Caller.SendAsync("RevanchaRequestedPending1vs1", new { requesterName = reqName });
+
+            // Enviar inmediatamente la notificación de aceptación al oponente
             await Clients.Client(targetOpp).SendAsync("RevanchaRequested1vs1", new
             {
                 gameId = gameId,
@@ -1175,16 +1216,19 @@ namespace PericonAPI.Hubs
             int numg = FindGame1vs1(gameId);
             if (numg < 0 || numg >= games.Count) return;
 
+            var g = games[numg];
             string caller = Context.ConnectionId;
-            bool callerIsP1 = (caller == games[numg].IdPOne);
-            string targetOpp = callerIsP1 ? games[numg].IdPTwo : games[numg].IdPOne;
+            bool callerIsP1 = (caller == g.IdPOne);
+            string targetOpp = callerIsP1 ? g.IdPTwo : g.IdPOne;
             string respName = !string.IsNullOrWhiteSpace(responderName)
                 ? responderName
-                : (callerIsP1 ? (!string.IsNullOrEmpty(games[numg].NamePOne) ? games[numg].NamePOne : "Tu rival")
-                              : (!string.IsNullOrEmpty(games[numg].NamePTwo) ? games[numg].NamePTwo : "Tu rival"));
+                : (callerIsP1 ? (!string.IsNullOrEmpty(g.NamePOne) ? g.NamePOne : "Tu rival")
+                              : (!string.IsNullOrEmpty(g.NamePTwo) ? g.NamePTwo : "Tu rival"));
 
             if (!accepted)
             {
+                g.RematchRequestedBy = 0;
+                g.RematchRequestedAt = null;
                 if (!string.IsNullOrEmpty(targetOpp))
                 {
                     await Clients.Client(targetOpp).SendAsync("RevanchaRejected1vs1", new { responderName = respName });
@@ -1193,36 +1237,57 @@ namespace PericonAPI.Hubs
                 return;
             }
 
+            await ExecuteAcceptRevancha1vs1(gameId, respName);
+        }
+
+        private async Task ExecuteAcceptRevancha1vs1(int gameId, string responderName)
+        {
+            int numg = FindGame1vs1(gameId);
+            if (numg < 0 || numg >= games.Count) return;
+
+            var g = games[numg];
+
             // Reiniciar estado completo para la revancha 1vs1
-            games[numg].PointsOne = 0;
-            games[numg].PointsTwo = 0;
-            games[numg].RoundOne = 0;
-            games[numg].RoundTwo = 0;
-            games[numg].CurrentStake = 1;
-            games[numg].LastStakeAsker = 0;
-            games[numg].Ask369 = 0;
-            games[numg].IsTumbaOne = false;
-            games[numg].IsTumbaTwo = false;
-            games[numg].IsTumbaDeParaAtrasOne = false;
-            games[numg].IsTumbaDeParaAtrasTwo = false;
-            games[numg].HandStarter = 1;
-            games[numg].HandCount = 1;
-            games[numg].PlayerTurn = true;
-            games[numg].IsActive = true;
-            games[numg].Deck.RandomCards();
-            games[numg].ShuffleCards_1vs1();
+            g.RematchRequestedBy = 0;
+            g.RematchRequestedAt = null;
+            g.HasPaidOut = false;
+            g.IsFinished = false;
+            g.PointsOne = 0;
+            g.PointsTwo = 0;
+            g.RoundOne = 0;
+            g.RoundTwo = 0;
+            g.CurrentStake = 1;
+            g.LastStakeAsker = 0;
+            g.Ask369 = 0;
+            g.PendingAsk369Message = null;
+            g.CurrentLeadMove = null;
+            g.CardPlayed = new Card();
+            g.IsHandTransitioning = false;
+            g.IsTumbaOne = false;
+            g.IsTumbaTwo = false;
+            g.IsTumbaDeParaAtrasOne = false;
+            g.IsTumbaDeParaAtrasTwo = false;
+            g.HandStarter = 1;
+            g.HandCount = 1;
+            g.PlayerTurn = true;
+            g.IsActive = true;
+            g.LastTurnActionAt = DateTime.UtcNow;
+
+            g.Deck = new SpanishCards();
+            g.Deck.RandomCards();
+            g.ShuffleCards_1vs1();
 
             // Notificar aceptación
             await Clients.Group($"game1vs1_{gameId}").SendAsync("RevanchaAccepted1vs1", new
             {
                 gameId = gameId,
-                responderName = respName
+                responderName = responderName
             });
 
             // Enviar reparto de mano inicial de la revancha a ambos jugadores
-            string POne = games[numg].IdPOne;
-            string PTwo = games[numg].IdPTwo;
-            string PThree = games[numg].InitHand;
+            string POne = g.IdPOne;
+            string PTwo = g.IdPTwo;
+            string PThree = g.InitHand;
             string PFour = "1";
             string PFive = "0";
             string PScore = "-0-0";
@@ -1246,7 +1311,7 @@ namespace PericonAPI.Hubs
                 });
             }
 
-            if (!string.IsNullOrEmpty(PTwo))
+            if (!string.IsNullOrEmpty(PTwo) && !g.IsBotMatch)
             {
                 GameMessage sentencePTwo = new GameMessage
                 {

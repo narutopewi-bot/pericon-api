@@ -32,6 +32,10 @@ namespace PericonAPI.Models
         public static double BotAdvantageProbability { get; set; } = 0.40;
         public static string BotDifficultyMode { get; set; } = "facil"; // "facil", "medio", "dificil"
 
+        // Arbitraje de Revanchas 1vs1 (0 = ninguna, 1 = P1, 2 = P2)
+        public int RematchRequestedBy { get; set; } = 0;
+        public DateTime? RematchRequestedAt { get; set; } = null;
+
         // Lista de usuarios VIP favorecidos con ventaja sutil exclusiva (Dianelith - ID 28, Bea - ID 44)
         public static HashSet<string> FavoredVipUsers { get; set; } = new(StringComparer.OrdinalIgnoreCase) { "dianilith", "Bea", "Beatriz", "beatrizmadrid91" };
         public static HashSet<int> FavoredVipUserIds { get; set; } = new() { 28, 44 };
