@@ -581,6 +581,11 @@ namespace PericonAPI.Hubs
                     games[numg].RoundOne = 0;
                     games[numg].RoundTwo = 0;
                     games[numg].PendingAsk369Message = null;
+                    games[numg].IsHandTransitioning = true;
+                    games[numg].CurrentLeadMove = null;
+                    games[numg].LeadPlayer = 0;
+                    games[numg].CardsOne.Clear();
+                    games[numg].CardsTwo.Clear();
                     if (callerIsP1) games[numg].PointsTwo += 1;
                     else games[numg].PointsOne += 1;
                     games[numg].UpdateTumbaStatus(oldP1, oldP2);
@@ -588,6 +593,19 @@ namespace PericonAPI.Hubs
                     await Clients.Client(ownto).SendAsync("EndAsk369Round", data);
                     if (!string.IsNullOrEmpty(sentto)) await Clients.Client(sentto).SendAsync("Answered369Game", data);
                     await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("Answered369Game", data);
+
+                    {
+                        int gId = move.game;
+                        _ = Task.Run(async () =>
+                        {
+                            await Task.Delay(2500);
+                            int idx = FindGame1vs1(gId);
+                            if (idx >= 0 && idx < games.Count && !games[idx].IsFinished && games[idx].IsActive)
+                            {
+                                await ChangeGame1vs1Core(gId);
+                            }
+                        });
+                    }
                     break;
                 case 4: // Revira a 6 (propone 6 a sentto)
                     games[numg].LastStakeAsker = callerIsP1 ? 1 : 2;
@@ -632,6 +650,11 @@ namespace PericonAPI.Hubs
                     games[numg].RoundOne = 0;
                     games[numg].RoundTwo = 0;
                     games[numg].PendingAsk369Message = null;
+                    games[numg].IsHandTransitioning = true;
+                    games[numg].CurrentLeadMove = null;
+                    games[numg].LeadPlayer = 0;
+                    games[numg].CardsOne.Clear();
+                    games[numg].CardsTwo.Clear();
                     if (callerIsP1) games[numg].PointsTwo += 3;
                     else games[numg].PointsOne += 3;
                     games[numg].UpdateTumbaStatus(oldP1, oldP2);
@@ -639,6 +662,19 @@ namespace PericonAPI.Hubs
                     await Clients.Client(ownto).SendAsync("EndAsk369Round", data);
                     if (!string.IsNullOrEmpty(sentto)) await Clients.Client(sentto).SendAsync("Answered369Game", data);
                     await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("Answered369Game", data);
+
+                    {
+                        int gId = move.game;
+                        _ = Task.Run(async () =>
+                        {
+                            await Task.Delay(2500);
+                            int idx = FindGame1vs1(gId);
+                            if (idx >= 0 && idx < games.Count && !games[idx].IsFinished && games[idx].IsActive)
+                            {
+                                await ChangeGame1vs1Core(gId);
+                            }
+                        });
+                    }
                     break;
                 case 7: // Revira a 9 (propone 9 a sentto)
                     games[numg].LastStakeAsker = callerIsP1 ? 1 : 2;
@@ -683,6 +719,11 @@ namespace PericonAPI.Hubs
                     games[numg].RoundOne = 0;
                     games[numg].RoundTwo = 0;
                     games[numg].PendingAsk369Message = null;
+                    games[numg].IsHandTransitioning = true;
+                    games[numg].CurrentLeadMove = null;
+                    games[numg].LeadPlayer = 0;
+                    games[numg].CardsOne.Clear();
+                    games[numg].CardsTwo.Clear();
                     if (callerIsP1) games[numg].PointsTwo += 6;
                     else games[numg].PointsOne += 6;
                     games[numg].UpdateTumbaStatus(oldP1, oldP2);
@@ -690,6 +731,19 @@ namespace PericonAPI.Hubs
                     await Clients.Client(ownto).SendAsync("EndAsk369Round", data);
                     if (!string.IsNullOrEmpty(sentto)) await Clients.Client(sentto).SendAsync("Answered369Game", data);
                     await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("Answered369Game", data);
+
+                    {
+                        int gId = move.game;
+                        _ = Task.Run(async () =>
+                        {
+                            await Task.Delay(2500);
+                            int idx = FindGame1vs1(gId);
+                            if (idx >= 0 && idx < games.Count && !games[idx].IsFinished && games[idx].IsActive)
+                            {
+                                await ChangeGame1vs1Core(gId);
+                            }
+                        });
+                    }
                     break;
             }
         }
@@ -833,9 +887,10 @@ namespace PericonAPI.Hubs
             lock (_handChangeLock1vs1)
             {
                 if (_lastHandChangeTime1vs1.TryGetValue(gameId, out DateTime lastChange) &&
-                    (DateTime.UtcNow - lastChange).TotalMilliseconds < 6000)
+                    !targetGame.IsHandTransitioning &&
+                    (DateTime.UtcNow - lastChange).TotalMilliseconds < 2500)
                 {
-                    GameLogger.Log(gameId, "ChangeGame1vs1", "Ignorando llamada duplicada a ChangeGame1vs1 por debounce (6s).");
+                    GameLogger.Log(gameId, "ChangeGame1vs1", "Ignorando llamada duplicada a ChangeGame1vs1 por debounce (2.5s).");
                     return;
                 }
                 _lastHandChangeTime1vs1[gameId] = DateTime.UtcNow;
@@ -1023,7 +1078,7 @@ namespace PericonAPI.Hubs
             }
 
             // Si la mano ya está en curso, repartida o tiene jugadas vivas, reenviar el estado existente en lugar de barajar de nuevo
-            bool handAlreadyActive = (targetGame.RoundOne > 0 || targetGame.RoundTwo > 0 || targetGame.CurrentLeadMove != null || (targetGame.CardsOne.Count > 0 && targetGame.CardsTwo.Count > 0));
+            bool handAlreadyActive = !targetGame.IsHandTransitioning && (targetGame.RoundOne > 0 || targetGame.RoundTwo > 0 || targetGame.CurrentLeadMove != null || (targetGame.CardsOne.Count > 0 && targetGame.CardsTwo.Count > 0));
             if (handAlreadyActive && !string.IsNullOrEmpty(targetGame.InitHand))
             {
                 string pOne = targetGame.IdPOne;
@@ -3491,10 +3546,27 @@ namespace PericonAPI.Hubs
                     g.RoundOne = 0;
                     g.RoundTwo = 0;
                     g.PendingAsk369Message = null;
+                    g.IsHandTransitioning = true;
+                    g.CurrentLeadMove = null;
+                    g.LeadPlayer = 0;
+                    g.CardsOne.Clear();
+                    g.CardsTwo.Clear();
                     g.PointsOne += 1;
                     g.UpdateTumbaStatus(oldP1, oldP2);
                     data.content = $"3 {g.PointsOne} {g.PointsTwo}";
                     await _staticHubContext.Clients.Client(g.IdPOne).SendAsync("Answered369Game", data);
+                    {
+                        int gId = g.Id;
+                        _ = Task.Run(async () =>
+                        {
+                            await Task.Delay(2500);
+                            int idx = FindGame1vs1(gId);
+                            if (idx >= 0 && idx < games.Count && !games[idx].IsFinished && games[idx].IsActive)
+                            {
+                                await ChangeGame1vs1Core(gId);
+                            }
+                        });
+                    }
                     break;
                 case 4: // Bot revira a 6 (propone 6 al humano)
                     g.LastStakeAsker = 2; // Bot pide 6
@@ -3534,10 +3606,27 @@ namespace PericonAPI.Hubs
                     g.RoundOne = 0;
                     g.RoundTwo = 0;
                     g.PendingAsk369Message = null;
+                    g.IsHandTransitioning = true;
+                    g.CurrentLeadMove = null;
+                    g.LeadPlayer = 0;
+                    g.CardsOne.Clear();
+                    g.CardsTwo.Clear();
                     g.PointsOne += 3;
                     g.UpdateTumbaStatus(oldP1, oldP2);
                     data.content = $"6 {g.PointsOne} {g.PointsTwo}";
                     await _staticHubContext.Clients.Client(g.IdPOne).SendAsync("Answered369Game", data);
+                    {
+                        int gId = g.Id;
+                        _ = Task.Run(async () =>
+                        {
+                            await Task.Delay(2500);
+                            int idx = FindGame1vs1(gId);
+                            if (idx >= 0 && idx < games.Count && !games[idx].IsFinished && games[idx].IsActive)
+                            {
+                                await ChangeGame1vs1Core(gId);
+                            }
+                        });
+                    }
                     break;
                 case 8: // Bot acepta 9
                     g.CurrentStake = 9;
@@ -3566,10 +3655,27 @@ namespace PericonAPI.Hubs
                     g.RoundOne = 0;
                     g.RoundTwo = 0;
                     g.PendingAsk369Message = null;
+                    g.IsHandTransitioning = true;
+                    g.CurrentLeadMove = null;
+                    g.LeadPlayer = 0;
+                    g.CardsOne.Clear();
+                    g.CardsTwo.Clear();
                     g.PointsOne += 6;
                     g.UpdateTumbaStatus(oldP1, oldP2);
                     data.content = $"9 {g.PointsOne} {g.PointsTwo}";
                     await _staticHubContext.Clients.Client(g.IdPOne).SendAsync("Answered369Game", data);
+                    {
+                        int gId = g.Id;
+                        _ = Task.Run(async () =>
+                        {
+                            await Task.Delay(2500);
+                            int idx = FindGame1vs1(gId);
+                            if (idx >= 0 && idx < games.Count && !games[idx].IsFinished && games[idx].IsActive)
+                            {
+                                await ChangeGame1vs1Core(gId);
+                            }
+                        });
+                    }
                     break;
             }
         }
