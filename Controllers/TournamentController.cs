@@ -310,6 +310,116 @@ namespace PericonAPI.Controllers
             });
         }
 
+        public class StartTournamentDto
+        {
+            public int TournamentId { get; set; }
+        }
+
+        [HttpPost("start")]
+        public async Task<IActionResult> StartTournament([FromBody] StartTournamentDto dto)
+        {
+            var tournament = await _context.Tournaments.FindAsync(dto.TournamentId);
+            if (tournament == null)
+            {
+                tournament = await _context.Tournaments.OrderByDescending(t => t.Id).FirstOrDefaultAsync();
+            }
+            if (tournament == null)
+            {
+                return NotFound(new { message = "No se encontró ningún torneo activo." });
+            }
+
+            if (tournament.Status != "Inscripciones")
+            {
+                return Ok(new
+                {
+                    message = $"El torneo ya se encuentra en marcha (Fase actual: {tournament.Status}).",
+                    status = tournament.Status,
+                    tournamentId = tournament.Id
+                });
+            }
+
+            var participants = await _context.TournamentParticipants
+                .Where(p => p.TournamentId == tournament.Id)
+                .OrderBy(p => p.SlotIndex)
+                .ToListAsync();
+
+            if (participants.Count < 2)
+            {
+                return BadRequest(new { message = $"Se requieren al menos 2 jugadores para iniciar. Actualmente hay {participants.Count} inscritos." });
+            }
+
+            tournament.StartedAt = DateTime.UtcNow;
+
+            // Limpiar partidas pendientes previas si existieran
+            var existingMatches = await _context.TournamentMatches.Where(m => m.TournamentId == tournament.Id).ToListAsync();
+            _context.TournamentMatches.RemoveRange(existingMatches);
+
+            if (participants.Count >= 4)
+            {
+                tournament.Status = "Semifinal";
+                tournament.MaxParticipants = 4;
+
+                // Semifinales (2 partidas para 4 jugadores)
+                for (int i = 0; i < 2; i++)
+                {
+                    var p1 = participants[i * 2];
+                    var p2 = participants[i * 2 + 1];
+
+                    _context.TournamentMatches.Add(new TournamentMatch
+                    {
+                        TournamentId = tournament.Id,
+                        Round = "Semifinal",
+                        MatchIndex = i,
+                        PlayerOneId = p1.UserId,
+                        PlayerOneUsername = p1.Username,
+                        PlayerTwoId = p2.UserId,
+                        PlayerTwoUsername = p2.Username,
+                        Status = "EnJuego",
+                        UpdatedAt = DateTime.UtcNow
+                    });
+                }
+
+                // Gran Final
+                _context.TournamentMatches.Add(new TournamentMatch
+                {
+                    TournamentId = tournament.Id,
+                    Round = "Final",
+                    MatchIndex = 0,
+                    Status = "Pendiente",
+                    UpdatedAt = DateTime.UtcNow
+                });
+            }
+            else
+            {
+                // 2 Jugadores: Cruce directo a la Gran Final
+                tournament.Status = "Final";
+                tournament.MaxParticipants = 2;
+
+                _context.TournamentMatches.Add(new TournamentMatch
+                {
+                    TournamentId = tournament.Id,
+                    Round = "Final",
+                    MatchIndex = 0,
+                    PlayerOneId = participants[0].UserId,
+                    PlayerOneUsername = participants[0].Username,
+                    PlayerTwoId = participants[1].UserId,
+                    PlayerTwoUsername = participants[1].Username,
+                    Status = "EnJuego",
+                    UpdatedAt = DateTime.UtcNow
+                });
+            }
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                message = "¡Torneo iniciado exitosamente! Las mesas están listas para jugar.",
+                status = tournament.Status,
+                tournamentId = tournament.Id,
+                participantsCount = participants.Count
+            });
+        }
+
         [HttpPost("reset-pilot")]
         public async Task<IActionResult> ResetPilotTournament([FromQuery] string? key)
         {

@@ -2655,12 +2655,21 @@ namespace PericonAPI.Hubs
                 }
             }
 
-            int bet = game.Coins > 0 ? game.Coins : 200;
+            bool isTournamentMatch = !string.IsNullOrEmpty(game.RoomName) && game.RoomName.StartsWith("sala-torneo-", StringComparison.OrdinalIgnoreCase);
+            bool isTournamentFinal = false;
+
+            int bet = isTournamentMatch ? 0 : (game.Coins > 0 ? game.Coins : 200);
             int totalPot = bet * 2;
             int houseCommission;
             int winnerPrize;
 
-            if (isSala)
+            if (isTournamentMatch)
+            {
+                // En partidas de torneo: Las tarifas de inscripción ya se pagaron al registrarse.
+                houseCommission = 0;
+                winnerPrize = 0;
+            }
+            else if (isSala)
             {
                 // En salas privadas (amistosas): Todo el dinero recaudado de la tarifa de sala va para la casa (Administrador)
                 houseCommission = totalPot;
@@ -2750,62 +2759,102 @@ namespace PericonAPI.Hubs
                             finalLoserName = loserName;
                         }
 
-                        if (dbLoser != null)
+                        if (isTournamentMatch)
                         {
-                            int loserDeduction = Math.Min(dbLoser.Coins, bet);
-                            dbLoser.Coins -= loserDeduction;
-                            dbLoser.BonusCoins = Math.Max(0, dbLoser.BonusCoins - loserDeduction);
-                            dbLoser.Losses += 1;
-                            dbLoser.Level = dbLoser.GetCalculatedLevel();
-                            loserNewCoins = dbLoser.Coins;
-                            loserPlayer.Coins = loserNewCoins;
-                            loserWins = dbLoser.Wins;
-                            loserLosses = dbLoser.Losses;
-                            loserLevel = dbLoser.Level;
-                        }
-                        else
-                        {
-                            loserPlayer.Coins = Math.Max(0, loserPlayer.Coins - bet);
-                            loserNewCoins = loserPlayer.Coins;
-                            loserWins = 0;
-                            loserLosses = 1;
-                        }
-
-                        if (dbWinner != null)
-                        {
-                            if (isSala)
+                            // En partidas de torneo: NO se descuentan monedas (el buy-in se cobró al inscribirse)
+                            if (dbLoser != null)
                             {
-                                // En sala, ambos jugadores pagan la tarifa de sala de entrada (10 monedas) para la casa
-                                int winnerDeduction = Math.Min(dbWinner.Coins, bet);
-                                dbWinner.Coins -= winnerDeduction;
+                                dbLoser.Losses += 1;
+                                dbLoser.Level = dbLoser.GetCalculatedLevel();
+                                loserNewCoins = dbLoser.Coins;
+                                loserPlayer.Coins = loserNewCoins;
+                                loserWins = dbLoser.Wins;
+                                loserLosses = dbLoser.Losses;
+                                loserLevel = dbLoser.Level;
                             }
                             else
                             {
-                                int netWinnerGain = Math.Max(0, winnerPrize - bet);
-                                dbWinner.Coins += netWinnerGain;
+                                loserNewCoins = loserPlayer.Coins;
+                                loserWins = 0;
+                                loserLosses = 1;
                             }
 
-                            dbWinner.Wins += 1;
-                            dbWinner.Level = dbWinner.GetCalculatedLevel();
-                            winnerNewCoins = dbWinner.Coins;
-                            winnerPlayer.Coins = winnerNewCoins;
-                            winnerWins = dbWinner.Wins;
-                            winnerLosses = dbWinner.Losses;
-                            winnerLevel = dbWinner.Level;
-                        }
-                        else
-                        {
-                            if (isSala)
+                            if (dbWinner != null)
                             {
-                                winnerPlayer.Coins = Math.Max(0, winnerPlayer.Coins - bet);
+                                dbWinner.Wins += 1;
+                                dbWinner.Level = dbWinner.GetCalculatedLevel();
+                                winnerNewCoins = dbWinner.Coins;
+                                winnerPlayer.Coins = winnerNewCoins;
+                                winnerWins = dbWinner.Wins;
+                                winnerLosses = dbWinner.Losses;
+                                winnerLevel = dbWinner.Level;
                             }
                             else
                             {
-                                winnerPlayer.Coins = Math.Max(0, winnerPlayer.Coins + (winnerPrize - bet));
+                                winnerNewCoins = winnerPlayer.Coins;
+                                winnerWins = 1;
+                                winnerLosses = 0;
                             }
-                            winnerNewCoins = winnerPlayer.Coins;
-                            winnerWins = 1;
-                            winnerLosses = 0;
+                        }
+                        else
+                        {
+                            if (dbLoser != null)
+                            {
+                                int loserDeduction = Math.Min(dbLoser.Coins, bet);
+                                dbLoser.Coins -= loserDeduction;
+                                dbLoser.BonusCoins = Math.Max(0, dbLoser.BonusCoins - loserDeduction);
+                                dbLoser.Losses += 1;
+                                dbLoser.Level = dbLoser.GetCalculatedLevel();
+                                loserNewCoins = dbLoser.Coins;
+                                loserPlayer.Coins = loserNewCoins;
+                                loserWins = dbLoser.Wins;
+                                loserLosses = dbLoser.Losses;
+                                loserLevel = dbLoser.Level;
+                            }
+                            else
+                            {
+                                loserPlayer.Coins = Math.Max(0, loserPlayer.Coins - bet);
+                                loserNewCoins = loserPlayer.Coins;
+                                loserWins = 0;
+                                loserLosses = 1;
+                            }
+
+                            if (dbWinner != null)
+                            {
+                                if (isSala)
+                                {
+                                    // En sala, ambos jugadores pagan la tarifa de sala de entrada (10 monedas) para la casa
+                                    int winnerDeduction = Math.Min(dbWinner.Coins, bet);
+                                    dbWinner.Coins -= winnerDeduction;
+                                }
+                                else
+                                {
+                                    int netWinnerGain = Math.Max(0, winnerPrize - bet);
+                                    dbWinner.Coins += netWinnerGain;
+                                }
+
+                                dbWinner.Wins += 1;
+                                dbWinner.Level = dbWinner.GetCalculatedLevel();
+                                winnerNewCoins = dbWinner.Coins;
+                                winnerPlayer.Coins = winnerNewCoins;
+                                winnerWins = dbWinner.Wins;
+                                winnerLosses = dbWinner.Losses;
+                                winnerLevel = dbWinner.Level;
+                            }
+                            else
+                            {
+                                if (isSala)
+                                {
+                                    winnerPlayer.Coins = Math.Max(0, winnerPlayer.Coins - bet);
+                                }
+                                else
+                                {
+                                    winnerPlayer.Coins = Math.Max(0, winnerPlayer.Coins + (winnerPrize - bet));
+                                }
+                                winnerNewCoins = winnerPlayer.Coins;
+                                winnerWins = 1;
+                                winnerLosses = 0;
+                            }
                         }
 
                         if (dbWinner != null || dbLoser != null)
@@ -2853,9 +2902,140 @@ namespace PericonAPI.Hubs
                                 db.BotMatchRecords.Add(botRecord);
                             }
 
+                            if (isTournamentMatch)
+                            {
+                                try
+                                {
+                                    int tournamentId = 0;
+                                    string cleanRoom = (game.RoomName ?? "").ToLowerInvariant();
+                                    var parts = cleanRoom.Split('-', StringSplitOptions.RemoveEmptyEntries);
+                                    if (parts.Length >= 3 && int.TryParse(parts[2], out int parsedTId))
+                                    {
+                                        tournamentId = parsedTId;
+                                    }
+
+                                    var tournament = await db.Tournaments.FirstOrDefaultAsync(t => t.Id == tournamentId);
+                                    if (tournament == null)
+                                    {
+                                        tournament = await db.Tournaments.OrderByDescending(t => t.Id).FirstOrDefaultAsync();
+                                        if (tournament != null) tournamentId = tournament.Id;
+                                    }
+
+                                    if (tournament != null)
+                                    {
+                                        var tourneyMatch = await db.TournamentMatches.FirstOrDefaultAsync(m =>
+                                            m.TournamentId == tournamentId &&
+                                            m.Status != "Finalizado" &&
+                                            ((m.PlayerOneId == finalWinnerDbId && m.PlayerTwoId == finalLoserDbId) ||
+                                             (m.PlayerOneId == finalLoserDbId && m.PlayerTwoId == finalWinnerDbId)));
+
+                                        if (tourneyMatch == null)
+                                        {
+                                            if (cleanRoom.Contains("-final"))
+                                            {
+                                                tourneyMatch = await db.TournamentMatches.FirstOrDefaultAsync(m =>
+                                                    m.TournamentId == tournamentId && m.Round == "Final");
+                                            }
+                                            else if (parts.Length >= 4 && parts[3].StartsWith("m") && int.TryParse(parts[3].Substring(1), out int mIdx))
+                                            {
+                                                tourneyMatch = await db.TournamentMatches.FirstOrDefaultAsync(m =>
+                                                    m.TournamentId == tournamentId && m.Round == "Semifinal" && m.MatchIndex == mIdx);
+                                            }
+                                        }
+
+                                        if (tourneyMatch != null)
+                                        {
+                                            tourneyMatch.WinnerId = finalWinnerDbId;
+                                            tourneyMatch.WinnerUsername = finalWinnerName;
+                                            tourneyMatch.Status = "Finalizado";
+                                            tourneyMatch.UpdatedAt = DateTime.UtcNow;
+                                            tourneyMatch.GameId = game.Id;
+
+                                            if (finalLoserDbId.HasValue)
+                                            {
+                                                var loserPart = await db.TournamentParticipants.FirstOrDefaultAsync(p =>
+                                                    p.TournamentId == tournamentId && p.UserId == finalLoserDbId.Value);
+                                                if (loserPart != null)
+                                                {
+                                                    loserPart.IsEliminated = true;
+                                                    loserPart.EliminatedInRound = tourneyMatch.Round;
+                                                }
+                                            }
+
+                                            if (tourneyMatch.Round == "Semifinal")
+                                            {
+                                                var finalMatch = await db.TournamentMatches.FirstOrDefaultAsync(m =>
+                                                    m.TournamentId == tournamentId && m.Round == "Final");
+
+                                                if (finalMatch != null)
+                                                {
+                                                    if (tourneyMatch.MatchIndex == 0)
+                                                    {
+                                                        finalMatch.PlayerOneId = finalWinnerDbId;
+                                                        finalMatch.PlayerOneUsername = finalWinnerName;
+                                                    }
+                                                    else
+                                                    {
+                                                        finalMatch.PlayerTwoId = finalWinnerDbId;
+                                                        finalMatch.PlayerTwoUsername = finalWinnerName;
+                                                    }
+
+                                                    if (finalMatch.PlayerOneId.HasValue && finalMatch.PlayerTwoId.HasValue)
+                                                    {
+                                                        finalMatch.Status = "EnJuego";
+                                                        finalMatch.UpdatedAt = DateTime.UtcNow;
+                                                        tournament.Status = "Final";
+                                                    }
+                                                }
+                                            }
+                                            else if (tourneyMatch.Round == "Final")
+                                            {
+                                                isTournamentFinal = true;
+                                                tournament.Status = "Finalizado";
+                                                tournament.WinnerUserId = finalWinnerDbId;
+                                                tournament.WinnerUsername = finalWinnerName;
+                                                tournament.RunnerUpUserId = finalLoserDbId;
+                                                tournament.RunnerUpUsername = finalLoserName;
+                                                tournament.FinishedAt = DateTime.UtcNow;
+
+                                                int prize = tournament.TotalPot - tournament.HouseCommission;
+                                                if (prize <= 0) prize = (int)Math.Round(tournament.TotalPot * 0.90);
+
+                                                if (dbWinner != null)
+                                                {
+                                                    dbWinner.Coins += prize;
+                                                    winnerNewCoins = dbWinner.Coins;
+                                                    winnerPlayer.Coins = winnerNewCoins;
+                                                }
+                                                winnerPrize = prize;
+                                            }
+
+                                            await db.SaveChangesAsync();
+
+                                            if (_staticHubContext != null)
+                                            {
+                                                await _staticHubContext.Clients.All.SendAsync("TournamentUpdated", new
+                                                {
+                                                    tournamentId = tournamentId,
+                                                    round = tourneyMatch.Round,
+                                                    winner = finalWinnerName,
+                                                    status = tournament.Status
+                                                });
+                                            }
+
+                                            GameLogger.Log(game.Id, "TournamentProgress", $"Torneo #{tournamentId}: Partida {tourneyMatch.Round} finalizada. Ganador={finalWinnerName}. Estado={tournament.Status}");
+                                        }
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    Console.WriteLine($"[Tournament Progress Error] {ex.Message}");
+                                }
+                            }
+
                             await db.SaveChangesAsync();
 
-                            GameLogger.Log(game.Id, "ProcessMatchPayout", $"[{(isSala ? "SALA 100%" : "DUELO 10%")}] Ganador={dbWinner?.Username ?? winnerName} (Saldo={winnerNewCoins}), Perdedor={dbLoser?.Username ?? loserName} (Saldo={loserNewCoins}), Premio={winnerPrize}, Casa={houseCommission}, Razon={reason}");
+                            GameLogger.Log(game.Id, "ProcessMatchPayout", $"[{(isTournamentMatch ? "TORNEO" : (isSala ? "SALA 100%" : "DUELO 10%"))}] Ganador={dbWinner?.Username ?? winnerName} (Saldo={winnerNewCoins}), Perdedor={dbLoser?.Username ?? loserName} (Saldo={loserNewCoins}), Premio={winnerPrize}, Casa={houseCommission}, Razon={reason}");
                         }
                     }
                 }
@@ -2870,13 +3050,21 @@ namespace PericonAPI.Hubs
             {
                 try
                 {
-                    string winnerMessage = isSala
-                        ? $"🏆 ¡Ganaste la partida en sala privada! Tarifa de sala ({bet} monedas) abonada a la plataforma."
-                        : $"🏆 ¡Ganaste la partida! Te llevas {winnerPrize} monedas (90% del pozo de {totalPot}). Comisión de sala (10%): {houseCommission} monedas.";
+                    string winnerMessage = isTournamentMatch
+                        ? (isTournamentFinal
+                            ? $"🏆 ¡¡FELICITACIONES, ERES EL CAMPEÓN DEL TORNEO!! Te llevas el gran pozo de {winnerPrize} monedas."
+                            : $"🏆 ¡Victoria épica! Has avanzado a la Gran Final del Torneo.")
+                        : (isSala
+                            ? $"🏆 ¡Ganaste la partida en sala privada! Tarifa de sala ({bet} monedas) abonada a la plataforma."
+                            : $"🏆 ¡Ganaste la partida! Te llevas {winnerPrize} monedas (90% del pozo de {totalPot}). Comisión de sala (10%): {houseCommission} monedas.");
 
-                    string loserMessage = isSala
-                        ? $"Partida en sala privada finalizada. Tarifa de sala ({bet} monedas) abonada a la plataforma."
-                        : $"Partida finalizada. Se descontaron {bet} monedas de tu monedero.";
+                    string loserMessage = isTournamentMatch
+                        ? (isTournamentFinal
+                            ? "🥈 Finalizaste como Subcampeón del Torneo. ¡Excelente desempeño en la mesa!"
+                            : "Has quedado eliminado del torneo en Semifinales. ¡Buen juego!")
+                        : (isSala
+                            ? $"Partida en sala privada finalizada. Tarifa de sala ({bet} monedas) abonada a la plataforma."
+                            : $"Partida finalizada. Se descontaron {bet} monedas de tu monedero.");
 
                     await _staticHubContext.Clients.Client(winnerConnectionId).SendAsync("MatchFinishedPayout", new
                     {
@@ -5155,10 +5343,11 @@ namespace PericonAPI.Hubs
             {
                 if (!rooms1v1.TryGetValue(roomKey, out session!))
                 {
+                    bool isTourney = (roomName ?? "").StartsWith("sala-torneo-", StringComparison.OrdinalIgnoreCase);
                     session = new Room1v1Session
                     {
                         RoomName = roomName ?? "sala-1v1",
-                        Bet = bet > 0 ? bet : 10
+                        Bet = isTourney ? 0 : (bet > 0 ? bet : 10)
                     };
                     rooms1v1[roomKey] = session;
                 }
