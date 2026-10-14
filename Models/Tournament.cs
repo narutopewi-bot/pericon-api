@@ -19,12 +19,12 @@ namespace PericonAPI.Models
 
         public int BuyInCoins { get; set; } = 50;
 
-        public int MaxParticipants { get; set; } = 8;
+        public int MaxParticipants { get; set; } = 4;
 
         public int CurrentParticipants { get; set; } = 0;
 
         [MaxLength(30)]
-        public string Status { get; set; } = "Inscripciones"; // Inscripciones, Cuartos, Semifinal, Final, Finalizado
+        public string Status { get; set; } = "Inscripciones"; // Inscripciones, Semifinal, Final, Finalizado
 
         public int TotalPot { get; set; } = 0;
 
@@ -62,7 +62,7 @@ namespace PericonAPI.Models
 
         public string? AvatarUrl { get; set; }
 
-        public int SlotIndex { get; set; } // 0..7
+        public int SlotIndex { get; set; } // 0..3 (o 0..7)
 
         public bool IsEliminated { get; set; } = false;
 
@@ -81,9 +81,9 @@ namespace PericonAPI.Models
 
         [Required]
         [MaxLength(30)]
-        public string Round { get; set; } = "Cuartos"; // Cuartos, Semifinal, Final
+        public string Round { get; set; } = "Semifinal"; // Semifinal, Final, Cuartos
 
-        public int MatchIndex { get; set; } // Cuartos: 0..3, Semis: 0..1, Final: 0
+        public int MatchIndex { get; set; } // Semis: 0..1, Final: 0 (Cuartos: 0..3)
 
         public int? PlayerOneId { get; set; }
 

@@ -141,7 +141,7 @@ namespace PericonAPI.Hubs
             public string PlayerName { get; set; } = string.Empty;
             public string AvatarUrl { get; set; } = string.Empty;
             public string Mode { get; set; } = "1 vs 1";
-            public int Bet { get; set; } = 10;
+            public int Bet { get; set; } = 200;
             public DateTime EnqueuedAt { get; set; } = DateTime.UtcNow;
             public int TargetBotWaitSeconds { get; set; } = Random.Shared.Next(30, 41);
         }
@@ -169,7 +169,7 @@ namespace PericonAPI.Hubs
         public class Room2v2Session
         {
             public string RoomName { get; set; } = string.Empty;
-            public int Bet { get; set; } = 100;
+            public int Bet { get; set; } = 200;
             public int GameId { get; set; } = 0;
             public List<Seat2v2> Seats { get; set; } = new List<Seat2v2>();
             public bool GameStarted { get; set; } = false;
@@ -227,7 +227,7 @@ namespace PericonAPI.Hubs
         public class Room1v1Session
         {
             public string RoomName { get; set; } = string.Empty;
-            public int Bet { get; set; } = 10;
+            public int Bet { get; set; } = 200;
             public List<Seat2v2> Seats { get; set; } = new List<Seat2v2>();
             public bool GameStarted { get; set; } = false;
             public int GameId { get; set; } = 0;
@@ -2653,7 +2653,7 @@ namespace PericonAPI.Hubs
                 }
             }
 
-            int bet = game.Coins > 0 ? game.Coins : 10;
+            int bet = game.Coins > 0 ? game.Coins : 200;
             int totalPot = bet * 2;
             int houseCommission;
             int winnerPrize;

@@ -527,7 +527,7 @@ using (var scope = app.Services.CreateScope())
                     IsPrivate INTEGER NOT NULL DEFAULT 1,
                     Password TEXT NOT NULL DEFAULT 'PERICON2026',
                     BuyInCoins INTEGER NOT NULL DEFAULT 50,
-                    MaxParticipants INTEGER NOT NULL DEFAULT 8,
+                    MaxParticipants INTEGER NOT NULL DEFAULT 4,
                     CurrentParticipants INTEGER NOT NULL DEFAULT 0,
                     Status TEXT NOT NULL DEFAULT 'Inscripciones',
                     TotalPot INTEGER NOT NULL DEFAULT 0,
@@ -595,7 +595,7 @@ using (var scope = app.Services.CreateScope())
                     ""IsPrivate"" BOOLEAN NOT NULL DEFAULT TRUE,
                     ""Password"" VARCHAR(50) NOT NULL DEFAULT 'PERICON2026',
                     ""BuyInCoins"" INT NOT NULL DEFAULT 50,
-                    ""MaxParticipants"" INT NOT NULL DEFAULT 8,
+                    ""MaxParticipants"" INT NOT NULL DEFAULT 4,
                     ""CurrentParticipants"" INT NOT NULL DEFAULT 0,
                     ""Status"" VARCHAR(30) NOT NULL DEFAULT 'Inscripciones',
                     ""TotalPot"" INT NOT NULL DEFAULT 0,
@@ -660,15 +660,31 @@ using (var scope = app.Services.CreateScope())
                 IsPrivate = true,
                 Password = "PERICON2026",
                 BuyInCoins = 50,
-                MaxParticipants = 8,
+                MaxParticipants = 4,
                 CurrentParticipants = 0,
                 Status = "Inscripciones",
-                TotalPot = 400,
-                HouseCommission = 40,
+                TotalPot = 200,
+                HouseCommission = 20,
                 CreatedAt = DateTime.UtcNow
             });
             db.SaveChanges();
-            Console.WriteLine("[Torneos] Torneo Piloto Casona sembrado exitosamente con contraseña PERICON2026.");
+            Console.WriteLine("[Torneos] Torneo Piloto Casona (4 jugadores) sembrado exitosamente con contraseña PERICON2026.");
+        }
+        else
+        {
+            var openTournament = db.Tournaments.OrderByDescending(t => t.Id).FirstOrDefault(t => t.Status == "Inscripciones" && t.MaxParticipants != 4);
+            if (openTournament != null)
+            {
+                var participantCount = db.TournamentParticipants.Count(p => p.TournamentId == openTournament.Id);
+                if (participantCount == 0)
+                {
+                    openTournament.MaxParticipants = 4;
+                    openTournament.TotalPot = 4 * openTournament.BuyInCoins;
+                    openTournament.HouseCommission = (int)Math.Round(openTournament.TotalPot * 0.10);
+                    db.SaveChanges();
+                    Console.WriteLine("[Torneos] Torneo activo en inscripciones ajustado a 4 jugadores.");
+                }
+            }
         }
     }
     catch (Exception ex)

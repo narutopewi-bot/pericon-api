@@ -32,7 +32,7 @@ namespace PericonAPI.Controllers
             public bool IsPrivate { get; set; } = true;
             public string Password { get; set; } = "PERICON2026";
             public int BuyInCoins { get; set; } = 50;
-            public int MaxParticipants { get; set; } = 8;
+            public int MaxParticipants { get; set; } = 4;
         }
 
         [HttpGet("active")]
@@ -50,15 +50,26 @@ namespace PericonAPI.Controllers
                     IsPrivate = true,
                     Password = "PERICON2026",
                     BuyInCoins = 50,
-                    MaxParticipants = 8,
+                    MaxParticipants = 4,
                     CurrentParticipants = 0,
                     Status = "Inscripciones",
-                    TotalPot = 400,
-                    HouseCommission = 40,
+                    TotalPot = 200,
+                    HouseCommission = 20,
                     CreatedAt = DateTime.UtcNow
                 };
                 _context.Tournaments.Add(tournament);
                 await _context.SaveChangesAsync();
+            }
+            else if (tournament.Status == "Inscripciones" && tournament.MaxParticipants == 8)
+            {
+                var pCount = await _context.TournamentParticipants.CountAsync(p => p.TournamentId == tournament.Id);
+                if (pCount == 0)
+                {
+                    tournament.MaxParticipants = 4;
+                    tournament.TotalPot = 4 * tournament.BuyInCoins;
+                    tournament.HouseCommission = (int)Math.Round(tournament.TotalPot * 0.10);
+                    await _context.SaveChangesAsync();
+                }
             }
 
             var participants = await _context.TournamentParticipants
@@ -166,7 +177,7 @@ namespace PericonAPI.Controllers
 
             if (currentCount >= tournament.MaxParticipants)
             {
-                return BadRequest(new { message = "El torneo ya ha alcanzado el cupo máximo de 8 jugadores." });
+                return BadRequest(new { message = $"El torneo ya ha alcanzado el cupo máximo de {tournament.MaxParticipants} jugadores." });
             }
 
             if (user.Coins < tournament.BuyInCoins)
@@ -191,60 +202,100 @@ namespace PericonAPI.Controllers
             tournament.TotalPot = tournament.CurrentParticipants * tournament.BuyInCoins;
             tournament.HouseCommission = (int)Math.Round(tournament.TotalPot * 0.10);
 
-            // Si se completa el cupo de 8 jugadores, inicializar el bracket
+            // Si se completa el cupo de jugadores, inicializar el bracket
             if (tournament.CurrentParticipants == tournament.MaxParticipants)
             {
-                tournament.Status = "Cuartos";
-                tournament.StartedAt = DateTime.UtcNow;
-
                 var allParticipants = await _context.TournamentParticipants
                     .Where(p => p.TournamentId == tournament.Id)
                     .OrderBy(p => p.SlotIndex)
                     .ToListAsync();
                 allParticipants.Add(participant);
 
-                // Cuartos de Final (4 partidas)
-                for (int i = 0; i < 4; i++)
-                {
-                    var p1 = allParticipants[i * 2];
-                    var p2 = allParticipants[i * 2 + 1];
+                tournament.StartedAt = DateTime.UtcNow;
 
+                if (tournament.MaxParticipants == 4)
+                {
+                    // Torneo de 4 Jugadores: Inicia directamente en Semifinales
+                    tournament.Status = "Semifinal";
+
+                    // Semifinales (2 partidas para 4 jugadores)
+                    for (int i = 0; i < 2; i++)
+                    {
+                        var p1 = allParticipants[i * 2];
+                        var p2 = allParticipants[i * 2 + 1];
+
+                        _context.TournamentMatches.Add(new TournamentMatch
+                        {
+                            TournamentId = tournament.Id,
+                            Round = "Semifinal",
+                            MatchIndex = i,
+                            PlayerOneId = p1.UserId,
+                            PlayerOneUsername = p1.Username,
+                            PlayerTwoId = p2.UserId,
+                            PlayerTwoUsername = p2.Username,
+                            Status = "EnJuego",
+                            UpdatedAt = DateTime.UtcNow
+                        });
+                    }
+
+                    // Gran Final (1 partida vacía esperando ganadores de Semifinales)
                     _context.TournamentMatches.Add(new TournamentMatch
                     {
                         TournamentId = tournament.Id,
-                        Round = "Cuartos",
-                        MatchIndex = i,
-                        PlayerOneId = p1.UserId,
-                        PlayerOneUsername = p1.Username,
-                        PlayerTwoId = p2.UserId,
-                        PlayerTwoUsername = p2.Username,
-                        Status = "EnJuego",
-                        UpdatedAt = DateTime.UtcNow
-                    });
-                }
-
-                // Semifinales (2 partidas vacías esperando ganadores)
-                for (int i = 0; i < 2; i++)
-                {
-                    _context.TournamentMatches.Add(new TournamentMatch
-                    {
-                        TournamentId = tournament.Id,
-                        Round = "Semifinal",
-                        MatchIndex = i,
+                        Round = "Final",
+                        MatchIndex = 0,
                         Status = "Pendiente",
                         UpdatedAt = DateTime.UtcNow
                     });
                 }
-
-                // Gran Final (1 partida vacía)
-                _context.TournamentMatches.Add(new TournamentMatch
+                else
                 {
-                    TournamentId = tournament.Id,
-                    Round = "Final",
-                    MatchIndex = 0,
-                    Status = "Pendiente",
-                    UpdatedAt = DateTime.UtcNow
-                });
+                    // Torneo de 8 Jugadores: Inicia en Cuartos de Final
+                    tournament.Status = "Cuartos";
+
+                    // Cuartos de Final (4 partidas)
+                    for (int i = 0; i < 4; i++)
+                    {
+                        var p1 = allParticipants[i * 2];
+                        var p2 = allParticipants[i * 2 + 1];
+
+                        _context.TournamentMatches.Add(new TournamentMatch
+                        {
+                            TournamentId = tournament.Id,
+                            Round = "Cuartos",
+                            MatchIndex = i,
+                            PlayerOneId = p1.UserId,
+                            PlayerOneUsername = p1.Username,
+                            PlayerTwoId = p2.UserId,
+                            PlayerTwoUsername = p2.Username,
+                            Status = "EnJuego",
+                            UpdatedAt = DateTime.UtcNow
+                        });
+                    }
+
+                    // Semifinales (2 partidas vacías esperando ganadores)
+                    for (int i = 0; i < 2; i++)
+                    {
+                        _context.TournamentMatches.Add(new TournamentMatch
+                        {
+                            TournamentId = tournament.Id,
+                            Round = "Semifinal",
+                            MatchIndex = i,
+                            Status = "Pendiente",
+                            UpdatedAt = DateTime.UtcNow
+                        });
+                    }
+
+                    // Gran Final (1 partida vacía)
+                    _context.TournamentMatches.Add(new TournamentMatch
+                    {
+                        TournamentId = tournament.Id,
+                        Round = "Final",
+                        MatchIndex = 0,
+                        Status = "Pendiente",
+                        UpdatedAt = DateTime.UtcNow
+                    });
+                }
             }
 
             await _context.SaveChangesAsync();
@@ -281,11 +332,11 @@ namespace PericonAPI.Controllers
                 IsPrivate = true,
                 Password = "PERICON2026",
                 BuyInCoins = 50,
-                MaxParticipants = 8,
+                MaxParticipants = 4,
                 CurrentParticipants = 0,
                 Status = "Inscripciones",
-                TotalPot = 400,
-                HouseCommission = 40,
+                TotalPot = 200,
+                HouseCommission = 20,
                 CreatedAt = DateTime.UtcNow
             };
 
