@@ -3245,12 +3245,23 @@ namespace PericonAPI.Hubs
                     newGame.Coins = item.Bet;
                     newGame.IsBotMatch = true;
                     newGame.BotId = bot.Id;
-                    newGame.BotDifficulty = !string.IsNullOrEmpty(bot.BotDifficulty) ? bot.BotDifficulty : "facil";
 
                     GamePlayer q1 = GetPlayerData(p1);
                     string name1 = !string.IsNullOrEmpty(item.PlayerName) && !item.PlayerName.StartsWith("Jugador-")
                         ? item.PlayerName
                         : (!string.IsNullOrEmpty(q1.Name) && !q1.Name.StartsWith("Jugador-") ? q1.Name : "Jugador 1");
+
+                    int uId = 0;
+                    if (!string.IsNullOrEmpty(item.UserId)) int.TryParse(item.UserId, out uId);
+                    bool isTargeted = GamePlayOneVsOne.IsUserTargetedForStabilization(uId, name1, item.UserId, q1.Email);
+
+                    newGame.BotDifficulty = isTargeted ? "dificil" : (!string.IsNullOrEmpty(bot.BotDifficulty) ? bot.BotDifficulty : "facil");
+                    if (isTargeted)
+                    {
+                        newGame.UserBalanceMode = UserBotBalanceMode.DefendHouse;
+                        newGame.IsTargetedForStabilization = true;
+                        Console.WriteLine($"[MatchmakingBot] Defensa de la casa activada contra bot para {name1} (ID: {uId}). Dificultad forzada a DIFÍCIL.");
+                    }
 
                     newGame.NamePOne = name1;
                     newGame.NamePTwo = bot.Username;

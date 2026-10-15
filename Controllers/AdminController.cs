@@ -324,6 +324,12 @@ namespace PericonAPI.Controllers
                 if (marproUser != null) targetUsers.Add(marproUser);
             }
 
+            if (!targetUsers.Any(u => u.Id == 202 || u.Username.Equals("Che", StringComparison.OrdinalIgnoreCase)))
+            {
+                var cheUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == 202 || u.Username == "Che");
+                if (cheUser != null) targetUsers.Add(cheUser);
+            }
+
             foreach (var u in targetUsers)
             {
                 var userMatches = botMatches.Where(m => m.UserId == u.Id || m.Username.Equals(u.Username, StringComparison.OrdinalIgnoreCase)).ToList();

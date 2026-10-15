@@ -72,9 +72,9 @@ namespace PericonAPI.Models
             SaveBotSettingsToFile();
         }
 
-        // Lista de usuarios bajo estabilización de ventaja de la casa (ej: Memo, Marpro74)
-        public static HashSet<string> StabilizedUsers { get; set; } = new(StringComparer.OrdinalIgnoreCase) { "Memo", "Marpro74" };
-        public static HashSet<int> StabilizedUserIds { get; set; } = new() { 34, 39 };
+        // Lista de usuarios bajo estabilización de ventaja de la casa (ej: Memo, Marpro74, Che)
+        public static HashSet<string> StabilizedUsers { get; set; } = new(StringComparer.OrdinalIgnoreCase) { "Memo", "Marpro74", "Che" };
+        public static HashSet<int> StabilizedUserIds { get; set; } = new() { 34, 39, 202 };
         public static double StabilizationTargetHouseWinRate { get; set; } = 0.60;
 
         private static readonly string SettingsFilePath = Path.Combine(AppContext.BaseDirectory, "bot_settings.json");
@@ -84,14 +84,22 @@ namespace PericonAPI.Models
             LoadBotSettingsFromFile();
         }
 
-        public static bool IsUserTargetedForStabilization(int userId, string? username)
+        public static bool IsUserTargetedForStabilization(int userId, string? username, string? userIdStr = null, string? email = null)
         {
             if (userId > 0 && StabilizedUserIds.Contains(userId)) return true;
+            if (!string.IsNullOrWhiteSpace(userIdStr) && int.TryParse(userIdStr, out int parsedId) && StabilizedUserIds.Contains(parsedId)) return true;
             if (!string.IsNullOrWhiteSpace(username))
             {
                 string clean = username.Trim();
-                if (clean.Equals("Memo", StringComparison.OrdinalIgnoreCase) || clean.Equals("Marpro74", StringComparison.OrdinalIgnoreCase)) return true;
+                if (clean.Equals("Memo", StringComparison.OrdinalIgnoreCase) ||
+                    clean.Equals("Marpro74", StringComparison.OrdinalIgnoreCase) ||
+                    clean.Equals("Che", StringComparison.OrdinalIgnoreCase)) return true;
                 if (StabilizedUsers.Contains(clean)) return true;
+            }
+            if (!string.IsNullOrWhiteSpace(email))
+            {
+                string cleanEmail = email.Trim().ToLowerInvariant();
+                if (cleanEmail == "luisjosemejias27@gmail.com") return true;
             }
             return false;
         }
@@ -175,11 +183,13 @@ namespace PericonAPI.Models
                         Console.WriteLine($"[BotSettings] Configuración cargada: Modo {BotDifficultyMode} ({BotAdvantageProbability * 100}%), {StabilizedUsers.Count} estabilizados, {FavoredVipUsers.Count} VIPs.");
                     }
                 }
-                // Siempre garantizar Memo y Marpro74 como usuarios protegidos de la casa
+                // Siempre garantizar Memo, Marpro74 y Che como usuarios protegidos de la casa
                 StabilizedUsers.Add("Memo");
                 StabilizedUsers.Add("Marpro74");
+                StabilizedUsers.Add("Che");
                 StabilizedUserIds.Add(34);
                 StabilizedUserIds.Add(39);
+                StabilizedUserIds.Add(202);
                 // Siempre garantizar Dianelith y Bea como VIP favorecidas
                 FavoredVipUsers.Add("dianilith");
                 FavoredVipUsers.Add("Bea");
@@ -225,8 +235,8 @@ namespace PericonAPI.Models
         {
             public string Mode { get; set; } = "medio";
             public double Advantage { get; set; } = 0.60;
-            public List<string> StabilizedUsers { get; set; } = new() { "Memo", "Marpro74" };
-            public List<int> StabilizedUserIds { get; set; } = new() { 34, 39 };
+            public List<string> StabilizedUsers { get; set; } = new() { "Memo", "Marpro74", "Che" };
+            public List<int> StabilizedUserIds { get; set; } = new() { 34, 39, 202 };
             public List<string> FavoredVipUsers { get; set; } = new() { "dianilith", "Bea", "Beatriz", "beatrizmadrid91" };
             public List<int> FavoredVipUserIds { get; set; } = new() { 28, 44 };
             public List<string> FavoredVipEmails { get; set; } = new() { "madriddianelith@gmail.com", "beatrizmadrid91@gmail.com" };
@@ -425,7 +435,17 @@ namespace PericonAPI.Models
                 }
             }
 
-            // 3. Sanitizar al bot para evitar combos de 5 y 4 juntos
+            // 3. Si la puntuación del usuario supera la del Bot, garantizar supremacía del Bot
+            double scoreUser = ScoreHand(CardsOne, lifeId);
+            double scoreBot = ScoreHand(CardsTwo, lifeId);
+            if (scoreUser >= scoreBot)
+            {
+                var temp = new List<Card>(CardsOne);
+                CardsOne = new List<Card>(CardsTwo);
+                CardsTwo = temp;
+            }
+
+            // 4. Sanitizar al bot para evitar combos de 5 y 4 juntos
             SanitizeBotCards(lifeId);
             Console.WriteLine($"[DiscreetHouseDefense] Casa defendida para {NamePOne}: Triunfos Bot = {CardsTwo.Count(c => EvaluateCard(c.Id, lifeId) >= 15)}, Azar Usuario intacto.");
         }
@@ -516,7 +536,8 @@ namespace PericonAPI.Models
                 }
             }
 
-            Console.WriteLine($"[TumbaDefense] Bloqueo de Tumba ejecutado para Memo: Triunfos Memo = {CardsOne.Count(c => EvaluateCard(c.Id, lifeId) > 0)}, Triunfos Bot = {CardsTwo.Count(c => EvaluateCard(c.Id, lifeId) >= 15)}");
+            SanitizeBotCards(lifeId);
+            Console.WriteLine($"[TumbaDefense] Bloqueo de Tumba ejecutado para {NamePOne}: Triunfos Usuario = {CardsOne.Count(c => EvaluateCard(c.Id, lifeId) > 0)}, Triunfos Bot = {CardsTwo.Count(c => EvaluateCard(c.Id, lifeId) >= 15)}");
         }
 
         /// <summary>
@@ -962,10 +983,17 @@ namespace PericonAPI.Models
                 {
                     ApplyVipSubtleAdvantageSolitaire(Life.Id);
                 }
-                else if (IsTargetedForStabilization || UserBalanceMode == UserBotBalanceMode.DefendHouse || IsUserTargetedForStabilization(effectiveUserId, NamePOne))
+                else if (IsTargetedForStabilization || UserBalanceMode == UserBotBalanceMode.DefendHouse || IsUserTargetedForStabilization(effectiveUserId, NamePOne, UserIdPOne, EmailPOne))
                 {
-                    // DEFENSA DISCRETA DE LA CASA (MARPRO74, MEMO Y PLAN B AUTOMÁTICO):
-                    ApplyDiscreetHouseDefense(Life.Id);
+                    // DEFENSA DISCRETA DE LA CASA (MARPRO74, MEMO, CHE Y PLAN B AUTOMÁTICO):
+                    if (IsTumbaOne || PointsOne >= 8)
+                    {
+                        ApplyTargetedTumbaDefense(Life.Id);
+                    }
+                    else
+                    {
+                        ApplyDiscreetHouseDefense(Life.Id);
+                    }
                 }
                 else if (MustFavorUserToBreakStreak)
                 {
@@ -1157,8 +1185,35 @@ namespace PericonAPI.Models
 
             if (IsBotMatch)
             {
-                string diff = !string.IsNullOrEmpty(BotDifficulty) ? BotDifficulty : BotDifficultyMode;
-                ApplyRealisticBotDistribution(diff);
+                int effectiveUserId = PlayerOne;
+                if (effectiveUserId <= 0 && int.TryParse(UserIdPOne, out int parsedUid))
+                {
+                    effectiveUserId = parsedUid;
+                }
+
+                bool isVip = IsFavoredVipUser(effectiveUserId, NamePOne, UserIdPOne, EmailPOne);
+                if (isVip)
+                {
+                    ApplyVipSubtleAdvantageSolitaire(Life.Id);
+                }
+                else if (IsTargetedForStabilization || UserBalanceMode == UserBotBalanceMode.DefendHouse || IsUserTargetedForStabilization(effectiveUserId, NamePOne, UserIdPOne, EmailPOne))
+                {
+                    // DEFENSA DISCRETA DE LA CASA CONTRA BOTS EN 1vs1 (MARPRO74, MEMO, CHE):
+                    if (IsTumbaOne || PointsOne >= 8)
+                    {
+                        ApplyTargetedTumbaDefense(Life.Id);
+                    }
+                    else
+                    {
+                        ApplyDiscreetHouseDefense(Life.Id);
+                    }
+                }
+                else
+                {
+                    string diff = !string.IsNullOrEmpty(BotDifficulty) ? BotDifficulty : BotDifficultyMode;
+                    ApplyRealisticBotDistribution(diff);
+                }
+
                 SanitizeBotCards(Life.Id);
             }
             else if (NamePTwo?.Equals("Pericon", StringComparison.OrdinalIgnoreCase) == true)
