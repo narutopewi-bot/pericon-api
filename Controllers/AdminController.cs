@@ -215,9 +215,9 @@ namespace PericonAPI.Controllers
 
             string description = cleanMode switch
             {
-                "facil" => "Modo Fácil activado (40% Casa / 60% Jugador - A favor del usuario)",
-                "dificil" => "Modo Difícil activado (65% Casa / 35% Jugador)",
-                _ => "Modo Medio activado (50% Casa / 50% Jugador - Balance equitativo)"
+                "facil" => "Modo Fácil activado (50% Casa / 50% Jugador - Modo Recreativo y Atracción)",
+                "dificil" => "Modo Difícil activado (85% Casa / 15% Jugador - Muro de Contención y Bloqueo Total)",
+                _ => "Modo Medio activado (70% Casa / 30% Jugador - Recuperación de Tesorería)"
             };
 
             return Ok(new
@@ -936,7 +936,8 @@ namespace PericonAPI.Controllers
                     createdAt = u.CreatedAt,
                     avatarUrl = u.AvatarUrl,
                     isActive = u.IsActive,
-                    isAdmin = u.IsAdmin
+                    isAdmin = u.IsAdmin,
+                    botDifficulty = u.BotDifficulty ?? "medio"
                 };
             }).ToList();
 
@@ -1197,6 +1198,72 @@ namespace PericonAPI.Controllers
                 username = user.Username,
                 isActive = user.IsActive,
                 message = $"El usuario {user.Username} ha sido {estado} exitosamente."
+            });
+        }
+
+        public class SetUserBotDifficultyRequest
+        {
+            public string Difficulty { get; set; } = "medio";
+        }
+
+        [HttpPost("user/{id}/bot-difficulty")]
+        public async Task<IActionResult> SetUserBotDifficulty(int id, [FromBody] SetUserBotDifficultyRequest request)
+        {
+            var user = await _context.Users.FindAsync(id);
+            if (user == null)
+            {
+                return NotFound(new { message = "Usuario no encontrado." });
+            }
+
+            string clean = (request?.Difficulty ?? "medio").Trim().ToLowerInvariant();
+            if (clean != "facil" && clean != "medio" && clean != "dificil")
+            {
+                return BadRequest(new { message = "Dificultad inválida. Debe ser 'facil', 'medio' o 'dificil'." });
+            }
+
+            user.BotDifficulty = clean;
+
+            // Sincronizar listas en memoria
+            if (clean == "dificil")
+            {
+                GamePlayOneVsOne.StabilizedUserIds.Add(user.Id);
+                GamePlayOneVsOne.StabilizedUsers.Add(user.Username);
+                GamePlayOneVsOne.FavoredVipUserIds.Remove(user.Id);
+                GamePlayOneVsOne.FavoredVipUsers.Remove(user.Username);
+            }
+            else if (clean == "facil")
+            {
+                GamePlayOneVsOne.FavoredVipUserIds.Add(user.Id);
+                GamePlayOneVsOne.FavoredVipUsers.Add(user.Username);
+                GamePlayOneVsOne.StabilizedUserIds.Remove(user.Id);
+                GamePlayOneVsOne.StabilizedUsers.Remove(user.Username);
+            }
+            else // medio (estándar 70-30 de tesorería)
+            {
+                GamePlayOneVsOne.StabilizedUserIds.Remove(user.Id);
+                GamePlayOneVsOne.StabilizedUsers.Remove(user.Username);
+                GamePlayOneVsOne.FavoredVipUserIds.Remove(user.Id);
+                GamePlayOneVsOne.FavoredVipUsers.Remove(user.Username);
+            }
+
+            GamePlayOneVsOne.SaveBotSettingsToFile();
+            await _context.SaveChangesAsync();
+
+            string desc = clean switch
+            {
+                "facil" => "FÁCIL (50% Casa / 50% Jugador - Modo Recreativo)",
+                "dificil" => "DIFÍCIL (85% Casa / 15% Jugador - Muro Total de Contención)",
+                _ => "MEDIO (70% Casa / 30% Jugador - Recuperación de Tesorería)"
+            };
+
+            Console.WriteLine($"[AdminController] Dificultad de bots para {user.Username} (ID {user.Id}) cambiada a {desc} por Administrador.");
+
+            return Ok(new
+            {
+                id = user.Id,
+                username = user.Username,
+                botDifficulty = clean,
+                message = $"Dificultad de bots para {user.Username} establecida en {desc}."
             });
         }
 

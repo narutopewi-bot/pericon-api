@@ -128,17 +128,17 @@ namespace PericonAPI.Models
             if (mode == "facil")
             {
                 BotDifficultyMode = "facil";
-                BotAdvantageProbability = 0.40; // 40% Casa / 60% Jugador (a favor de los jugadores)
+                BotAdvantageProbability = 0.50; // 50% Casa / 50% Jugador (Atracción y modo recreativo)
             }
             else if (mode == "dificil")
             {
                 BotDifficultyMode = "dificil";
-                BotAdvantageProbability = 0.65; // 65% Casa / 35% Jugador
+                BotAdvantageProbability = 0.85; // 85% Casa / 15% Jugador (Muro de defensa y corte total de fugas)
             }
-            else // "medio"
+            else // "medio" (Predeterminado 70-30 ordenado por la banca)
             {
                 BotDifficultyMode = "medio";
-                BotAdvantageProbability = 0.50; // 50% Casa / 50% Jugador (balance equitativo)
+                BotAdvantageProbability = 0.70; // 70% Casa / 30% Jugador (Recuperación constante de fondos)
             }
 
             StabilizationTargetHouseWinRate = BotAdvantageProbability;
@@ -1176,8 +1176,43 @@ namespace PericonAPI.Models
                     }
                     else
                     {
-                        string diffMode = !string.IsNullOrEmpty(BotDifficulty) ? BotDifficulty : BotDifficultyMode;
-                        ApplyRealisticBotDistribution(diffMode);
+                        string diffMode = (!string.IsNullOrEmpty(BotDifficulty) ? BotDifficulty : BotDifficultyMode).Trim().ToLowerInvariant();
+                        if (diffMode == "dificil")
+                        {
+                            // 85% de las manos aplica defensa sutil (Muro de contención)
+                            if (Random.Shared.NextDouble() < 0.85)
+                            {
+                                ApplyDiscreetHouseDefense(Life.Id);
+                            }
+                            else
+                            {
+                                ApplyRealisticBotDistribution("dificil");
+                            }
+                        }
+                        else if (diffMode == "medio")
+                        {
+                            // 70% de las manos aplica defensa sutil (RATIO 70-30 ORDENADO POR LA BANCA)
+                            if (Random.Shared.NextDouble() < 0.70)
+                            {
+                                ApplyDiscreetHouseDefense(Life.Id);
+                            }
+                            else
+                            {
+                                ApplyRealisticBotDistribution("medio");
+                            }
+                        }
+                        else // facil
+                        {
+                            // 45% de las manos defensa sutil, 55% distribución realista
+                            if (Random.Shared.NextDouble() < 0.45)
+                            {
+                                ApplyDiscreetHouseDefense(Life.Id);
+                            }
+                            else
+                            {
+                                ApplyRealisticBotDistribution("facil");
+                            }
+                        }
                     }
                 }
             }
@@ -1402,8 +1437,43 @@ namespace PericonAPI.Models
                     }
                     else
                     {
-                        string diff = !string.IsNullOrEmpty(BotDifficulty) ? BotDifficulty : BotDifficultyMode;
-                        ApplyRealisticBotDistribution(diff);
+                        string diff = (!string.IsNullOrEmpty(BotDifficulty) ? BotDifficulty : BotDifficultyMode).Trim().ToLowerInvariant();
+                        if (diff == "dificil")
+                        {
+                            // 85% de las manos aplica defensa sutil (Muro de contención)
+                            if (Random.Shared.NextDouble() < 0.85)
+                            {
+                                ApplyDiscreetHouseDefense(Life.Id);
+                            }
+                            else
+                            {
+                                ApplyRealisticBotDistribution("dificil");
+                            }
+                        }
+                        else if (diff == "medio")
+                        {
+                            // 70% de las manos aplica defensa sutil (RATIO 70-30 ORDENADO POR LA BANCA)
+                            if (Random.Shared.NextDouble() < 0.70)
+                            {
+                                ApplyDiscreetHouseDefense(Life.Id);
+                            }
+                            else
+                            {
+                                ApplyRealisticBotDistribution("medio");
+                            }
+                        }
+                        else // facil
+                        {
+                            // 45% de las manos defensa sutil, 55% distribución realista
+                            if (Random.Shared.NextDouble() < 0.45)
+                            {
+                                ApplyDiscreetHouseDefense(Life.Id);
+                            }
+                            else
+                            {
+                                ApplyRealisticBotDistribution("facil");
+                            }
+                        }
                     }
                 }
 

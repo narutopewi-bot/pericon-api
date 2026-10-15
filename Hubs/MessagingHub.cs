@@ -3258,15 +3258,23 @@ namespace PericonAPI.Hubs
                     // Dificultad configurada por el Administrador en el panel:
                     string adminGlobalDiff = (GamePlayOneVsOne.BotDifficultyMode ?? "medio").Trim().ToLowerInvariant();
 
-                    // Consultar historial reciente contra bots para balance financiero y control antirachas universal:
+                    // Consultar historial reciente contra bots y dificultad personalizada del usuario:
                     int consecutiveUserWins = 0;
                     int consecutiveBotWins = 0;
                     int userNetProfitAgainstBot = 0;
                     int userTodayNetProfit = 0;
+                    string userCustomDiff = "";
                     try
                     {
                         using var scope = _staticScopeFactory.CreateScope();
                         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+                        var userRecord = await db.Users.FirstOrDefaultAsync(u => u.Id == uId || (!string.IsNullOrEmpty(name1) && u.Username == name1));
+                        if (userRecord != null && !string.IsNullOrWhiteSpace(userRecord.BotDifficulty))
+                        {
+                            userCustomDiff = userRecord.BotDifficulty.Trim().ToLowerInvariant();
+                        }
+
                         var userBotMatches = await db.BotMatchRecords
                             .Where(m => m.UserId == uId || (!string.IsNullOrEmpty(name1) && m.Username == name1))
                             .OrderByDescending(m => m.CreatedAt)
@@ -3304,59 +3312,94 @@ namespace PericonAPI.Hubs
                         Console.WriteLine($"[1vs1BotMatchmaking] Error leyendo historial: {ex.Message}");
                     }
 
+                    // Determinar dificultad activa (Individual de usuario tiene prioridad sobre la global):
+                    string effectiveDiff = (!string.IsNullOrEmpty(userCustomDiff) && (userCustomDiff == "facil" || userCustomDiff == "medio" || userCustomDiff == "dificil"))
+                        ? userCustomDiff
+                        : adminGlobalDiff;
+
                     // =========================================================================
-                    // PLAN DE BLINDAJE INTEGRAL DE BANCA (TECHO INFRANQUEABLE Y ANTIRACHAS ASIMÉTRICO)
+                    // PLAN DE BLINDAJE INTEGRAL DE BANCA (70-30 ESTÁNDAR, MURO DIFÍCIL Y ANTIRACHAS)
                     // =========================================================================
-                    bool isHouseDefending = isTargeted || userTodayNetProfit > 0 || userNetProfitAgainstBot > 0 || item.Bet >= 1000;
+                    bool isHouseDefending = isTargeted || effectiveDiff == "dificil" || userTodayNetProfit > 0 || userNetProfitAgainstBot > 0 || item.Bet >= 1000;
                     bool isDailyProfitCapHit = userTodayNetProfit >= 500;
 
-                    // 1. Antirachas Jugador: Si el bot ha ganado 2 partidas seguidas, conceder 1 victoria limpia
-                    // para evitar frustración y mantener al jugador en la mesa.
-                    if (consecutiveBotWins >= 2)
+                    // 1. MODO DIFÍCIL (MURO TOTAL DE CONTENCIÓN / BLOQUEO DE FUGAS - 85% A 90% CASA):
+                    if (effectiveDiff == "dificil")
                     {
-                        newGame.MustFavorUserToBreakStreak = true;
-                        newGame.MustFavorBotToBreakStreak = false;
-                        newGame.UserBalanceMode = UserBotBalanceMode.BalancedGradualEdge;
-                        newGame.BotDifficulty = adminGlobalDiff;
-                        Console.WriteLine($"[1vs1BotBalance] Antirachas activo para {name1}: Bot ganó {consecutiveBotWins} seguidas. Rompiendo racha para que el usuario gane.");
-                    }
-                    // 2. Freno Inmediato para Usuarios en Ganancia o Techo de Ganancia:
-                    // Si el usuario ya va ganando a la casa o alcanzó el techo diario (>= 500 monedas):
-                    // NO PUEDE GANAR 2 SEGUIDAS. Si ganó 1 sola partida, la siguiente la gana el bot obligatoriamente (Ratio 2-1).
-                    else if (isHouseDefending && consecutiveUserWins >= 1)
-                    {
-                        newGame.MustFavorUserToBreakStreak = false;
-                        newGame.MustFavorBotToBreakStreak = true;
+                        newGame.BotDifficulty = "dificil";
                         newGame.UserBalanceMode = UserBotBalanceMode.DefendHouse;
-                        newGame.BotDifficulty = "dificil";
-                        Console.WriteLine($"[1vs1BotBalance] Antirachas Asimétrico activo para {name1}: GananciaHoy={userTodayNetProfit}, Histórico={userNetProfitAgainstBot}. Bloqueando racha tras 1 victoria para proteger la banca.");
+
+                        if (consecutiveUserWins >= 1 || isHouseDefending)
+                        {
+                            newGame.MustFavorUserToBreakStreak = false;
+                            newGame.MustFavorBotToBreakStreak = true;
+                        }
+                        else if (consecutiveBotWins >= 4)
+                        {
+                            newGame.MustFavorUserToBreakStreak = true;
+                            newGame.MustFavorBotToBreakStreak = false;
+                        }
+                        else
+                        {
+                            newGame.MustFavorUserToBreakStreak = false;
+                            newGame.MustFavorBotToBreakStreak = false;
+                        }
+                        Console.WriteLine($"[1vs1BotBalance] MODO DIFÍCIL ACTIVO para {name1}: Muro de contención (85% Casa). UsuarioDiff={userCustomDiff}, GlobalDiff={adminGlobalDiff}.");
                     }
-                    // 3. Antirachas Banca para Usuarios Normales: Si acumulan 2 victorias consecutivas, romper racha obligatoriamente:
-                    else if (consecutiveUserWins >= 2)
+                    // 2. MODO MEDIO (CALIBRACIÓN 70-30 EXIGIDA POR LA CASA PARA RECUPERACIÓN):
+                    else if (effectiveDiff == "medio")
                     {
-                        newGame.MustFavorUserToBreakStreak = false;
-                        newGame.MustFavorBotToBreakStreak = true;
-                        newGame.UserBalanceMode = UserBotBalanceMode.BalancedGradualEdge;
-                        newGame.BotDifficulty = "dificil";
-                        Console.WriteLine($"[1vs1BotBalance] Antirachas de Banca activo para {name1}: Lleva {consecutiveUserWins} seguidas. Rompiendo racha para defender a la banca.");
+                        newGame.BotDifficulty = "medio";
+                        newGame.UserBalanceMode = isHouseDefending ? UserBotBalanceMode.DefendHouse : UserBotBalanceMode.BalancedGradualEdge;
+
+                        // Si el bot ganó 3 o más seguidas, conceder 1 victoria limpia (ratio 70-30):
+                        if (consecutiveBotWins >= 3)
+                        {
+                            newGame.MustFavorUserToBreakStreak = true;
+                            newGame.MustFavorBotToBreakStreak = false;
+                            Console.WriteLine($"[1vs1BotBalance] Ciclo 70-30 para {name1}: Bot ganó {consecutiveBotWins} seguidas. Rompiendo racha para otorgar 1 victoria.");
+                        }
+                        // Si el usuario ganó 1 partida y está en defensa o apuesta fuerte, siguiente para el bot:
+                        else if (consecutiveUserWins >= 1 && (isHouseDefending || consecutiveBotWins == 0))
+                        {
+                            newGame.MustFavorUserToBreakStreak = false;
+                            newGame.MustFavorBotToBreakStreak = true;
+                            Console.WriteLine($"[1vs1BotBalance] Ciclo 70-30 para {name1}: Usuario ganó 1 partida. Cortando racha para asegurar ventaja de casa.");
+                        }
+                        else if (consecutiveUserWins >= 2)
+                        {
+                            newGame.MustFavorUserToBreakStreak = false;
+                            newGame.MustFavorBotToBreakStreak = true;
+                        }
+                        else
+                        {
+                            newGame.MustFavorUserToBreakStreak = false;
+                            newGame.MustFavorBotToBreakStreak = false;
+                        }
+                        Console.WriteLine($"[1vs1BotBalance] MODO MEDIO (70-30) ACTIVO para {name1}. GananciaHoy={userTodayNetProfit}, Histórico={userNetProfitAgainstBot}.");
                     }
-                    // 4. Modo de Recuperación de Banca (Partidas intermedias con saldo a favor de la casa):
-                    else if (isHouseDefending)
-                    {
-                        newGame.MustFavorUserToBreakStreak = false;
-                        newGame.MustFavorBotToBreakStreak = false;
-                        newGame.UserBalanceMode = UserBotBalanceMode.DefendHouse;
-                        newGame.BotDifficulty = "dificil";
-                        Console.WriteLine($"[1vs1BotBalance] Defensa de Banca activa para {name1} (ID {uId}). GananciaHoy={userTodayNetProfit}, Histórico={userNetProfitAgainstBot}, Apuesta={item.Bet}. Modo DIFÍCIL calibrado (65-70% Casa).");
-                    }
-                    // 5. Partida estándar según dificultad fijada por el Administrador:
+                    // 3. MODO FÁCIL (MODO RECREATIVO Y ATRACCIÓN - 50% CASA / 50% JUGADOR):
                     else
                     {
-                        newGame.MustFavorUserToBreakStreak = false;
-                        newGame.MustFavorBotToBreakStreak = false;
+                        newGame.BotDifficulty = "facil";
                         newGame.UserBalanceMode = UserBotBalanceMode.Normal;
-                        newGame.BotDifficulty = adminGlobalDiff;
-                        Console.WriteLine($"[1vs1BotBalance] Partida estándar para {name1} con dificultad de Administrador: {adminGlobalDiff.ToUpper()}.");
+
+                        if (consecutiveBotWins >= 2)
+                        {
+                            newGame.MustFavorUserToBreakStreak = true;
+                            newGame.MustFavorBotToBreakStreak = false;
+                        }
+                        else if (consecutiveUserWins >= 2)
+                        {
+                            newGame.MustFavorUserToBreakStreak = false;
+                            newGame.MustFavorBotToBreakStreak = true;
+                        }
+                        else
+                        {
+                            newGame.MustFavorUserToBreakStreak = false;
+                            newGame.MustFavorBotToBreakStreak = false;
+                        }
+                        Console.WriteLine($"[1vs1BotBalance] MODO FÁCIL ACTIVO para {name1} (50% Casa / 50% Jugador).");
                     }
 
                     newGame.NamePOne = name1;
@@ -4688,71 +4731,63 @@ namespace PericonAPI.Hubs
                         // 3. El usuario ha jugado >= 3 partidas hoy y su tasa de victoria supera el 65% (violando el margen 60/40).
                         // 4. El beneficio global histórico del usuario contra el bot supera +2,000 monedas.
                         // =========================================================================
-                        bool isPlanBTriggered = 
-                            (consecutiveUserWins >= 2) ||
-                            (userTodayNetProfit > 0) ||
-                            (userTodayTotal >= 3 && ((double)userTodayWins / userTodayTotal) > 0.60) ||
-                            (userNetProfitAgainstBot > 0);
+                        // 4. Determinar dificultad activa (Individual de usuario o Global de la Casa):
+                        string userCustomDiff = "";
+                        var userRecord = db.Users.FirstOrDefault(u => u.Id == uId || (!string.IsNullOrEmpty(newgame.NamePOne) && u.Username == newgame.NamePOne));
+                        if (userRecord != null && !string.IsNullOrWhiteSpace(userRecord.BotDifficulty))
+                        {
+                            userCustomDiff = userRecord.BotDifficulty.Trim().ToLowerInvariant();
+                        }
 
-                        string currentDifficulty = (GamePlayOneVsOne.BotDifficultyMode ?? "facil").Trim().ToLowerInvariant();
+                        string adminGlobalDiff = (GamePlayOneVsOne.BotDifficultyMode ?? "medio").Trim().ToLowerInvariant();
+                        string effectiveDiff = (!string.IsNullOrEmpty(userCustomDiff) && (userCustomDiff == "facil" || userCustomDiff == "medio" || userCustomDiff == "dificil"))
+                            ? userCustomDiff
+                            : adminGlobalDiff;
 
-                        // 1. Si está bajo estabilización manual o se disparó el Plan B autónomo:
-                        if (isManuallyTargeted || isPlanBTriggered)
+                        bool isHouseDefending = isManuallyTargeted || effectiveDiff == "dificil" || userTodayNetProfit > 0 || userNetProfitAgainstBot > 0 || (userTodayTotal >= 3 && ((double)userTodayWins / userTodayTotal) > 0.50);
+
+                        newgame.BotDifficulty = effectiveDiff;
+
+                        // 1. MODO DIFÍCIL (MURO TOTAL DE CONTENCIÓN / BLOQUEO DE FUGAS - 85% CASA):
+                        if (effectiveDiff == "dificil")
                         {
                             newgame.UserBalanceMode = UserBotBalanceMode.DefendHouse;
                             newgame.IsTargetedForStabilization = true;
-                            if (consecutiveBotWins >= 2)
-                            {
-                                newgame.MustFavorUserToBreakStreak = true;
-                                newgame.MustFavorBotToBreakStreak = false;
-                            }
-                            else if (consecutiveUserWins >= 1)
+
+                            if (consecutiveUserWins >= 1 || isHouseDefending)
                             {
                                 newgame.MustFavorUserToBreakStreak = false;
                                 newgame.MustFavorBotToBreakStreak = true;
+                            }
+                            else if (consecutiveBotWins >= 4)
+                            {
+                                newgame.MustFavorUserToBreakStreak = true;
+                                newgame.MustFavorBotToBreakStreak = false;
                             }
                             else
                             {
                                 newgame.MustFavorUserToBreakStreak = false;
                                 newgame.MustFavorBotToBreakStreak = false;
                             }
-                            Console.WriteLine($"[PlanB-Antidesfalco] ACTIVADO para {newgame.NamePOne} (ID {uId}). Manual={isManuallyTargeted}, RachaVictorias={consecutiveUserWins}, BeneficioHoy={userTodayNetProfit}, Histórico={userNetProfitAgainstBot}, VictoriasHoy={userTodayWins}/{userTodayTotal}. Modo DefendHouse en marcha.");
+                            Console.WriteLine($"[Solitaire] MODO DIFÍCIL ACTIVO para {newgame.NamePOne}: Muro de contención (85% Casa). UsuarioDiff={userCustomDiff}, GlobalDiff={adminGlobalDiff}.");
                         }
-                        // 2. Modo FÁCIL: 40% Casa / 60% Jugador (Márgenes normales)
-                        else if (currentDifficulty == "facil")
+                        // 2. MODO MEDIO (CALIBRACIÓN 70-30 EXIGIDA POR LA CASA):
+                        else if (effectiveDiff == "medio")
                         {
-                            newgame.UserBalanceMode = UserBotBalanceMode.BalancedGradualEdge;
-                            newgame.IsTargetedForStabilization = false;
+                            newgame.UserBalanceMode = isHouseDefending ? UserBotBalanceMode.DefendHouse : UserBotBalanceMode.BalancedGradualEdge;
+                            newgame.IsTargetedForStabilization = isHouseDefending;
 
-                            // Romper racha si el bot ganó 2 seguidas, o si el usuario ganó 2 seguidas:
-                            if (consecutiveBotWins >= 2)
+                            if (consecutiveBotWins >= 3)
                             {
                                 newgame.MustFavorUserToBreakStreak = true;
                                 newgame.MustFavorBotToBreakStreak = false;
+                                Console.WriteLine($"[Solitaire] Ciclo 70-30 para {newgame.NamePOne}: Bot ganó {consecutiveBotWins} seguidas. Rompiendo racha para otorgar 1 victoria.");
                             }
-                            else if (consecutiveUserWins >= 2)
+                            else if (consecutiveUserWins >= 1 && (isHouseDefending || consecutiveBotWins == 0))
                             {
                                 newgame.MustFavorUserToBreakStreak = false;
                                 newgame.MustFavorBotToBreakStreak = true;
-                            }
-                            else
-                            {
-                                // 60% probabilidad de favorecer al usuario
-                                newgame.MustFavorUserToBreakStreak = Random.Shared.NextDouble() < 0.60;
-                                newgame.MustFavorBotToBreakStreak = false;
-                            }
-                            Console.WriteLine($"[BotDifficulty] Modo FÁCIL activo (40% Casa / 60% Jugador). Usuario={newgame.NamePOne}, FavorUser={newgame.MustFavorUserToBreakStreak}.");
-                        }
-                        // 3. Modo DIFÍCIL: 65% Casa / 35% Jugador
-                        else if (currentDifficulty == "dificil")
-                        {
-                            newgame.UserBalanceMode = UserBotBalanceMode.DefendHouse;
-                            newgame.IsTargetedForStabilization = false;
-
-                            if (consecutiveBotWins >= 2)
-                            {
-                                newgame.MustFavorUserToBreakStreak = true;
-                                newgame.MustFavorBotToBreakStreak = false;
+                                Console.WriteLine($"[Solitaire] Ciclo 70-30 para {newgame.NamePOne}: Usuario ganó 1 partida. Cortando racha para asegurar ventaja de casa.");
                             }
                             else if (consecutiveUserWins >= 2)
                             {
@@ -4764,12 +4799,12 @@ namespace PericonAPI.Hubs
                                 newgame.MustFavorUserToBreakStreak = false;
                                 newgame.MustFavorBotToBreakStreak = false;
                             }
-                            Console.WriteLine($"[BotDifficulty] Modo DIFÍCIL activo (65% Casa / 35% Jugador). Usuario={newgame.NamePOne}.");
+                            Console.WriteLine($"[Solitaire] MODO MEDIO (70-30) ACTIVO para {newgame.NamePOne}. GananciaHoy={userTodayNetProfit}, Histórico={userNetProfitAgainstBot}.");
                         }
-                        // 4. Modo MEDIO: 50% Casa / 50% Jugador
+                        // 3. MODO FÁCIL (MODO RECREATIVO Y ATRACCIÓN - 50% CASA / 50% JUGADOR):
                         else
                         {
-                            newgame.UserBalanceMode = UserBotBalanceMode.BalancedGradualEdge;
+                            newgame.UserBalanceMode = UserBotBalanceMode.Normal;
                             newgame.IsTargetedForStabilization = false;
 
                             if (consecutiveBotWins >= 2)
@@ -4782,17 +4817,12 @@ namespace PericonAPI.Hubs
                                 newgame.MustFavorUserToBreakStreak = false;
                                 newgame.MustFavorBotToBreakStreak = true;
                             }
-                            else if (consecutiveBotWins == 1)
-                            {
-                                newgame.MustFavorUserToBreakStreak = Random.Shared.NextDouble() < 0.50;
-                                newgame.MustFavorBotToBreakStreak = false;
-                            }
                             else
                             {
                                 newgame.MustFavorUserToBreakStreak = false;
                                 newgame.MustFavorBotToBreakStreak = false;
                             }
-                            Console.WriteLine($"[BotDifficulty] Modo MEDIO activo (50% Casa / 50% Jugador). Usuario={newgame.NamePOne}.");
+                            Console.WriteLine($"[Solitaire] MODO FÁCIL ACTIVO para {newgame.NamePOne} (50% Casa / 50% Jugador).");
                         }
                     }
                 }
