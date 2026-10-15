@@ -3258,35 +3258,46 @@ namespace PericonAPI.Hubs
                     // Dificultad configurada por el Administrador en el panel:
                     string adminGlobalDiff = (GamePlayOneVsOne.BotDifficultyMode ?? "medio").Trim().ToLowerInvariant();
 
-                    // Consultar historial reciente contra bots para balance financiero y control antirachas:
+                    // Consultar historial reciente contra bots para balance financiero y control antirachas universal:
                     int consecutiveUserWins = 0;
                     int consecutiveBotWins = 0;
+                    int userNetProfitAgainstBot = 0;
+                    int userTodayNetProfit = 0;
                     try
                     {
                         using var scope = _staticScopeFactory.CreateScope();
                         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                        var recentBotMatches = await db.BotMatchRecords
+                        var userBotMatches = await db.BotMatchRecords
                             .Where(m => m.UserId == uId || (!string.IsNullOrEmpty(name1) && m.Username == name1))
                             .OrderByDescending(m => m.CreatedAt)
-                            .Take(5)
+                            .Take(50)
                             .ToListAsync();
 
-                        if (recentBotMatches.Count > 0 && recentBotMatches[0].UserWon)
+                        if (userBotMatches.Count > 0 && userBotMatches[0].UserWon)
                         {
-                            foreach (var m in recentBotMatches)
+                            foreach (var m in userBotMatches)
                             {
                                 if (m.UserWon) consecutiveUserWins++;
                                 else break;
                             }
                         }
-                        else if (recentBotMatches.Count > 0 && !recentBotMatches[0].UserWon)
+                        else if (userBotMatches.Count > 0 && !userBotMatches[0].UserWon)
                         {
-                            foreach (var m in recentBotMatches)
+                            foreach (var m in userBotMatches)
                             {
                                 if (!m.UserWon) consecutiveBotWins++;
                                 else break;
                             }
                         }
+
+                        userNetProfitAgainstBot = userBotMatches.Sum(m => m.CoinsWon) - userBotMatches.Sum(m => m.CoinsLost);
+                        newGame.UserNetCoinsAgainstBot = userNetProfitAgainstBot;
+
+                        var vzlaNow = Classes.VenezuelaTime.Now;
+                        var todayVzlaStartUtc = vzlaNow.Date.AddHours(4);
+                        var todayVzlaEndUtc = todayVzlaStartUtc.AddDays(1);
+                        var todayMatches = userBotMatches.Where(m => m.CreatedAt >= todayVzlaStartUtc && m.CreatedAt < todayVzlaEndUtc).ToList();
+                        userTodayNetProfit = todayMatches.Sum(m => m.CoinsWon) - todayMatches.Sum(m => m.CoinsLost);
                     }
                     catch (Exception ex)
                     {
@@ -3294,7 +3305,7 @@ namespace PericonAPI.Hubs
                     }
 
                     // =========================================================================
-                    // PLAN B AUTÓNOMO (FRENO DISCRETO Y CONTROL ANTIRACHAS BILATERAL)
+                    // REGLA UNIVERSAL ANTIRACHAS BILATERAL Y PROTECCIÓN DE BANCA (TODOS LOS USUARIOS)
                     // =========================================================================
                     // 1. Antirachas Jugador: Si el bot ha ganado 2 partidas seguidas, favorecer al usuario
                     // para que gane la siguiente, evitando frustración y manteniendo al jugador activo.
@@ -3307,7 +3318,7 @@ namespace PericonAPI.Hubs
                         Console.WriteLine($"[1vs1BotBalance] Antirachas activo para {name1}: Bot ganó {consecutiveBotWins} seguidas. Rompiendo racha para que el usuario gane.");
                     }
                     // 2. Antirachas Banca: Si el usuario lleva 2 o más victorias seguidas contra el bot,
-                    // romper racha forzando la victoria del bot para evitar que gane 3, 4 o 5 seguidas.
+                    // romper racha forzando la victoria del bot para evitar que NINGÚN usuario gane 3, 4 o 5 seguidas.
                     else if (consecutiveUserWins >= 2)
                     {
                         newGame.MustFavorUserToBreakStreak = false;
@@ -3316,16 +3327,16 @@ namespace PericonAPI.Hubs
                         newGame.BotDifficulty = "dificil";
                         Console.WriteLine($"[1vs1BotBalance] Antirachas de Banca activo para {name1}: Lleva {consecutiveUserWins} seguidas. Rompiendo racha para defender a la banca.");
                     }
-                    // 3. Freno discreto a Che / Jugador Estabilizado (sin racha de 2):
-                    // Se activa modo DIFÍCIL (65% Casa / 35% Jugador). El bot ganará ~65% en el tiempo,
-                    // recuperando fondos de manera limpia, natural y completamente discreta.
-                    else if (isTargeted)
+                    // 3. Freno universal / Recuperación de Banca (Cualquier usuario en ganancia neta o marcado):
+                    // Si el usuario le va ganando monedas a la casa (hoy o histórico) o está marcado (Che):
+                    // Se activa modo DIFÍCIL (65% Casa / 35% Jugador) para recuperar fondos progresivamente.
+                    else if (isTargeted || userTodayNetProfit > 0 || userNetProfitAgainstBot > 0)
                     {
                         newGame.MustFavorUserToBreakStreak = false;
                         newGame.MustFavorBotToBreakStreak = false;
                         newGame.UserBalanceMode = UserBotBalanceMode.BalancedGradualEdge;
                         newGame.BotDifficulty = "dificil";
-                        Console.WriteLine($"[1vs1BotBalance] Freno discreto activo para {name1} (ID {uId}). Modo DIFÍCIL calibrado (65% Casa / 35% Jugador).");
+                        Console.WriteLine($"[1vs1BotBalance] Recuperación de Banca activa para {name1} (ID {uId}). GananciaHoy={userTodayNetProfit}, Histórico={userNetProfitAgainstBot}. Modo DIFÍCIL calibrado (65% Casa / 35% Jugador).");
                     }
                     // 4. Partida estándar según dificultad fijada por el Administrador:
                     else
@@ -4668,9 +4679,9 @@ namespace PericonAPI.Hubs
                         // =========================================================================
                         bool isPlanBTriggered = 
                             (consecutiveUserWins >= 2) ||
-                            (userTodayNetProfit >= 1000) ||
-                            (userTodayTotal >= 3 && ((double)userTodayWins / userTodayTotal) > 0.65) ||
-                            (userNetProfitAgainstBot >= 2000);
+                            (userTodayNetProfit > 0) ||
+                            (userTodayTotal >= 3 && ((double)userTodayWins / userTodayTotal) > 0.60) ||
+                            (userNetProfitAgainstBot > 0);
 
                         string currentDifficulty = (GamePlayOneVsOne.BotDifficultyMode ?? "facil").Trim().ToLowerInvariant();
 
