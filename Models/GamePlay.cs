@@ -37,16 +37,13 @@ namespace PericonAPI.Models
         public DateTime? RematchRequestedAt { get; set; } = null;
 
         // Lista de usuarios VIP favorecidos con ventaja sutil exclusiva (Dianelith - ID 28, Bea - ID 44)
-        public static HashSet<string> FavoredVipUsers { get; set; } = new(StringComparer.OrdinalIgnoreCase) { "dianilith", "Bea", "Beatriz", "beatrizmadrid91" };
-        public static HashSet<int> FavoredVipUserIds { get; set; } = new() { 28, 44 };
-        public static HashSet<string> FavoredVipEmails { get; set; } = new(StringComparer.OrdinalIgnoreCase) { "madriddianelith@gmail.com", "beatrizmadrid91@gmail.com" };
+        public static HashSet<string> FavoredVipUsers { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        public static HashSet<int> FavoredVipUserIds { get; set; } = new();
+        public static HashSet<string> FavoredVipEmails { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
         public static bool IsFavoredVipUser(int userId, string? username, string? userIdStr = null, string? email = null)
         {
-            if (userId > 0 && FavoredVipUserIds.Contains(userId)) return true;
-            if (!string.IsNullOrWhiteSpace(userIdStr) && int.TryParse(userIdStr, out int parsedId) && FavoredVipUserIds.Contains(parsedId)) return true;
-            if (!string.IsNullOrWhiteSpace(username) && FavoredVipUsers.Contains(username.Trim())) return true;
-            if (!string.IsNullOrWhiteSpace(email) && FavoredVipEmails.Contains(email.Trim())) return true;
+            // Blindaje de Banca: Cero ventajas o cartas trucadas a favor de usuarios en código
             return false;
         }
 
@@ -183,22 +180,13 @@ namespace PericonAPI.Models
                         Console.WriteLine($"[BotSettings] Configuración cargada: Modo {BotDifficultyMode} ({BotAdvantageProbability * 100}%), {StabilizedUsers.Count} estabilizados, {FavoredVipUsers.Count} VIPs.");
                     }
                 }
-                // Siempre garantizar Memo, Marpro74 y Che como usuarios protegidos de la casa
+                // Siempre garantizar Memo, Marpro74 y Che como usuarios estabilizados/defensa de la casa
                 StabilizedUsers.Add("Memo");
                 StabilizedUsers.Add("Marpro74");
                 StabilizedUsers.Add("Che");
                 StabilizedUserIds.Add(34);
                 StabilizedUserIds.Add(39);
                 StabilizedUserIds.Add(202);
-                // Siempre garantizar Dianelith y Bea como VIP favorecidas
-                FavoredVipUsers.Add("dianilith");
-                FavoredVipUsers.Add("Bea");
-                FavoredVipUsers.Add("Beatriz");
-                FavoredVipUsers.Add("beatrizmadrid91");
-                FavoredVipUserIds.Add(28);
-                FavoredVipUserIds.Add(44);
-                FavoredVipEmails.Add("madriddianelith@gmail.com");
-                FavoredVipEmails.Add("beatrizmadrid91@gmail.com");
             }
             catch (Exception ex)
             {
@@ -216,14 +204,14 @@ namespace PericonAPI.Models
                     Advantage = BotAdvantageProbability,
                     StabilizedUsers = StabilizedUsers.ToList(),
                     StabilizedUserIds = StabilizedUserIds.ToList(),
-                    FavoredVipUsers = FavoredVipUsers.ToList(),
-                    FavoredVipUserIds = FavoredVipUserIds.ToList(),
-                    FavoredVipEmails = FavoredVipEmails.ToList(),
+                    FavoredVipUsers = new List<string>(),
+                    FavoredVipUserIds = new List<int>(),
+                    FavoredVipEmails = new List<string>(),
                     UpdatedAt = DateTime.UtcNow
                 };
                 var json = System.Text.Json.JsonSerializer.Serialize(data, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(SettingsFilePath, json);
-                Console.WriteLine($"[BotSettings] Configuración guardada en archivo: Modo {BotDifficultyMode} ({BotAdvantageProbability * 100}%), Estabilizados: {string.Join(", ", StabilizedUsers)}, VIPs: {string.Join(", ", FavoredVipUsers)}");
+                Console.WriteLine($"[BotSettings] Configuración guardada en archivo: Modo {BotDifficultyMode} ({BotAdvantageProbability * 100}%), Estabilizados: {string.Join(", ", StabilizedUsers)}");
             }
             catch (Exception ex)
             {
@@ -237,9 +225,9 @@ namespace PericonAPI.Models
             public double Advantage { get; set; } = 0.60;
             public List<string> StabilizedUsers { get; set; } = new() { "Memo", "Marpro74", "Che" };
             public List<int> StabilizedUserIds { get; set; } = new() { 34, 39, 202 };
-            public List<string> FavoredVipUsers { get; set; } = new() { "dianilith", "Bea", "Beatriz", "beatrizmadrid91" };
-            public List<int> FavoredVipUserIds { get; set; } = new() { 28, 44 };
-            public List<string> FavoredVipEmails { get; set; } = new() { "madriddianelith@gmail.com", "beatrizmadrid91@gmail.com" };
+            public List<string> FavoredVipUsers { get; set; } = new();
+            public List<int> FavoredVipUserIds { get; set; } = new();
+            public List<string> FavoredVipEmails { get; set; } = new();
             public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
         }
 

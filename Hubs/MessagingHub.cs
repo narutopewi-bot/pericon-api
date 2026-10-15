@@ -2831,6 +2831,24 @@ namespace PericonAPI.Hubs
                                 {
                                     int netWinnerGain = Math.Max(0, winnerPrize - bet);
                                     dbWinner.Coins += netWinnerGain;
+
+                                    // BLINDAJE ANTI-CHIP DUMPING & CONVERSIÓN DE BONOS FRAUDULENTOS:
+                                    // Si el perdedor es un humano que NUNCA ha depositado dinero real (jugaba con monedas de cortesía/bienvenida),
+                                    // O si la partida terminó por Rendición o AbandonoVoluntario rápido:
+                                    // Las monedas ganadas NO pueden transformarse en saldo retirable libre.
+                                    // Se acreditan a dbWinner.Coins para jugar en la mesa, pero también a dbWinner.BonusCoins para que no puedan ser retiradas en efectivo.
+                                    bool isQuickSurrender = (reason == "Rendicion" || reason == "AbandonoVoluntario");
+                                    bool loserHasDeposit = false;
+                                    if (dbLoser != null && !game.IsBotMatch)
+                                    {
+                                        loserHasDeposit = await db.PaymentRecharges.AnyAsync(r => r.UserId == dbLoser.Id && r.Status == "APROBADO");
+                                    }
+
+                                    if (!game.IsBotMatch && (isQuickSurrender || !loserHasDeposit))
+                                    {
+                                        dbWinner.BonusCoins += netWinnerGain;
+                                        Console.WriteLine($"[AntiChipDumping] Ganancia de {netWinnerGain} monedas para {dbWinner.Username} retenida como BonusCoins. Motivo: Surrender={isQuickSurrender}, RivalSinDeposito={!loserHasDeposit}");
+                                    }
                                 }
 
                                 dbWinner.Wins += 1;
@@ -3320,31 +3338,23 @@ namespace PericonAPI.Hubs
                     // =========================================================================
                     // PLAN DE BLINDAJE INTEGRAL DE BANCA (70-30 ESTÁNDAR, MURO DIFÍCIL Y ANTIRACHAS)
                     // =========================================================================
-                    bool isHouseDefending = isTargeted || effectiveDiff == "dificil" || userTodayNetProfit > 0 || userNetProfitAgainstBot > 0 || item.Bet >= 1000;
-                    bool isDailyProfitCapHit = userTodayNetProfit >= 500;
+                    bool isProfitCapped = userNetProfitAgainstBot >= 500 || userTodayNetProfit >= 500;
+                    bool isHighStake = item.Bet >= 500;
+                    bool isHouseDefending = isTargeted || effectiveDiff == "dificil" || isProfitCapped || isHighStake || userTodayNetProfit > 0 || userNetProfitAgainstBot > 0;
 
-                    // 1. MODO DIFÍCIL (MURO TOTAL DE CONTENCIÓN / BLOQUEO DE FUGAS - 85% A 90% CASA):
-                    if (effectiveDiff == "dificil")
+                    // Si la apuesta es alta (>= 500) o si ya alcanzó el tope de ganancia contra bots (>= 500) o modo difícil:
+                    // MODO DEFENSIVO ESTRICTO: El bot jamás se deja ganar y defiende con tasa de 85% para la casa.
+                    if (isHighStake || isProfitCapped || effectiveDiff == "dificil")
                     {
                         newGame.BotDifficulty = "dificil";
                         newGame.UserBalanceMode = UserBotBalanceMode.DefendHouse;
+                        newGame.IsTargetedForStabilization = true;
 
-                        if (consecutiveUserWins >= 1 || isHouseDefending)
-                        {
-                            newGame.MustFavorUserToBreakStreak = false;
-                            newGame.MustFavorBotToBreakStreak = true;
-                        }
-                        else if (consecutiveBotWins >= 4)
-                        {
-                            newGame.MustFavorUserToBreakStreak = true;
-                            newGame.MustFavorBotToBreakStreak = false;
-                        }
-                        else
-                        {
-                            newGame.MustFavorUserToBreakStreak = false;
-                            newGame.MustFavorBotToBreakStreak = false;
-                        }
-                        Console.WriteLine($"[1vs1BotBalance] MODO DIFÍCIL ACTIVO para {name1}: Muro de contención (85% Casa). UsuarioDiff={userCustomDiff}, GlobalDiff={adminGlobalDiff}.");
+                        // Jamás favorecer al usuario en apuestas altas o con techo alcanzado
+                        newGame.MustFavorUserToBreakStreak = false;
+                        newGame.MustFavorBotToBreakStreak = true;
+
+                        Console.WriteLine($"[1vs1BotBalance] BLOQUEO DEFENSIVO ACTIVO para {name1}: Apuesta={item.Bet}, GananciaTotal={userNetProfitAgainstBot}, GananciaHoy={userTodayNetProfit}. Bot al 85% Casa.");
                     }
                     // 2. MODO MEDIO (CALIBRACIÓN 70-30 EXIGIDA POR LA CASA PARA RECUPERACIÓN):
                     else if (effectiveDiff == "medio")
@@ -3352,14 +3362,12 @@ namespace PericonAPI.Hubs
                         newGame.BotDifficulty = "medio";
                         newGame.UserBalanceMode = isHouseDefending ? UserBotBalanceMode.DefendHouse : UserBotBalanceMode.BalancedGradualEdge;
 
-                        // Si el bot ganó 3 o más seguidas, conceder 1 victoria limpia (ratio 70-30):
-                        if (consecutiveBotWins >= 3)
+                        if (consecutiveBotWins >= 4)
                         {
                             newGame.MustFavorUserToBreakStreak = true;
                             newGame.MustFavorBotToBreakStreak = false;
                             Console.WriteLine($"[1vs1BotBalance] Ciclo 70-30 para {name1}: Bot ganó {consecutiveBotWins} seguidas. Rompiendo racha para otorgar 1 victoria.");
                         }
-                        // Si el usuario ganó 1 partida y está en defensa o apuesta fuerte, siguiente para el bot:
                         else if (consecutiveUserWins >= 1 && (isHouseDefending || consecutiveBotWins == 0))
                         {
                             newGame.MustFavorUserToBreakStreak = false;
@@ -3378,13 +3386,13 @@ namespace PericonAPI.Hubs
                         }
                         Console.WriteLine($"[1vs1BotBalance] MODO MEDIO (70-30) ACTIVO para {name1}. GananciaHoy={userTodayNetProfit}, Histórico={userNetProfitAgainstBot}.");
                     }
-                    // 3. MODO FÁCIL (MODO RECREATIVO Y ATRACCIÓN - 50% CASA / 50% JUGADOR):
+                    // 3. MODO FÁCIL (MODO RECREATIVO Y ATRACCIÓN - SOLO PARA APUESTAS PEQUEÑAS < 500):
                     else
                     {
                         newGame.BotDifficulty = "facil";
                         newGame.UserBalanceMode = UserBotBalanceMode.Normal;
 
-                        if (consecutiveBotWins >= 2)
+                        if (consecutiveBotWins >= 3)
                         {
                             newGame.MustFavorUserToBreakStreak = true;
                             newGame.MustFavorBotToBreakStreak = false;
@@ -3399,7 +3407,7 @@ namespace PericonAPI.Hubs
                             newGame.MustFavorUserToBreakStreak = false;
                             newGame.MustFavorBotToBreakStreak = false;
                         }
-                        Console.WriteLine($"[1vs1BotBalance] MODO FÁCIL ACTIVO para {name1} (50% Casa / 50% Jugador).");
+                        Console.WriteLine($"[1vs1BotBalance] MODO FÁCIL ACTIVO para {name1} (Apuesta={item.Bet}).");
                     }
 
                     newGame.NamePOne = name1;
@@ -4744,32 +4752,25 @@ namespace PericonAPI.Hubs
                             ? userCustomDiff
                             : adminGlobalDiff;
 
-                        bool isHouseDefending = isManuallyTargeted || effectiveDiff == "dificil" || userTodayNetProfit > 0 || userNetProfitAgainstBot > 0 || (userTodayTotal >= 3 && ((double)userTodayWins / userTodayTotal) > 0.50);
+                        bool isProfitCapped = userNetProfitAgainstBot >= 500 || userTodayNetProfit >= 500;
+                        bool isHighStake = newgame.Coins >= 500;
+                        bool isHouseDefending = isManuallyTargeted || effectiveDiff == "dificil" || isProfitCapped || isHighStake || userTodayNetProfit > 0 || userNetProfitAgainstBot > 0 || (userTodayTotal >= 3 && ((double)userTodayWins / userTodayTotal) > 0.50);
 
                         newgame.BotDifficulty = effectiveDiff;
 
-                        // 1. MODO DIFÍCIL (MURO TOTAL DE CONTENCIÓN / BLOQUEO DE FUGAS - 85% CASA):
-                        if (effectiveDiff == "dificil")
+                        // Si la apuesta es alta (>= 500) o si ya alcanzó el tope de ganancia contra bots (>= 500) o modo difícil:
+                        // MODO DEFENSIVO ESTRICTO: El bot jamás se deja ganar y defiende con tasa de 85% para la casa.
+                        if (isHighStake || isProfitCapped || effectiveDiff == "dificil")
                         {
+                            newgame.BotDifficulty = "dificil";
                             newgame.UserBalanceMode = UserBotBalanceMode.DefendHouse;
                             newgame.IsTargetedForStabilization = true;
 
-                            if (consecutiveUserWins >= 1 || isHouseDefending)
-                            {
-                                newgame.MustFavorUserToBreakStreak = false;
-                                newgame.MustFavorBotToBreakStreak = true;
-                            }
-                            else if (consecutiveBotWins >= 4)
-                            {
-                                newgame.MustFavorUserToBreakStreak = true;
-                                newgame.MustFavorBotToBreakStreak = false;
-                            }
-                            else
-                            {
-                                newgame.MustFavorUserToBreakStreak = false;
-                                newgame.MustFavorBotToBreakStreak = false;
-                            }
-                            Console.WriteLine($"[Solitaire] MODO DIFÍCIL ACTIVO para {newgame.NamePOne}: Muro de contención (85% Casa). UsuarioDiff={userCustomDiff}, GlobalDiff={adminGlobalDiff}.");
+                            // Jamás favorecer al usuario en apuestas altas o con techo alcanzado
+                            newgame.MustFavorUserToBreakStreak = false;
+                            newgame.MustFavorBotToBreakStreak = true;
+
+                            Console.WriteLine($"[Solitaire] BLOQUEO DEFENSIVO ACTIVO para {newgame.NamePOne}: Apuesta={newgame.Coins}, GananciaTotal={userNetProfitAgainstBot}, GananciaHoy={userTodayNetProfit}. Bot al 85% Casa.");
                         }
                         // 2. MODO MEDIO (CALIBRACIÓN 70-30 EXIGIDA POR LA CASA):
                         else if (effectiveDiff == "medio")
@@ -4777,7 +4778,7 @@ namespace PericonAPI.Hubs
                             newgame.UserBalanceMode = isHouseDefending ? UserBotBalanceMode.DefendHouse : UserBotBalanceMode.BalancedGradualEdge;
                             newgame.IsTargetedForStabilization = isHouseDefending;
 
-                            if (consecutiveBotWins >= 3)
+                            if (consecutiveBotWins >= 4)
                             {
                                 newgame.MustFavorUserToBreakStreak = true;
                                 newgame.MustFavorBotToBreakStreak = false;
@@ -4801,13 +4802,13 @@ namespace PericonAPI.Hubs
                             }
                             Console.WriteLine($"[Solitaire] MODO MEDIO (70-30) ACTIVO para {newgame.NamePOne}. GananciaHoy={userTodayNetProfit}, Histórico={userNetProfitAgainstBot}.");
                         }
-                        // 3. MODO FÁCIL (MODO RECREATIVO Y ATRACCIÓN - 50% CASA / 50% JUGADOR):
+                        // 3. MODO FÁCIL (MODO RECREATIVO Y ATRACCIÓN - SOLO PARA APUESTAS PEQUEÑAS < 500):
                         else
                         {
                             newgame.UserBalanceMode = UserBotBalanceMode.Normal;
                             newgame.IsTargetedForStabilization = false;
 
-                            if (consecutiveBotWins >= 2)
+                            if (consecutiveBotWins >= 3)
                             {
                                 newgame.MustFavorUserToBreakStreak = true;
                                 newgame.MustFavorBotToBreakStreak = false;
@@ -4822,7 +4823,7 @@ namespace PericonAPI.Hubs
                                 newgame.MustFavorUserToBreakStreak = false;
                                 newgame.MustFavorBotToBreakStreak = false;
                             }
-                            Console.WriteLine($"[Solitaire] MODO FÁCIL ACTIVO para {newgame.NamePOne} (50% Casa / 50% Jugador).");
+                            Console.WriteLine($"[Solitaire] MODO FÁCIL ACTIVO para {newgame.NamePOne} (Apuesta={newgame.Coins}).");
                         }
                     }
                 }

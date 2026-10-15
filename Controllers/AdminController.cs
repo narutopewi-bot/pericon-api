@@ -1055,6 +1055,32 @@ namespace PericonAPI.Controllers
                 return BadRequest(new { message = "No se puede pagar un retiro que ya fue rechazado y reembolsado." });
             }
 
+            // CANDADO FINANCIERO: Alerta si supera el límite de 5.000 Bs o si no hay depósito aprobado
+            if (withdrawal.User != null && !withdrawal.User.IsAdmin && withdrawal.User.Username.ToLower() != "guardian")
+            {
+                if (withdrawal.CoinsAmount > 5000 && !dto.ForceApprove)
+                {
+                    return BadRequest(new
+                    {
+                        message = $"⚠️ ALERTA DE SEGURIDAD DE BANCA: Este retiro ({withdrawal.CoinsAmount:N0} Bs.) SUPERA el límite diario de 5.000 Bs. Si estás absolutamente seguro de aprobarlo por excepción, debes activar ForceApprove.",
+                        isHighAmount = true,
+                        amount = withdrawal.CoinsAmount
+                    });
+                }
+
+                bool hasDeposit = await _context.PaymentRecharges
+                    .AnyAsync(r => r.UserId == withdrawal.UserId && r.Status == "APROBADO");
+
+                if (!hasDeposit && !dto.ForceApprove)
+                {
+                    return BadRequest(new
+                    {
+                        message = "⚠️ ALERTA CRÍTICA: Este usuario NUNCA ha realizado una recarga aprobada. No se debe pagar saldo regalado sin depósito.",
+                        hasNoDeposit = true
+                    });
+                }
+            }
+
             withdrawal.Status = "PAGADO";
             withdrawal.AdminReference = dto.Reference?.Trim() ?? "PAGO_MOVIL_OK";
             withdrawal.ProcessedAt = VenezuelaTime.Now;
@@ -1094,14 +1120,28 @@ namespace PericonAPI.Controllers
                 return BadRequest(new { message = "Este retiro ya fue rechazado anteriormente." });
             }
 
+            bool isConfiscated = dto?.Confiscate ?? false;
             withdrawal.Status = "RECHAZADO";
-            withdrawal.AdminNotes = dto?.Reason ?? "Datos de pago móvil no válidos.";
+            withdrawal.AdminNotes = isConfiscated
+                ? $"[CONFISCADO POR FRAUDE/COLUSIÓN] {dto?.Reason ?? "Abuso o irregularidades en partidas."}"
+                : (dto?.Reason ?? "Datos de pago móvil no válidos.");
             withdrawal.ProcessedAt = VenezuelaTime.Now;
 
-            // Reembolsar monedas al usuario
+            int refunded = 0;
             if (withdrawal.User != null)
             {
-                withdrawal.User.Coins += withdrawal.CoinsAmount;
+                if (!isConfiscated)
+                {
+                    // Reembolso normal (por ejemplo, si el número de teléfono o banco estaba errado)
+                    withdrawal.User.Coins += withdrawal.CoinsAmount;
+                    refunded = withdrawal.CoinsAmount;
+                }
+                else
+                {
+                    // Confiscación: NO se devuelven las monedas y se sanean BonusCoins
+                    withdrawal.User.BonusCoins = 0;
+                    Console.WriteLine($"[AdminController] Retiro #{id} CONFISCADO. Se retuvieron {withdrawal.CoinsAmount} monedas a {withdrawal.User.Username}.");
+                }
             }
 
             await _context.SaveChangesAsync();
@@ -1111,9 +1151,12 @@ namespace PericonAPI.Controllers
                 id = withdrawal.Id,
                 status = withdrawal.Status,
                 adminNotes = withdrawal.AdminNotes,
-                coinsRefunded = withdrawal.CoinsAmount,
+                isConfiscated,
+                coinsRefunded = refunded,
                 userNewCoins = withdrawal.User?.Coins,
-                message = $"Retiro rechazado. Se han reembolsado {withdrawal.CoinsAmount} monedas a {withdrawal.User?.Username}."
+                message = isConfiscated
+                    ? $"Retiro confiscado. Se anularon {withdrawal.CoinsAmount} monedas a {withdrawal.User?.Username} sin reembolso por irregularidades."
+                    : $"Retiro rechazado. Se han reembolsado {withdrawal.CoinsAmount} monedas a {withdrawal.User?.Username}."
             });
         }
 
@@ -2003,6 +2046,7 @@ namespace PericonAPI.Controllers
     public class RejectDto
     {
         public string? Reason { get; set; }
+        public bool Confiscate { get; set; } = false;
     }
 
     public class AdjustCoinsDto
@@ -2014,5 +2058,6 @@ namespace PericonAPI.Controllers
     public class ApproveWithdrawalDto
     {
         public string Reference { get; set; } = string.Empty;
+        public bool ForceApprove { get; set; } = false;
     }
 }
