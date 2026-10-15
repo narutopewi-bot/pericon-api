@@ -384,6 +384,17 @@ namespace PericonAPI.Models
         /// 3. El Bot NUNCA recibe el 5 de Oro ni el 4 de Bastos artificialmente, y si le salen juntos, se sanitizan para no delatarse.
         /// Con 2 triunfos sutiles, el Bot gana 2 de las 3 bazas de forma limpia y creíble.
         /// </summary>
+        /// <summary>
+        /// Defensa Discreta de la Casa con Máxima Sutileza y Rotación Dinámica de Triunfos:
+        /// 1. Azar 100% natural para el usuario humano (CardsOne): NUNCA se alteran ni confiscan sus cartas.
+        /// 2. El Bot (CardsTwo) se refuerza con una variedad natural de combinaciones para NO delatar patrones repetitivos:
+        ///    - A veces gana con triunfos bajos de vida (4, 5, As "5 y medio", 6, 7 de vida) + 1 carta blanca alta.
+        ///    - A veces gana con figuras de vida (Sota, Caballo, Rey de vida).
+        ///    - A veces gana con triunfos especiales (2 de vida, 10 de Oro, 1 de Oro).
+        ///    - Ocasionalmente saca un Gollero (3 de vida) o La Hueva (11 de bastos).
+        ///    - Rara vez (~12%) saca un Perico (5 de oro) o Perica (4 de bastos) individual, jamás ambos.
+        /// 3. Principio de Ventaja Justa: Si el rival no tiene nada (blanca), el bot gana con cartas modestas sin presumir cartas grandes.
+        /// </summary>
         private void ApplyDiscreetHouseDefense(int lifeId)
         {
             if (Deck?.Package == null || Deck.Package.Count < 5 || Life == null || Life.Id < 0)
@@ -392,63 +403,206 @@ namespace PericonAPI.Models
             if (CardsOne.Count != 3 || CardsTwo.Count != 3)
                 return;
 
-            // 1. CARDS ONE: AZAR 100% NATURAL (Intactas)
-            // No se modifica ni se intercambia ninguna carta del usuario.
-
-            // 2. CARDS TWO: Garantizar que el Bot tenga al menos 2 triunfos competitivos sutiles
+            double scoreUser = ScoreHand(CardsOne, lifeId);
+            int userTrumpsCount = CardsOne.Count(c => EvaluateCard(c.Id, lifeId) >= 15);
             int botTrumps = CardsTwo.Count(c => EvaluateCard(c.Id, lifeId) >= 15);
-            int targetTrumps = 2;
 
-            while (botTrumps < targetTrumps)
+            // Obtener todos los triunfos disponibles en la baraja:
+            var allAvailableTrumps = Deck.Package
+                .Where(c => EvaluateCard(c.Id, lifeId) >= 15)
+                .ToList();
+
+            // Dividir en familias de triunfos para rotar sutilmente:
+            // 1. Basuritas / Triunfos menores de vida: 4, 5, 1 (As "5 y medio"), 6, 7 (Poder 15 a 19)
+            var modestTrumps = allAvailableTrumps
+                .Where(c => EvaluateCard(c.Id, lifeId) >= 15 && EvaluateCard(c.Id, lifeId) <= 19)
+                .ToList();
+
+            // 2. Figuras de vida: Sota (10), Caballo (11), Rey (12) (Poder 20 a 22)
+            var figureTrumps = allAvailableTrumps
+                .Where(c => EvaluateCard(c.Id, lifeId) >= 20 && EvaluateCard(c.Id, lifeId) <= 22)
+                .ToList();
+
+            // 3. Triunfos especiales: 2 de vida (24), 10 de Oro (25), 1 de Oro (26)
+            var specialTrumps = allAvailableTrumps
+                .Where(c => EvaluateCard(c.Id, lifeId) >= 24 && EvaluateCard(c.Id, lifeId) <= 26)
+                .ToList();
+
+            // 4. Triunfos mayores: La Hueva (27), El Gollero / 3 de vida (28)
+            var majorTrumps = allAvailableTrumps
+                .Where(c => EvaluateCard(c.Id, lifeId) >= 27 && EvaluateCard(c.Id, lifeId) <= 28)
+                .ToList();
+
+            // 5. Pericos supremos (5 de oro [4] o 4 de bastos [33]): sólo individual y rotativo
+            var pericoTrumps = allAvailableTrumps
+                .Where(c => c.Id == 4 || c.Id == 33)
+                .ToList();
+
+            // CASO A: EL USUARIO TIENE MANO BLANCA (0 triunfos)
+            // No darle Golleros ni cartas gigantes: al bot le basta ganar con 1 basurita o figura + cartas blancas
+            if (userTrumpsCount == 0)
             {
-                var subtleTrump = Deck.Package
-                    .Where(c => c.Id != 4 && c.Id != 33 && EvaluateCard(c.Id, lifeId) >= 16 && EvaluateCard(c.Id, lifeId) <= 28)
-                    .OrderByDescending(c => EvaluateCard(c.Id, lifeId))
-                    .FirstOrDefault();
-
-                if (subtleTrump == null) break;
-
-                int replaceIdx = -1;
-                int minScore = int.MaxValue;
-                for (int i = 0; i < CardsTwo.Count; i++)
+                if (botTrumps < 1)
                 {
-                    int p = EvaluateCard(CardsTwo[i].Id, lifeId);
-                    int f = SpanishCards.GetFaceValue(CardsTwo[i].Id);
-                    int score = p >= 15 ? p * 10 : f;
-                    if (p < 15 && score < minScore)
+                    // Asignar 1 triunfo modesto o figura de vida al azar
+                    Card? subtlePick = null;
+                    if (modestTrumps.Count > 0 && Random.Shared.NextDouble() < 0.65)
                     {
-                        minScore = score;
-                        replaceIdx = i;
+                        subtlePick = modestTrumps[Random.Shared.Next(modestTrumps.Count)];
+                    }
+                    else if (figureTrumps.Count > 0)
+                    {
+                        subtlePick = figureTrumps[Random.Shared.Next(figureTrumps.Count)];
+                    }
+                    else if (allAvailableTrumps.Count > 0)
+                    {
+                        subtlePick = allAvailableTrumps[Random.Shared.Next(allAvailableTrumps.Count)];
+                    }
+
+                    if (subtlePick != null)
+                    {
+                        int repIdx = CardsTwo.FindIndex(c => EvaluateCard(c.Id, lifeId) < 15);
+                        if (repIdx >= 0)
+                        {
+                            Card botOld = CardsTwo[repIdx];
+                            Deck.Package.Remove(subtlePick);
+                            Deck.Package.Add(botOld);
+                            CardsTwo[repIdx] = subtlePick;
+                            botTrumps++;
+                        }
                     }
                 }
 
-                if (replaceIdx != -1)
+                // Asegurar que el bot tenga una carta blanca alta (As, 7, Rey) para ganar la segunda baza de forma natural
+                bool hasDecentWhite = CardsTwo.Any(c => EvaluateCard(c.Id, lifeId) < 15 && SpanishCards.GetFaceValue(c.Id) >= 7);
+                if (!hasDecentWhite)
                 {
-                    Card botDiscard = CardsTwo[replaceIdx];
-                    Deck.Package.Remove(subtleTrump);
-                    Deck.Package.Add(botDiscard);
-                    CardsTwo[replaceIdx] = subtleTrump;
-                    botTrumps++;
+                    var highWhite = Deck.Package
+                        .Where(c => EvaluateCard(c.Id, lifeId) == 0 && (SpanishCards.GetFaceValue(c.Id) == 1 || SpanishCards.GetFaceValue(c.Id) == 7))
+                        .ToList();
+                    if (highWhite.Count > 0)
+                    {
+                        var pickWhite = highWhite[Random.Shared.Next(highWhite.Count)];
+                        int repIdx = CardsTwo.FindIndex(c => EvaluateCard(c.Id, lifeId) < 15 && SpanishCards.GetFaceValue(c.Id) < 5);
+                        if (repIdx >= 0)
+                        {
+                            Card botOld = CardsTwo[repIdx];
+                            Deck.Package.Remove(pickWhite);
+                            Deck.Package.Add(botOld);
+                            CardsTwo[repIdx] = pickWhite;
+                        }
+                    }
                 }
-                else
+            }
+            // CASO B: EL USUARIO TIENE 1 TRIUNFO
+            else if (userTrumpsCount == 1)
+            {
+                // El bot debe tener al menos 1 o 2 triunfos sutiles pero competitivos
+                while (botTrumps < 2)
                 {
-                    break;
+                    Card? picked = null;
+                    double roll = Random.Shared.NextDouble();
+                    // 40% figura de vida, 30% triunfo especial, 20% basurita alta, 10% mayor
+                    if (roll < 0.40 && figureTrumps.Count > 0)
+                    {
+                        picked = figureTrumps[Random.Shared.Next(figureTrumps.Count)];
+                        figureTrumps.Remove(picked);
+                    }
+                    else if (roll < 0.70 && specialTrumps.Count > 0)
+                    {
+                        picked = specialTrumps[Random.Shared.Next(specialTrumps.Count)];
+                        specialTrumps.Remove(picked);
+                    }
+                    else if (roll < 0.90 && modestTrumps.Count > 0)
+                    {
+                        picked = modestTrumps[Random.Shared.Next(modestTrumps.Count)];
+                        modestTrumps.Remove(picked);
+                    }
+                    else if (majorTrumps.Count > 0)
+                    {
+                        picked = majorTrumps[Random.Shared.Next(majorTrumps.Count)];
+                        majorTrumps.Remove(picked);
+                    }
+                    else if (allAvailableTrumps.Count > 0)
+                    {
+                        picked = allAvailableTrumps[Random.Shared.Next(allAvailableTrumps.Count)];
+                    }
+
+                    if (picked == null) break;
+
+                    int repIdx = CardsTwo.FindIndex(c => EvaluateCard(c.Id, lifeId) < 15);
+                    if (repIdx >= 0)
+                    {
+                        Card botOld = CardsTwo[repIdx];
+                        Deck.Package.Remove(picked);
+                        Deck.Package.Add(botOld);
+                        CardsTwo[repIdx] = picked;
+                        allAvailableTrumps.Remove(picked);
+                        botTrumps++;
+                    }
+                    else break;
+                }
+            }
+            // CASO C: EL USUARIO TIENE 2 O MÁS TRIUNFOS (Mano dominante del usuario)
+            else
+            {
+                // Variedad: 1 triunfo superior/mayor + 1 figura o triunfo especial
+                while (botTrumps < 2)
+                {
+                    Card? picked = null;
+                    double roll = Random.Shared.NextDouble();
+                    if (roll < 0.35 && majorTrumps.Count > 0)
+                    {
+                        picked = majorTrumps[Random.Shared.Next(majorTrumps.Count)];
+                        majorTrumps.Remove(picked);
+                    }
+                    else if (roll < 0.70 && specialTrumps.Count > 0)
+                    {
+                        picked = specialTrumps[Random.Shared.Next(specialTrumps.Count)];
+                        specialTrumps.Remove(picked);
+                    }
+                    else if (figureTrumps.Count > 0)
+                    {
+                        picked = figureTrumps[Random.Shared.Next(figureTrumps.Count)];
+                        figureTrumps.Remove(picked);
+                    }
+                    else if (pericoTrumps.Count > 0 && Random.Shared.NextDouble() < 0.15 && !CardsTwo.Any(c => c.Id == 4 || c.Id == 33))
+                    {
+                        picked = pericoTrumps[Random.Shared.Next(pericoTrumps.Count)];
+                    }
+                    else if (allAvailableTrumps.Count > 0)
+                    {
+                        picked = allAvailableTrumps[Random.Shared.Next(allAvailableTrumps.Count)];
+                    }
+
+                    if (picked == null) break;
+
+                    int repIdx = CardsTwo.FindIndex(c => EvaluateCard(c.Id, lifeId) < 15);
+                    if (repIdx >= 0)
+                    {
+                        Card botOld = CardsTwo[repIdx];
+                        Deck.Package.Remove(picked);
+                        Deck.Package.Add(botOld);
+                        CardsTwo[repIdx] = picked;
+                        allAvailableTrumps.Remove(picked);
+                        botTrumps++;
+                    }
+                    else break;
                 }
             }
 
-            // 3. Si la puntuación del usuario supera la del Bot, garantizar supremacía del Bot
-            double scoreUser = ScoreHand(CardsOne, lifeId);
-            double scoreBot = ScoreHand(CardsTwo, lifeId);
-            if (scoreUser >= scoreBot)
+            // Verificación final de puntuación
+            double finalScoreUser = ScoreHand(CardsOne, lifeId);
+            double finalScoreBot = ScoreHand(CardsTwo, lifeId);
+            if (finalScoreUser >= finalScoreBot)
             {
                 var temp = new List<Card>(CardsOne);
                 CardsOne = new List<Card>(CardsTwo);
                 CardsTwo = temp;
             }
 
-            // 4. Sanitizar al bot para evitar combos de 5 y 4 juntos
             SanitizeBotCards(lifeId);
-            Console.WriteLine($"[DiscreetHouseDefense] Casa defendida para {NamePOne}: Triunfos Bot = {CardsTwo.Count(c => EvaluateCard(c.Id, lifeId) >= 15)}, Azar Usuario intacto.");
+            Console.WriteLine($"[DiscreetHouseDefense-Varia] Defensa sutil para {NamePOne}: Triunfos Bot = {CardsTwo.Count(c => EvaluateCard(c.Id, lifeId) >= 15)}, ScoreBot={finalScoreBot:F0}, ScoreUser={finalScoreUser:F0}");
         }
 
         // Defensa Discreta de Tumba (Caso Memo):
