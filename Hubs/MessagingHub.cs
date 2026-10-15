@@ -3294,31 +3294,44 @@ namespace PericonAPI.Hubs
                     }
 
                     // =========================================================================
-                    // PLAN B AUTÓNOMO (FRENO DISCRETO Y CONTROL ANTIRACHAS)
+                    // PLAN B AUTÓNOMO (FRENO DISCRETO Y CONTROL ANTIRACHAS BILATERAL)
                     // =========================================================================
-                    // 1. Antirachas: Si el bot ha ganado 2 partidas seguidas, favorecer al usuario
+                    // 1. Antirachas Jugador: Si el bot ha ganado 2 partidas seguidas, favorecer al usuario
                     // para que gane la siguiente, evitando frustración y manteniendo al jugador activo.
                     if (consecutiveBotWins >= 2)
                     {
                         newGame.MustFavorUserToBreakStreak = true;
+                        newGame.MustFavorBotToBreakStreak = false;
                         newGame.UserBalanceMode = UserBotBalanceMode.BalancedGradualEdge;
                         newGame.BotDifficulty = adminGlobalDiff;
                         Console.WriteLine($"[1vs1BotBalance] Antirachas activo para {name1}: Bot ganó {consecutiveBotWins} seguidas. Rompiendo racha para que el usuario gane.");
                     }
-                    // 2. Freno discreto a Che / Jugador Estabilizado / Racha de 2+ victorias:
-                    // Se activa modo DIFÍCIL (65% Casa / 35% Jugador). El bot ganará ~65% en el tiempo,
-                    // recuperando fondos de manera limpia, natural y completamente discreta.
-                    else if (isTargeted || consecutiveUserWins >= 2)
+                    // 2. Antirachas Banca: Si el usuario lleva 2 o más victorias seguidas contra el bot,
+                    // romper racha forzando la victoria del bot para evitar que gane 3, 4 o 5 seguidas.
+                    else if (consecutiveUserWins >= 2)
                     {
                         newGame.MustFavorUserToBreakStreak = false;
+                        newGame.MustFavorBotToBreakStreak = true;
+                        newGame.UserBalanceMode = UserBotBalanceMode.BalancedGradualEdge;
+                        newGame.BotDifficulty = "dificil";
+                        Console.WriteLine($"[1vs1BotBalance] Antirachas de Banca activo para {name1}: Lleva {consecutiveUserWins} seguidas. Rompiendo racha para defender a la banca.");
+                    }
+                    // 3. Freno discreto a Che / Jugador Estabilizado (sin racha de 2):
+                    // Se activa modo DIFÍCIL (65% Casa / 35% Jugador). El bot ganará ~65% en el tiempo,
+                    // recuperando fondos de manera limpia, natural y completamente discreta.
+                    else if (isTargeted)
+                    {
+                        newGame.MustFavorUserToBreakStreak = false;
+                        newGame.MustFavorBotToBreakStreak = false;
                         newGame.UserBalanceMode = UserBotBalanceMode.BalancedGradualEdge;
                         newGame.BotDifficulty = "dificil";
                         Console.WriteLine($"[1vs1BotBalance] Freno discreto activo para {name1} (ID {uId}). Modo DIFÍCIL calibrado (65% Casa / 35% Jugador).");
                     }
-                    // 3. Partida estándar según dificultad fijada por el Administrador:
+                    // 4. Partida estándar según dificultad fijada por el Administrador:
                     else
                     {
                         newGame.MustFavorUserToBreakStreak = false;
+                        newGame.MustFavorBotToBreakStreak = false;
                         newGame.UserBalanceMode = UserBotBalanceMode.Normal;
                         newGame.BotDifficulty = adminGlobalDiff;
                         Console.WriteLine($"[1vs1BotBalance] Partida estándar para {name1} con dificultad de Administrador: {adminGlobalDiff.ToUpper()}.");
@@ -4666,7 +4679,21 @@ namespace PericonAPI.Hubs
                         {
                             newgame.UserBalanceMode = UserBotBalanceMode.DefendHouse;
                             newgame.IsTargetedForStabilization = true;
-                            newgame.MustFavorUserToBreakStreak = false;
+                            if (consecutiveBotWins >= 2)
+                            {
+                                newgame.MustFavorUserToBreakStreak = true;
+                                newgame.MustFavorBotToBreakStreak = false;
+                            }
+                            else if (consecutiveUserWins >= 2)
+                            {
+                                newgame.MustFavorUserToBreakStreak = false;
+                                newgame.MustFavorBotToBreakStreak = true;
+                            }
+                            else
+                            {
+                                newgame.MustFavorUserToBreakStreak = false;
+                                newgame.MustFavorBotToBreakStreak = false;
+                            }
                             Console.WriteLine($"[PlanB-Antidesfalco] ACTIVADO para {newgame.NamePOne} (ID {uId}). Manual={isManuallyTargeted}, RachaVictorias={consecutiveUserWins}, BeneficioHoy={userTodayNetProfit}, Histórico={userNetProfitAgainstBot}, VictoriasHoy={userTodayWins}/{userTodayTotal}. Modo DefendHouse en marcha.");
                         }
                         // 2. Modo FÁCIL: 40% Casa / 60% Jugador (Márgenes normales)
@@ -4675,15 +4702,22 @@ namespace PericonAPI.Hubs
                             newgame.UserBalanceMode = UserBotBalanceMode.BalancedGradualEdge;
                             newgame.IsTargetedForStabilization = false;
 
-                            // Solo romper racha si el usuario lleva 2 o más derrotas consecutivas (nunca por 1 sola):
+                            // Romper racha si el bot ganó 2 seguidas, o si el usuario ganó 2 seguidas:
                             if (consecutiveBotWins >= 2)
                             {
                                 newgame.MustFavorUserToBreakStreak = true;
+                                newgame.MustFavorBotToBreakStreak = false;
+                            }
+                            else if (consecutiveUserWins >= 2)
+                            {
+                                newgame.MustFavorUserToBreakStreak = false;
+                                newgame.MustFavorBotToBreakStreak = true;
                             }
                             else
                             {
                                 // 60% probabilidad de favorecer al usuario
                                 newgame.MustFavorUserToBreakStreak = Random.Shared.NextDouble() < 0.60;
+                                newgame.MustFavorBotToBreakStreak = false;
                             }
                             Console.WriteLine($"[BotDifficulty] Modo FÁCIL activo (40% Casa / 60% Jugador). Usuario={newgame.NamePOne}, FavorUser={newgame.MustFavorUserToBreakStreak}.");
                         }
@@ -4696,10 +4730,17 @@ namespace PericonAPI.Hubs
                             if (consecutiveBotWins >= 2)
                             {
                                 newgame.MustFavorUserToBreakStreak = true;
+                                newgame.MustFavorBotToBreakStreak = false;
+                            }
+                            else if (consecutiveUserWins >= 2)
+                            {
+                                newgame.MustFavorUserToBreakStreak = false;
+                                newgame.MustFavorBotToBreakStreak = true;
                             }
                             else
                             {
                                 newgame.MustFavorUserToBreakStreak = false;
+                                newgame.MustFavorBotToBreakStreak = false;
                             }
                             Console.WriteLine($"[BotDifficulty] Modo DIFÍCIL activo (65% Casa / 35% Jugador). Usuario={newgame.NamePOne}.");
                         }
@@ -4712,14 +4753,22 @@ namespace PericonAPI.Hubs
                             if (consecutiveBotWins >= 2)
                             {
                                 newgame.MustFavorUserToBreakStreak = true;
+                                newgame.MustFavorBotToBreakStreak = false;
+                            }
+                            else if (consecutiveUserWins >= 2)
+                            {
+                                newgame.MustFavorUserToBreakStreak = false;
+                                newgame.MustFavorBotToBreakStreak = true;
                             }
                             else if (consecutiveBotWins == 1)
                             {
                                 newgame.MustFavorUserToBreakStreak = Random.Shared.NextDouble() < 0.50;
+                                newgame.MustFavorBotToBreakStreak = false;
                             }
                             else
                             {
                                 newgame.MustFavorUserToBreakStreak = false;
+                                newgame.MustFavorBotToBreakStreak = false;
                             }
                             Console.WriteLine($"[BotDifficulty] Modo MEDIO activo (50% Casa / 50% Jugador). Usuario={newgame.NamePOne}.");
                         }

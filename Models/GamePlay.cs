@@ -278,6 +278,7 @@ namespace PericonAPI.Models
         public UserBotBalanceMode UserBalanceMode { get; set; } = UserBotBalanceMode.Normal;
         public int UserNetCoinsAgainstBot { get; set; } = 0;
         public bool MustFavorUserToBreakStreak { get; set; } = false;
+        public bool MustFavorBotToBreakStreak { get; set; } = false;
         public DateTime? P1DisconnectedAt { get; set; } = null;
         public DateTime? P2DisconnectedAt { get; set; } = null;
         public DateTime LastTurnActionAt { get; set; } = DateTime.UtcNow;
@@ -995,6 +996,18 @@ namespace PericonAPI.Models
                         CardsTwo = temp;
                     }
                 }
+                else if (MustFavorBotToBreakStreak)
+                {
+                    // ANTIRACHAS DE LA BANCA: El usuario nunca gana más de 2 o 3 seguidas contra los bots
+                    double scoreUser = ScoreHand(CardsOne, Life.Id);
+                    double scoreBot = ScoreHand(CardsTwo, Life.Id);
+                    if (scoreUser > scoreBot)
+                    {
+                        var temp = new List<Card>(CardsOne);
+                        CardsOne = new List<Card>(CardsTwo);
+                        CardsTwo = temp;
+                    }
+                }
                 else
                 {
                     // COMPORTAMIENTO BASADO EN LOS BOTONES DE DIFICULTAD CON DISTRIBUCIÓN REALISTA TRI-MODAL
@@ -1193,6 +1206,18 @@ namespace PericonAPI.Models
                     double scoreUser = ScoreHand(CardsOne, Life.Id);
                     double scoreBot = ScoreHand(CardsTwo, Life.Id);
                     if (scoreBot > scoreUser)
+                    {
+                        var temp = new List<Card>(CardsOne);
+                        CardsOne = new List<Card>(CardsTwo);
+                        CardsTwo = temp;
+                    }
+                }
+                else if (MustFavorBotToBreakStreak)
+                {
+                    // ANTIRACHAS DE LA BANCA: El usuario nunca gana más de 2 o 3 seguidas contra los bots.
+                    double scoreUser = ScoreHand(CardsOne, Life.Id);
+                    double scoreBot = ScoreHand(CardsTwo, Life.Id);
+                    if (scoreUser > scoreBot)
                     {
                         var temp = new List<Card>(CardsOne);
                         CardsOne = new List<Card>(CardsTwo);
