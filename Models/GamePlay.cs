@@ -983,20 +983,9 @@ namespace PericonAPI.Models
                 {
                     ApplyVipSubtleAdvantageSolitaire(Life.Id);
                 }
-                else if (IsTargetedForStabilization || UserBalanceMode == UserBotBalanceMode.DefendHouse || IsUserTargetedForStabilization(effectiveUserId, NamePOne, UserIdPOne, EmailPOne))
-                {
-                    // DEFENSA DISCRETA DE LA CASA (MARPRO74, MEMO, CHE Y PLAN B AUTOMÁTICO):
-                    if (IsTumbaOne || PointsOne >= 8)
-                    {
-                        ApplyTargetedTumbaDefense(Life.Id);
-                    }
-                    else
-                    {
-                        ApplyDiscreetHouseDefense(Life.Id);
-                    }
-                }
                 else if (MustFavorUserToBreakStreak)
                 {
+                    // ANTIRACHAS (PLAN B): El bot nunca gana 3 seguidas. Si el bot ganó 2, se favorece al usuario
                     double scoreUser = ScoreHand(CardsOne, Life.Id);
                     double scoreBot = ScoreHand(CardsTwo, Life.Id);
                     if (scoreBot > scoreUser)
@@ -1008,9 +997,10 @@ namespace PericonAPI.Models
                 }
                 else
                 {
-                    // COMPORTAMIENTO BASADO EN LOS BOTONES DE DIFICULTAD CON DISTRIBUCIÓN REALISTA
-                    bool isEasy = (BotDifficultyMode == "facil");
-                    string diffMode = isEasy ? "facil" : BotDifficultyMode;
+                    // COMPORTAMIENTO BASADO EN LOS BOTONES DE DIFICULTAD CON DISTRIBUCIÓN REALISTA TRI-MODAL
+                    // Para Che y usuarios estabilizados opera en modo "dificil" (65% Casa / 35% Jugador)
+                    bool isTargeted = IsTargetedForStabilization || UserBalanceMode == UserBotBalanceMode.DefendHouse || IsUserTargetedForStabilization(effectiveUserId, NamePOne, UserIdPOne, EmailPOne);
+                    string diffMode = isTargeted ? "dificil" : (!string.IsNullOrEmpty(BotDifficulty) ? BotDifficulty : BotDifficultyMode);
                     ApplyRealisticBotDistribution(diffMode);
                 }
             }
@@ -1196,20 +1186,25 @@ namespace PericonAPI.Models
                 {
                     ApplyVipSubtleAdvantageSolitaire(Life.Id);
                 }
-                else if (IsTargetedForStabilization || UserBalanceMode == UserBotBalanceMode.DefendHouse || IsUserTargetedForStabilization(effectiveUserId, NamePOne, UserIdPOne, EmailPOne))
+                else if (MustFavorUserToBreakStreak)
                 {
-                    // DEFENSA DISCRETA DE LA CASA CONTRA BOTS EN 1vs1 (MARPRO74, MEMO, CHE):
-                    if (IsTumbaOne || PointsOne >= 8)
+                    // ANTIRACHAS (PLAN B): El bot nunca gana 3 seguidas. Si el bot ganó 2, se favorece al usuario
+                    // para que gane bazas limpias, sienta que el juego es justo y se mantenga jugando.
+                    double scoreUser = ScoreHand(CardsOne, Life.Id);
+                    double scoreBot = ScoreHand(CardsTwo, Life.Id);
+                    if (scoreBot > scoreUser)
                     {
-                        ApplyTargetedTumbaDefense(Life.Id);
-                    }
-                    else
-                    {
-                        ApplyDiscreetHouseDefense(Life.Id);
+                        var temp = new List<Card>(CardsOne);
+                        CardsOne = new List<Card>(CardsTwo);
+                        CardsTwo = temp;
                     }
                 }
                 else
                 {
+                    // DISTRIBUCIÓN REALISTA TRI-MODAL (Modo Fácil 40/60, Medio 50/50, Difícil 65/35)
+                    // No caen triunfos al bot todo el tiempo (Tier 1 Blanca 22%, Tier 2 Disputada 46%, Tier 3 Fuerte 32%).
+                    // Para Che y usuarios estabilizados, corre en modo "dificil" (65% Casa / 35% Jugador).
+                    // Esto hace que Che pierda regularmente más de lo que gane, pero de forma 100% discreta, humana e imperceptible.
                     string diff = !string.IsNullOrEmpty(BotDifficulty) ? BotDifficulty : BotDifficultyMode;
                     ApplyRealisticBotDistribution(diff);
                 }

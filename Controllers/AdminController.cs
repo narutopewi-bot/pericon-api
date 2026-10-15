@@ -200,6 +200,12 @@ namespace PericonAPI.Controllers
                     setting.Value = cleanMode;
                     setting.UpdatedAt = DateTime.UtcNow;
                 }
+
+                // Sincronizar también la columna BotDifficulty de todos los bots virtuales en la tabla Users
+                await _context.Users
+                    .Where(u => u.IsVirtualBot)
+                    .ExecuteUpdateAsync(s => s.SetProperty(u => u.BotDifficulty, cleanMode));
+
                 await _context.SaveChangesAsync();
             }
             catch (Exception ex)

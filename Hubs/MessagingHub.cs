@@ -3255,12 +3255,73 @@ namespace PericonAPI.Hubs
                     if (!string.IsNullOrEmpty(item.UserId)) int.TryParse(item.UserId, out uId);
                     bool isTargeted = GamePlayOneVsOne.IsUserTargetedForStabilization(uId, name1, item.UserId, q1.Email);
 
-                    newGame.BotDifficulty = isTargeted ? "dificil" : (!string.IsNullOrEmpty(bot.BotDifficulty) ? bot.BotDifficulty : "facil");
-                    if (isTargeted)
+                    // Dificultad configurada por el Administrador en el panel:
+                    string adminGlobalDiff = (GamePlayOneVsOne.BotDifficultyMode ?? "medio").Trim().ToLowerInvariant();
+
+                    // Consultar historial reciente contra bots para balance financiero y control antirachas:
+                    int consecutiveUserWins = 0;
+                    int consecutiveBotWins = 0;
+                    try
                     {
-                        newGame.UserBalanceMode = UserBotBalanceMode.DefendHouse;
-                        newGame.IsTargetedForStabilization = true;
-                        Console.WriteLine($"[MatchmakingBot] Defensa de la casa activada contra bot para {name1} (ID: {uId}). Dificultad forzada a DIFÍCIL.");
+                        using var scope = _staticScopeFactory.CreateScope();
+                        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                        var recentBotMatches = await db.BotMatchRecords
+                            .Where(m => m.UserId == uId || (!string.IsNullOrEmpty(name1) && m.Username == name1))
+                            .OrderByDescending(m => m.CreatedAt)
+                            .Take(5)
+                            .ToListAsync();
+
+                        if (recentBotMatches.Count > 0 && recentBotMatches[0].UserWon)
+                        {
+                            foreach (var m in recentBotMatches)
+                            {
+                                if (m.UserWon) consecutiveUserWins++;
+                                else break;
+                            }
+                        }
+                        else if (recentBotMatches.Count > 0 && !recentBotMatches[0].UserWon)
+                        {
+                            foreach (var m in recentBotMatches)
+                            {
+                                if (!m.UserWon) consecutiveBotWins++;
+                                else break;
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[1vs1BotMatchmaking] Error leyendo historial: {ex.Message}");
+                    }
+
+                    // =========================================================================
+                    // PLAN B AUTÓNOMO (FRENO DISCRETO Y CONTROL ANTIRACHAS)
+                    // =========================================================================
+                    // 1. Antirachas: Si el bot ha ganado 2 partidas seguidas, favorecer al usuario
+                    // para que gane la siguiente, evitando frustración y manteniendo al jugador activo.
+                    if (consecutiveBotWins >= 2)
+                    {
+                        newGame.MustFavorUserToBreakStreak = true;
+                        newGame.UserBalanceMode = UserBotBalanceMode.BalancedGradualEdge;
+                        newGame.BotDifficulty = adminGlobalDiff;
+                        Console.WriteLine($"[1vs1BotBalance] Antirachas activo para {name1}: Bot ganó {consecutiveBotWins} seguidas. Rompiendo racha para que el usuario gane.");
+                    }
+                    // 2. Freno discreto a Che / Jugador Estabilizado / Racha de 2+ victorias:
+                    // Se activa modo DIFÍCIL (65% Casa / 35% Jugador). El bot ganará ~65% en el tiempo,
+                    // recuperando fondos de manera limpia, natural y completamente discreta.
+                    else if (isTargeted || consecutiveUserWins >= 2)
+                    {
+                        newGame.MustFavorUserToBreakStreak = false;
+                        newGame.UserBalanceMode = UserBotBalanceMode.BalancedGradualEdge;
+                        newGame.BotDifficulty = "dificil";
+                        Console.WriteLine($"[1vs1BotBalance] Freno discreto activo para {name1} (ID {uId}). Modo DIFÍCIL calibrado (65% Casa / 35% Jugador).");
+                    }
+                    // 3. Partida estándar según dificultad fijada por el Administrador:
+                    else
+                    {
+                        newGame.MustFavorUserToBreakStreak = false;
+                        newGame.UserBalanceMode = UserBotBalanceMode.Normal;
+                        newGame.BotDifficulty = adminGlobalDiff;
+                        Console.WriteLine($"[1vs1BotBalance] Partida estándar para {name1} con dificultad de Administrador: {adminGlobalDiff.ToUpper()}.");
                     }
 
                     newGame.NamePOne = name1;
