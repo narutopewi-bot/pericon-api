@@ -449,6 +449,45 @@ using (var scope = app.Services.CreateScope())
             db.Database.ExecuteSqlRaw(@"DELETE FROM ""MatchBetRecords"" WHERE ""CreatedAt"" < '2026-09-26 12:00:00+00';");
         }
         catch { }
+
+        // Tabla de Códigos de Verificación de Correo (OTP) y ajuste de dificultad general
+        try
+        {
+            if (db.Database.IsSqlite())
+            {
+                db.Database.ExecuteSqlRaw(@"
+                    CREATE TABLE IF NOT EXISTS EmailVerificationCodes (
+                        Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        Email TEXT NOT NULL,
+                        Code TEXT NOT NULL,
+                        CreatedAt TEXT NOT NULL,
+                        ExpiresAt TEXT NOT NULL,
+                        IsUsed INTEGER NOT NULL DEFAULT 0
+                    );
+                ");
+                try { db.Database.ExecuteSqlRaw("UPDATE Users SET BotDifficulty = NULL WHERE BotDifficulty = 'facil' AND Username NOT IN ('Guardian');"); } catch { }
+            }
+            else
+            {
+                db.Database.ExecuteSqlRaw(@"
+                    CREATE TABLE IF NOT EXISTS ""EmailVerificationCodes"" (
+                        ""Id"" SERIAL PRIMARY KEY,
+                        ""Email"" VARCHAR(150) NOT NULL,
+                        ""Code"" VARCHAR(10) NOT NULL,
+                        ""CreatedAt"" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                        ""ExpiresAt"" TIMESTAMP WITH TIME ZONE NOT NULL,
+                        ""IsUsed"" BOOLEAN NOT NULL DEFAULT FALSE
+                    );
+                ");
+                try { db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Users"" ALTER COLUMN ""BotDifficulty"" DROP NOT NULL;"); } catch { }
+                try { db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Users"" ALTER COLUMN ""BotDifficulty"" DROP DEFAULT;"); } catch { }
+                try { db.Database.ExecuteSqlRaw(@"UPDATE ""Users"" SET ""BotDifficulty"" = NULL WHERE ""BotDifficulty"" = 'facil' AND ""Username"" NOT IN ('Guardian');"); } catch { }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Startup] Error inicializando EmailVerificationCodes: {ex.Message}");
+        }
     }
 
     // Auto-seed inicial si la base de datos está vacía (por ejemplo al conectar PostgreSQL en Render)

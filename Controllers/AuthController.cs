@@ -1,6 +1,7 @@
 using Google.Apis.Auth;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using PericonAPI.Classes;
 using PericonAPI.Data;
 using PericonAPI.Models;
 
@@ -11,10 +12,91 @@ namespace PericonAPI.Controllers
     public class AuthController : ControllerBase
     {
         private readonly AppDbContext _context;
+        private readonly INotificationService _notificationService;
 
-        public AuthController(AppDbContext context)
+        public AuthController(AppDbContext context, INotificationService notificationService)
         {
             _context = context;
+            _notificationService = notificationService;
+        }
+
+        [HttpPost("send-verification-code")]
+        public async Task<IActionResult> SendVerificationCode([FromBody] SendEmailVerificationCodeDto dto)
+        {
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(ModelState);
+            }
+
+            var cleanEmail = dto.Email.Trim().ToLowerInvariant();
+
+            // 1. Bloqueo de dominios de correos temporales / desechables
+            var disposableDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "tempmail.com", "temp-mail.org", "guerrillamail.com", "yopmail.com", "10minutemail.com",
+                "mailinator.com", "throwawaymail.com", "trashmail.com", "getairmail.com", "dispostable.com",
+                "sharklasers.com", "fakeinbox.com", "mohmal.com", "burnermail.io", "mytemp.email", "tempmail.net",
+                "crazymailing.com", "armyspy.com", "cuvox.de", "dayrep.com", "fleckens.hu", "gustr.com"
+            };
+            var emailParts = cleanEmail.Split('@');
+            if (emailParts.Length == 2 && disposableDomains.Contains(emailParts[1]))
+            {
+                return BadRequest(new { message = "No se permiten correos electrónicos temporales o desechables. Por favor usa un correo personal válido (Gmail, Outlook, Yahoo, etc.)." });
+            }
+
+            // 2. Verificar si el correo ya pertenece a una cuenta registrada
+            if (await _context.Users.AnyAsync(u => u.Email.ToLower() == cleanEmail))
+            {
+                return BadRequest(new { message = "Este correo electrónico ya se encuentra registrado con una cuenta existente. Inicia sesión en su lugar." });
+            }
+
+            // 3. Rate limit: evitar spam de envíos al mismo correo en menos de 45 segundos
+            var recentCode = await _context.EmailVerificationCodes
+                .Where(c => c.Email.ToLower() == cleanEmail && c.CreatedAt > DateTime.UtcNow.AddSeconds(-45))
+                .FirstOrDefaultAsync();
+
+            if (recentCode != null)
+            {
+                var remaining = 45 - (int)(DateTime.UtcNow - recentCode.CreatedAt).TotalSeconds;
+                return BadRequest(new { message = $"Por favor espera {Math.Max(1, remaining)} segundos antes de solicitar otro código de verificación." });
+            }
+
+            // 4. Invalidar códigos previos no usados para este correo
+            var oldCodes = await _context.EmailVerificationCodes
+                .Where(c => c.Email.ToLower() == cleanEmail && !c.IsUsed)
+                .ToListAsync();
+            foreach (var oc in oldCodes)
+            {
+                oc.IsUsed = true;
+            }
+
+            // 5. Generar código de 6 dígitos numéricos
+            var otpCode = Random.Shared.Next(100000, 999999).ToString();
+
+            var newOtp = new EmailVerificationCode
+            {
+                Email = cleanEmail,
+                Code = otpCode,
+                CreatedAt = DateTime.UtcNow,
+                ExpiresAt = DateTime.UtcNow.AddMinutes(15),
+                IsUsed = false
+            };
+
+            _context.EmailVerificationCodes.Add(newOtp);
+            await _context.SaveChangesAsync();
+
+            // 6. Enviar correo vía NotificationService
+            bool sent = await _notificationService.SendVerificationCodeEmailAsync(cleanEmail, otpCode, dto.Username);
+            if (!sent)
+            {
+                return StatusCode(500, new { message = "No se pudo enviar el correo de verificación. Verifica que la dirección esté bien escrita o intenta más tarde." });
+            }
+
+            return Ok(new
+            {
+                success = true,
+                message = "Código de verificación de 6 dígitos enviado exitosamente a tu correo electrónico."
+            });
         }
 
         [HttpPost("register")]
@@ -27,6 +109,25 @@ namespace PericonAPI.Controllers
 
             var cleanEmail = dto.Email.Trim().ToLowerInvariant();
             var cleanUsername = dto.Username.Trim();
+
+            // 0. Validación Obligatoria del Código OTP enviado al Correo
+            var cleanOtp = dto.VerificationCode?.Trim();
+            if (string.IsNullOrWhiteSpace(cleanOtp))
+            {
+                return BadRequest(new { message = "Debes ingresar el código de verificación de 6 dígitos enviado a tu correo electrónico." });
+            }
+
+            var validOtp = await _context.EmailVerificationCodes
+                .Where(c => c.Email.ToLower() == cleanEmail && !c.IsUsed && c.ExpiresAt > DateTime.UtcNow)
+                .OrderByDescending(c => c.CreatedAt)
+                .FirstOrDefaultAsync();
+
+            if (validOtp == null || validOtp.Code != cleanOtp)
+            {
+                return BadRequest(new { message = "Código de verificación por correo incorrecto o expirado. Por favor solicita uno nuevo." });
+            }
+
+            validOtp.IsUsed = true;
 
             // 1. Bloqueo de correos temporales / desechables
             var disposableDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase)

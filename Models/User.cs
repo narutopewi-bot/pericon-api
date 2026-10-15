@@ -48,7 +48,7 @@ namespace PericonAPI.Models
         public bool IsVirtualBot { get; set; } = false;
 
         [MaxLength(20)]
-        public string BotDifficulty { get; set; } = "facil"; // facil, medio, dificil
+        public string? BotDifficulty { get; set; } = null; // null = usa dificultad general global, o "facil", "medio", "dificil"
 
         public DateTime? LastDailyClaim { get; set; }
         public int DailyStreak { get; set; } = 0;

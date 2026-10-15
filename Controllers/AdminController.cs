@@ -937,7 +937,7 @@ namespace PericonAPI.Controllers
                     avatarUrl = u.AvatarUrl,
                     isActive = u.IsActive,
                     isAdmin = u.IsAdmin,
-                    botDifficulty = u.BotDifficulty ?? "medio"
+                    botDifficulty = u.BotDifficulty ?? "general"
                 };
             }).ToList();
 
@@ -1216,34 +1216,45 @@ namespace PericonAPI.Controllers
             }
 
             string clean = (request?.Difficulty ?? "medio").Trim().ToLowerInvariant();
-            if (clean != "facil" && clean != "medio" && clean != "dificil")
+            if (clean != "facil" && clean != "medio" && clean != "dificil" && clean != "general" && clean != "global")
             {
-                return BadRequest(new { message = "Dificultad inválida. Debe ser 'facil', 'medio' o 'dificil'." });
+                return BadRequest(new { message = "Dificultad inválida. Debe ser 'facil', 'medio', 'dificil' o 'general'." });
             }
 
-            user.BotDifficulty = clean;
-
-            // Sincronizar listas en memoria
-            if (clean == "dificil")
+            if (clean == "general" || clean == "global")
             {
-                GamePlayOneVsOne.StabilizedUserIds.Add(user.Id);
-                GamePlayOneVsOne.StabilizedUsers.Add(user.Username);
-                GamePlayOneVsOne.FavoredVipUserIds.Remove(user.Id);
-                GamePlayOneVsOne.FavoredVipUsers.Remove(user.Username);
-            }
-            else if (clean == "facil")
-            {
-                GamePlayOneVsOne.FavoredVipUserIds.Add(user.Id);
-                GamePlayOneVsOne.FavoredVipUsers.Add(user.Username);
-                GamePlayOneVsOne.StabilizedUserIds.Remove(user.Id);
-                GamePlayOneVsOne.StabilizedUsers.Remove(user.Username);
-            }
-            else // medio (estándar 70-30 de tesorería)
-            {
+                user.BotDifficulty = null;
                 GamePlayOneVsOne.StabilizedUserIds.Remove(user.Id);
                 GamePlayOneVsOne.StabilizedUsers.Remove(user.Username);
                 GamePlayOneVsOne.FavoredVipUserIds.Remove(user.Id);
                 GamePlayOneVsOne.FavoredVipUsers.Remove(user.Username);
+            }
+            else
+            {
+                user.BotDifficulty = clean;
+
+                // Sincronizar listas en memoria
+                if (clean == "dificil")
+                {
+                    GamePlayOneVsOne.StabilizedUserIds.Add(user.Id);
+                    GamePlayOneVsOne.StabilizedUsers.Add(user.Username);
+                    GamePlayOneVsOne.FavoredVipUserIds.Remove(user.Id);
+                    GamePlayOneVsOne.FavoredVipUsers.Remove(user.Username);
+                }
+                else if (clean == "facil")
+                {
+                    GamePlayOneVsOne.FavoredVipUserIds.Add(user.Id);
+                    GamePlayOneVsOne.FavoredVipUsers.Add(user.Username);
+                    GamePlayOneVsOne.StabilizedUserIds.Remove(user.Id);
+                    GamePlayOneVsOne.StabilizedUsers.Remove(user.Username);
+                }
+                else // medio (estándar 70-30 de tesorería)
+                {
+                    GamePlayOneVsOne.StabilizedUserIds.Remove(user.Id);
+                    GamePlayOneVsOne.StabilizedUsers.Remove(user.Username);
+                    GamePlayOneVsOne.FavoredVipUserIds.Remove(user.Id);
+                    GamePlayOneVsOne.FavoredVipUsers.Remove(user.Username);
+                }
             }
 
             GamePlayOneVsOne.SaveBotSettingsToFile();
@@ -1253,6 +1264,7 @@ namespace PericonAPI.Controllers
             {
                 "facil" => "FÁCIL (50% Casa / 50% Jugador - Modo Recreativo)",
                 "dificil" => "DIFÍCIL (85% Casa / 15% Jugador - Muro Total de Contención)",
+                "general" or "global" => $"GENERAL (Hereda la dificultad global: {GamePlayOneVsOne.BotDifficultyMode.ToUpperInvariant()})",
                 _ => "MEDIO (70% Casa / 30% Jugador - Recuperación de Tesorería)"
             };
 
@@ -1262,7 +1274,7 @@ namespace PericonAPI.Controllers
             {
                 id = user.Id,
                 username = user.Username,
-                botDifficulty = clean,
+                botDifficulty = user.BotDifficulty ?? "general",
                 message = $"Dificultad de bots para {user.Username} establecida en {desc}."
             });
         }

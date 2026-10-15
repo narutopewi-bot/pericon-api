@@ -30,6 +30,10 @@ namespace PericonAPI.Models
         public string? DeviceFingerprint { get; set; }
 
         public string? BirthDate { get; set; }
+
+        [Required(ErrorMessage = "El código de verificación enviado a tu correo es requerido")]
+        [StringLength(10, MinimumLength = 4, ErrorMessage = "Código de verificación inválido")]
+        public string VerificationCode { get; set; } = string.Empty;
     }
 
     public class LoginDto

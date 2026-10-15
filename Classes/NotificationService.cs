@@ -13,6 +13,7 @@ namespace PericonAPI.Classes
     {
         Task SendRechargeNotificationAsync(string username, decimal amountBs, int coins, string reference, string? receiptImageUrl, bool isAutoApproved = false, string? reason = null);
         Task SendWithdrawalNotificationAsync(string username, decimal amountBs, int coins, string bankName, string phone, string idCard);
+        Task<bool> SendVerificationCodeEmailAsync(string toEmail, string code, string? username = null);
     }
 
     public class NotificationService : INotificationService
@@ -192,6 +193,60 @@ namespace PericonAPI.Classes
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error enviando notificación de retiro");
+            }
+        }
+
+        public async Task<bool> SendVerificationCodeEmailAsync(string toEmail, string code, string? username = null)
+        {
+            try
+            {
+                var section = _config.GetSection("Notifications");
+                var adminEmail = section["AdminEmail"] ?? "narutopewi@gmail.com";
+                var smtpUser = section["SmtpUser"] ?? adminEmail;
+                var smtpPass = section["SmtpPass"];
+
+                if (string.IsNullOrWhiteSpace(smtpPass))
+                {
+                    _logger.LogWarning("SmtpPass no está configurado en Notifications.");
+                    return false;
+                }
+
+                string displayName = !string.IsNullOrWhiteSpace(username) ? username : "Nuevo Jugador";
+                string subject = $"🔢 Tu código de verificación para El Pericón: {code}";
+
+                string bodyHtml = $@"
+                <div style='font-family: Arial, sans-serif; background-color: #0f172a; color: #f8fafc; padding: 28px; border-radius: 16px; max-width: 540px; margin: 0 auto; border: 1px solid #f59e0b;'>
+                    <div style='text-align: center; border-bottom: 2px solid #f59e0b; padding-bottom: 16px; margin-bottom: 20px;'>
+                        <h1 style='color: #fbbf24; margin: 0; font-size: 24px; letter-spacing: 1px;'>♠️ EL PERICÓN CRIOLLO ♥️</h1>
+                        <p style='color: #94a3b8; margin: 6px 0 0 0; font-size: 13px;'>Verificación Oficial de Registro de Cuenta</p>
+                    </div>
+                    <div style='background-color: #1e293b; padding: 20px; border-radius: 12px; margin-bottom: 20px; text-align: center;'>
+                        <p style='margin: 0 0 12px 0; font-size: 15px; color: #e2e8f0;'>
+                            Hola <strong>{displayName}</strong>, bienvenido a la mesa de juego.
+                        </p>
+                        <p style='margin: 0 0 16px 0; font-size: 13px; color: #94a3b8;'>
+                            Para completar tu registro y verificar que este correo te pertenece, ingresa este código en la pantalla de registro:
+                        </p>
+                        <div style='display: inline-block; background: #000; border: 2px dashed #f59e0b; border-radius: 12px; padding: 14px 28px; margin: 10px 0;'>
+                            <span style='font-size: 32px; font-weight: 900; letter-spacing: 6px; color: #fbbf24; font-family: Courier New, monospace;'>{code}</span>
+                        </div>
+                        <p style='margin: 14px 0 0 0; font-size: 12px; color: #f87171;'>
+                            ⏱️ Este código expira en 15 minutos y es de un solo uso.
+                        </p>
+                    </div>
+                    <p style='font-size: 11px; color: #64748b; text-align: center; margin: 0;'>
+                        Si tú no solicitaste este código, puedes ignorar este correo con total seguridad.<br/>
+                        &copy; {DateTime.UtcNow.Year} El Pericón Criollo Venezolano. Todos los derechos reservados.
+                    </p>
+                </div>";
+
+                await SendEmailAsync(toEmail, smtpUser, smtpPass, subject, bodyHtml, null);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error enviando correo de código de verificación a {ToEmail}", toEmail);
+                return false;
             }
         }
 
