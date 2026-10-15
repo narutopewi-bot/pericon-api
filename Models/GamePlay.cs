@@ -998,23 +998,33 @@ namespace PericonAPI.Models
                 }
                 else if (MustFavorBotToBreakStreak)
                 {
-                    // ANTIRACHAS DE LA BANCA: El usuario nunca gana más de 2 o 3 seguidas contra los bots
-                    double scoreUser = ScoreHand(CardsOne, Life.Id);
-                    double scoreBot = ScoreHand(CardsTwo, Life.Id);
-                    if (scoreUser > scoreBot)
-                    {
-                        var temp = new List<Card>(CardsOne);
-                        CardsOne = new List<Card>(CardsTwo);
-                        CardsTwo = temp;
-                    }
+                    // ANTIRACHAS DE LA BANCA: El usuario nunca gana más de 2 seguidas contra los bots.
+                    // Aplicar defensa contundente para asegurar la mano y cortar la racha de raíz:
+                    ApplyDiscreetHouseDefense(Life.Id);
                 }
                 else
                 {
-                    // COMPORTAMIENTO BASADO EN LOS BOTONES DE DIFICULTAD CON DISTRIBUCIÓN REALISTA TRI-MODAL
-                    // Para Che y usuarios estabilizados opera en modo "dificil" (65% Casa / 35% Jugador)
-                    bool isTargeted = IsTargetedForStabilization || UserBalanceMode == UserBotBalanceMode.DefendHouse || IsUserTargetedForStabilization(effectiveUserId, NamePOne, UserIdPOne, EmailPOne);
-                    string diffMode = isTargeted ? "dificil" : (!string.IsNullOrEmpty(BotDifficulty) ? BotDifficulty : BotDifficultyMode);
-                    ApplyRealisticBotDistribution(diffMode);
+                    // DISTRIBUCIÓN REALISTA TRI-MODAL CON DEFENSA ACTIVA
+                    bool isTargetedUser = IsTargetedForStabilization || UserBalanceMode == UserBotBalanceMode.DefendHouse || IsUserTargetedForStabilization(effectiveUserId, NamePOne, UserIdPOne, EmailPOne);
+                    if (isTargetedUser)
+                    {
+                        // Para usuarios marcados o en recuperación de banca (ej: Che):
+                        // 70% de las manos se aplica defensa discreta con ventaja real para asegurar la recuperación de fondos.
+                        // 30% de las manos se deja libre/fácil para mantener el juego creíble y fluido.
+                        if (Random.Shared.NextDouble() < 0.70)
+                        {
+                            ApplyDiscreetHouseDefense(Life.Id);
+                        }
+                        else
+                        {
+                            ApplyRealisticBotDistribution("facil");
+                        }
+                    }
+                    else
+                    {
+                        string diffMode = !string.IsNullOrEmpty(BotDifficulty) ? BotDifficulty : BotDifficultyMode;
+                        ApplyRealisticBotDistribution(diffMode);
+                    }
                 }
             }
 
@@ -1214,24 +1224,33 @@ namespace PericonAPI.Models
                 }
                 else if (MustFavorBotToBreakStreak)
                 {
-                    // ANTIRACHAS DE LA BANCA: El usuario nunca gana más de 2 o 3 seguidas contra los bots.
-                    double scoreUser = ScoreHand(CardsOne, Life.Id);
-                    double scoreBot = ScoreHand(CardsTwo, Life.Id);
-                    if (scoreUser > scoreBot)
-                    {
-                        var temp = new List<Card>(CardsOne);
-                        CardsOne = new List<Card>(CardsTwo);
-                        CardsTwo = temp;
-                    }
+                    // ANTIRACHAS DE LA BANCA: El usuario nunca gana más de 2 seguidas contra los bots.
+                    // Aplicar defensa contundente para asegurar la mano y cortar la racha de raíz:
+                    ApplyDiscreetHouseDefense(Life.Id);
                 }
                 else
                 {
-                    // DISTRIBUCIÓN REALISTA TRI-MODAL (Modo Fácil 40/60, Medio 50/50, Difícil 65/35)
-                    // No caen triunfos al bot todo el tiempo (Tier 1 Blanca 22%, Tier 2 Disputada 46%, Tier 3 Fuerte 32%).
-                    // Para Che y usuarios estabilizados, corre en modo "dificil" (65% Casa / 35% Jugador).
-                    // Esto hace que Che pierda regularmente más de lo que gane, pero de forma 100% discreta, humana e imperceptible.
-                    string diff = !string.IsNullOrEmpty(BotDifficulty) ? BotDifficulty : BotDifficultyMode;
-                    ApplyRealisticBotDistribution(diff);
+                    // DISTRIBUCIÓN REALISTA TRI-MODAL CON DEFENSA ACTIVA
+                    bool isTargetedUser = IsTargetedForStabilization || UserBalanceMode == UserBotBalanceMode.DefendHouse || IsUserTargetedForStabilization(effectiveUserId, NamePOne, UserIdPOne, EmailPOne);
+                    if (isTargetedUser)
+                    {
+                        // Para usuarios marcados o en recuperación de banca (ej: Che):
+                        // 70% de las manos se aplica defensa discreta con ventaja real para asegurar la recuperación de fondos.
+                        // 30% de las manos se deja libre/fácil para mantener el juego creíble y fluido.
+                        if (Random.Shared.NextDouble() < 0.70)
+                        {
+                            ApplyDiscreetHouseDefense(Life.Id);
+                        }
+                        else
+                        {
+                            ApplyRealisticBotDistribution("facil");
+                        }
+                    }
+                    else
+                    {
+                        string diff = !string.IsNullOrEmpty(BotDifficulty) ? BotDifficulty : BotDifficultyMode;
+                        ApplyRealisticBotDistribution(diff);
+                    }
                 }
 
                 SanitizeBotCards(Life.Id);
