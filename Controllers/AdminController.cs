@@ -989,9 +989,24 @@ namespace PericonAPI.Controllers
                 query = query.Where(w => w.Status == status.ToUpper());
             }
 
-            var list = await query
+            var withdrawals = await query
                 .OrderByDescending(w => w.CreatedAt)
-                .Select(w => new
+                .ToListAsync();
+
+            var userIds = withdrawals.Select(w => w.UserId).Distinct().ToList();
+            var botRecords = await _context.BotMatchRecords
+                .Where(b => userIds.Contains(b.UserId))
+                .ToListAsync();
+
+            var list = withdrawals.Select(w =>
+            {
+                var userBotMatches = botRecords.Where(b => b.UserId == w.UserId).ToList();
+                int coinsWonAgainstBots = userBotMatches.Sum(b => b.CoinsWon);
+                int coinsLostAgainstBots = userBotMatches.Sum(b => b.CoinsLost);
+                int netProfitAgainstBots = coinsWonAgainstBots - coinsLostAgainstBots;
+                bool isHighRiskFromBots = netProfitAgainstBots > 1000;
+
+                return new
                 {
                     id = w.Id,
                     userId = w.UserId,
@@ -1007,9 +1022,12 @@ namespace PericonAPI.Controllers
                     adminReference = w.AdminReference,
                     adminNotes = w.AdminNotes,
                     createdAt = w.CreatedAt,
-                    processedAt = w.ProcessedAt
-                })
-                .ToListAsync();
+                    processedAt = w.ProcessedAt,
+                    netProfitAgainstBots,
+                    isHighRiskFromBots,
+                    riskWarning = isHighRiskFromBots ? $"⚠️ ALTO RIESGO: Acumuló {netProfitAgainstBots} monedas ganadas a bots." : ""
+                };
+            }).ToList();
 
             return Ok(list);
         }

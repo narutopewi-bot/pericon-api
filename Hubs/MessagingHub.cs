@@ -3305,10 +3305,13 @@ namespace PericonAPI.Hubs
                     }
 
                     // =========================================================================
-                    // REGLA UNIVERSAL ANTIRACHAS BILATERAL Y PROTECCIÓN DE BANCA (TODOS LOS USUARIOS)
+                    // PLAN DE BLINDAJE INTEGRAL DE BANCA (TECHO INFRANQUEABLE Y ANTIRACHAS ASIMÉTRICO)
                     // =========================================================================
-                    // 1. Antirachas Jugador: Si el bot ha ganado 2 partidas seguidas, favorecer al usuario
-                    // para que gane la siguiente, evitando frustración y manteniendo al jugador activo.
+                    bool isHouseDefending = isTargeted || userTodayNetProfit > 0 || userNetProfitAgainstBot > 0 || item.Bet >= 1000;
+                    bool isDailyProfitCapHit = userTodayNetProfit >= 500;
+
+                    // 1. Antirachas Jugador: Si el bot ha ganado 2 partidas seguidas, conceder 1 victoria limpia
+                    // para evitar frustración y mantener al jugador en la mesa.
                     if (consecutiveBotWins >= 2)
                     {
                         newGame.MustFavorUserToBreakStreak = true;
@@ -3317,8 +3320,18 @@ namespace PericonAPI.Hubs
                         newGame.BotDifficulty = adminGlobalDiff;
                         Console.WriteLine($"[1vs1BotBalance] Antirachas activo para {name1}: Bot ganó {consecutiveBotWins} seguidas. Rompiendo racha para que el usuario gane.");
                     }
-                    // 2. Antirachas Banca: Si el usuario lleva 2 o más victorias seguidas contra el bot,
-                    // romper racha forzando la victoria del bot para evitar que NINGÚN usuario gane 3, 4 o 5 seguidas.
+                    // 2. Freno Inmediato para Usuarios en Ganancia o Techo de Ganancia:
+                    // Si el usuario ya va ganando a la casa o alcanzó el techo diario (>= 500 monedas):
+                    // NO PUEDE GANAR 2 SEGUIDAS. Si ganó 1 sola partida, la siguiente la gana el bot obligatoriamente (Ratio 2-1).
+                    else if (isHouseDefending && consecutiveUserWins >= 1)
+                    {
+                        newGame.MustFavorUserToBreakStreak = false;
+                        newGame.MustFavorBotToBreakStreak = true;
+                        newGame.UserBalanceMode = UserBotBalanceMode.DefendHouse;
+                        newGame.BotDifficulty = "dificil";
+                        Console.WriteLine($"[1vs1BotBalance] Antirachas Asimétrico activo para {name1}: GananciaHoy={userTodayNetProfit}, Histórico={userNetProfitAgainstBot}. Bloqueando racha tras 1 victoria para proteger la banca.");
+                    }
+                    // 3. Antirachas Banca para Usuarios Normales: Si acumulan 2 victorias consecutivas, romper racha obligatoriamente:
                     else if (consecutiveUserWins >= 2)
                     {
                         newGame.MustFavorUserToBreakStreak = false;
@@ -3327,18 +3340,16 @@ namespace PericonAPI.Hubs
                         newGame.BotDifficulty = "dificil";
                         Console.WriteLine($"[1vs1BotBalance] Antirachas de Banca activo para {name1}: Lleva {consecutiveUserWins} seguidas. Rompiendo racha para defender a la banca.");
                     }
-                    // 3. Freno universal / Recuperación de Banca (Cualquier usuario en ganancia neta o marcado):
-                    // Si el usuario le va ganando monedas a la casa (hoy o histórico) o está marcado (Che):
-                    // Se activa modo DIFÍCIL (65% Casa / 35% Jugador) para recuperar fondos progresivamente.
-                    else if (isTargeted || userTodayNetProfit > 0 || userNetProfitAgainstBot > 0)
+                    // 4. Modo de Recuperación de Banca (Partidas intermedias con saldo a favor de la casa):
+                    else if (isHouseDefending)
                     {
                         newGame.MustFavorUserToBreakStreak = false;
                         newGame.MustFavorBotToBreakStreak = false;
-                        newGame.UserBalanceMode = UserBotBalanceMode.BalancedGradualEdge;
+                        newGame.UserBalanceMode = UserBotBalanceMode.DefendHouse;
                         newGame.BotDifficulty = "dificil";
-                        Console.WriteLine($"[1vs1BotBalance] Recuperación de Banca activa para {name1} (ID {uId}). GananciaHoy={userTodayNetProfit}, Histórico={userNetProfitAgainstBot}. Modo DIFÍCIL calibrado (65% Casa / 35% Jugador).");
+                        Console.WriteLine($"[1vs1BotBalance] Defensa de Banca activa para {name1} (ID {uId}). GananciaHoy={userTodayNetProfit}, Histórico={userNetProfitAgainstBot}, Apuesta={item.Bet}. Modo DIFÍCIL calibrado (65-70% Casa).");
                     }
-                    // 4. Partida estándar según dificultad fijada por el Administrador:
+                    // 5. Partida estándar según dificultad fijada por el Administrador:
                     else
                     {
                         newGame.MustFavorUserToBreakStreak = false;
@@ -4695,7 +4706,7 @@ namespace PericonAPI.Hubs
                                 newgame.MustFavorUserToBreakStreak = true;
                                 newgame.MustFavorBotToBreakStreak = false;
                             }
-                            else if (consecutiveUserWins >= 2)
+                            else if (consecutiveUserWins >= 1)
                             {
                                 newgame.MustFavorUserToBreakStreak = false;
                                 newgame.MustFavorBotToBreakStreak = true;
