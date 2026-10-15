@@ -535,29 +535,6 @@ namespace PericonAPI.Controllers
                 });
             }
 
-            // REGLA FINANCIERA 2B: Requisito de Apuesta Obligatorio (Rollover 100% de recargas aprobadas)
-            // Para evitar lavado de dinero o retiro de saldos no arriesgados, el usuario debe haber apostado
-            // en partidas legítimas al menos el equivalente al 100% de las monedas recargadas.
-            int totalApprovedDeposits = await _context.PaymentRecharges
-                .Where(r => r.UserId == dto.UserId && r.Status == "APROBADO")
-                .SumAsync(r => r.CoinsAmount);
-
-            if (totalApprovedDeposits > 0 && !user.IsAdmin && user.Username.ToLower() != "guardian")
-            {
-                int totalWagered = await _context.MatchBetRecords
-                    .Where(m => (m.PlayerOneName == user.Username || m.PlayerTwoName == user.Username || m.WinnerUsername == user.Username || m.LoserUsername == user.Username) && m.WinnerUsername != "REEMBOLSO")
-                    .SumAsync(m => m.BetPerPlayer);
-
-                if (totalWagered < totalApprovedDeposits)
-                {
-                    int missingWager = totalApprovedDeposits - totalWagered;
-                    return BadRequest(new
-                    {
-                        message = $"Requisito de apuesta (Rollover 100%) no cumplido. Has depositado un total de {totalApprovedDeposits:N0} Bs. y has apostado {totalWagered:N0} monedas en partidas. Debes apostar al menos {missingWager:N0} monedas más en partidas reales para poder solicitar un retiro."
-                    });
-                }
-            }
-
             // REGLA FINANCIERA 3: Prevención de fraude multicuenta (Unicidad de Pago Móvil y Cédula)
             bool phoneUsedByOther = await _context.PaymentWithdrawals
                 .AnyAsync(w => w.UserId != dto.UserId && w.PhoneNumber == dto.PhoneNumber && w.Status != "RECHAZADO");
@@ -695,19 +672,9 @@ namespace PericonAPI.Controllers
             bool hasApprovedDeposit = await _context.PaymentRecharges
                 .AnyAsync(r => r.UserId == userId && r.Status == "APROBADO");
 
-            int totalApprovedDeposits = await _context.PaymentRecharges
-                .Where(r => r.UserId == userId && r.Status == "APROBADO")
-                .SumAsync(r => r.CoinsAmount);
-
-            int totalWagered = await _context.MatchBetRecords
-                .Where(m => (m.PlayerOneName == user.Username || m.PlayerTwoName == user.Username || m.WinnerUsername == user.Username || m.LoserUsername == user.Username) && m.WinnerUsername != "REEMBOLSO")
-                .SumAsync(m => m.BetPerPlayer);
-
-            bool rolloverMet = totalApprovedDeposits == 0 || totalWagered >= totalApprovedDeposits;
-
             bool isExempt = user.IsAdmin || user.Username.ToLower() == "guardian";
 
-            bool canWithdraw = isExempt || (todayWithdrawal == null && pendingWithdrawal == null && hasApprovedDeposit && rolloverMet && user.GetRetirableCoins() >= MIN_WITHDRAWAL_COINS);
+            bool canWithdraw = isExempt || (todayWithdrawal == null && pendingWithdrawal == null && hasApprovedDeposit && user.GetRetirableCoins() >= MIN_WITHDRAWAL_COINS);
 
             return Ok(new
             {
@@ -715,10 +682,6 @@ namespace PericonAPI.Controllers
                 alreadyWithdrewToday = todayWithdrawal != null,
                 hasPendingWithdrawal = pendingWithdrawal != null,
                 hasApprovedDeposit,
-                rolloverMet,
-                totalApprovedDeposits,
-                totalWagered,
-                missingWager = Math.Max(0, totalApprovedDeposits - totalWagered),
                 minWithdrawalCoins = MIN_WITHDRAWAL_COINS,
                 maxDailyWithdrawalCoins = MAX_DAILY_WITHDRAWAL_COINS,
                 todayWithdrawal = todayWithdrawal == null ? null : new
