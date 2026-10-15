@@ -1267,6 +1267,62 @@ namespace PericonAPI.Controllers
             });
         }
 
+        public class BanDeviceClonesRequest
+        {
+            public int UserId { get; set; }
+        }
+
+        [HttpPost("users/ban-device-clones")]
+        public async Task<IActionResult> BanDeviceClones([FromBody] BanDeviceClonesRequest request)
+        {
+            var targetUser = await _context.Users.FindAsync(request.UserId);
+            if (targetUser == null)
+            {
+                return NotFound(new { message = "Usuario no encontrado." });
+            }
+
+            var fp = targetUser.DeviceFingerprint;
+            var usernameClean = System.Text.RegularExpressions.Regex.Replace(targetUser.Username, @"\d+$", "").Trim();
+
+            // Buscar cuentas vinculadas por misma huella digital O clones correlativos (ej: Diego1..14, Rafa1..13)
+            var clones = await _context.Users
+                .Where(u => u.Id != targetUser.Id && !u.IsAdmin && (
+                    (!string.IsNullOrEmpty(fp) && u.DeviceFingerprint == fp) ||
+                    (!string.IsNullOrEmpty(usernameClean) && usernameClean.Length >= 4 && u.Username.StartsWith(usernameClean))
+                ))
+                .ToListAsync();
+
+            int bannedCount = 0;
+            foreach (var clone in clones)
+            {
+                clone.IsActive = false;
+                clone.Coins = 0;
+                clone.BonusCoins = 0;
+                bannedCount++;
+            }
+
+            // También suspender y vaciar la cuenta objetivo si no es administrador
+            if (!targetUser.IsAdmin)
+            {
+                targetUser.IsActive = false;
+                targetUser.Coins = 0;
+                targetUser.BonusCoins = 0;
+                bannedCount++;
+            }
+
+            await _context.SaveChangesAsync();
+
+            Console.WriteLine($"[AdminController] BanDeviceClones ejecutado. {bannedCount} cuentas suspendidas vinculadas a {targetUser.Username}.");
+
+            return Ok(new
+            {
+                success = true,
+                targetUser = targetUser.Username,
+                bannedCount,
+                message = $"Se suspendieron y vaciaron {bannedCount} cuentas multicuentas vinculadas a {targetUser.Username}."
+            });
+        }
+
         [HttpPost("user/{id}/reset-password")]
         public async Task<IActionResult> AdminResetPassword(int id, [FromBody] AdminResetPasswordDto dto)
         {

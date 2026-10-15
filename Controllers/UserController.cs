@@ -214,6 +214,12 @@ namespace PericonAPI.Controllers
                 return BadRequest(new { message = $"Ya reclamaste tu recompensa de hoy. Podrás reclamar nuevamente en {hoursLeft} horas." });
             }
 
+            // Protección Anti-Abuso Multicuentas: Una cuenta recién creada no puede farmear monedas sin haber jugado
+            if ((DateTime.UtcNow - user.CreatedAt).TotalHours < 24 && (user.Wins + user.Losses) == 0)
+            {
+                return BadRequest(new { message = "El bono diario de racha se activa tras disputar tu primera partida o después de tus primeras 24 horas de registro." });
+            }
+
             // Cálculo de racha: si pasaron más de 48 horas desde el último reclamo, la racha se reinicia a 1
             if (user.LastDailyClaim.HasValue && (DateTime.UtcNow - user.LastDailyClaim.Value).TotalHours > 48)
             {
