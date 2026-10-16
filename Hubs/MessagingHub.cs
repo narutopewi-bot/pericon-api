@@ -3281,6 +3281,9 @@ namespace PericonAPI.Hubs
                     int consecutiveBotWins = 0;
                     int userNetProfitAgainstBot = 0;
                     int userTodayNetProfit = 0;
+                    int userCoins = 0;
+                    int totalGamesPlayed = 0;
+                    int userWins = 0;
                     string userCustomDiff = "";
                     try
                     {
@@ -3288,9 +3291,15 @@ namespace PericonAPI.Hubs
                         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
                         var userRecord = await db.Users.FirstOrDefaultAsync(u => u.Id == uId || (!string.IsNullOrEmpty(name1) && u.Username == name1));
-                        if (userRecord != null && !string.IsNullOrWhiteSpace(userRecord.BotDifficulty))
+                        if (userRecord != null)
                         {
-                            userCustomDiff = userRecord.BotDifficulty.Trim().ToLowerInvariant();
+                            if (!string.IsNullOrWhiteSpace(userRecord.BotDifficulty))
+                            {
+                                userCustomDiff = userRecord.BotDifficulty.Trim().ToLowerInvariant();
+                            }
+                            userCoins = userRecord.Coins;
+                            totalGamesPlayed = userRecord.Wins + userRecord.Losses;
+                            userWins = userRecord.Wins;
                         }
 
                         var userBotMatches = await db.BotMatchRecords
@@ -3330,10 +3339,28 @@ namespace PericonAPI.Hubs
                         Console.WriteLine($"[1vs1BotMatchmaking] Error leyendo historial: {ex.Message}");
                     }
 
-                    // Determinar dificultad activa (Individual de usuario tiene prioridad sobre la global):
-                    string effectiveDiff = (!string.IsNullOrEmpty(userCustomDiff) && (userCustomDiff == "facil" || userCustomDiff == "medio" || userCustomDiff == "dificil"))
-                        ? userCustomDiff
-                        : adminGlobalDiff;
+                    // Determinar dificultad activa (Individual de usuario tiene prioridad sobre la dinámica y global):
+                    string effectiveDiff;
+                    if (!string.IsNullOrEmpty(userCustomDiff) && (userCustomDiff == "facil" || userCustomDiff == "medio" || userCustomDiff == "dificil"))
+                    {
+                        effectiveDiff = userCustomDiff;
+                    }
+                    else
+                    {
+                        // CLASIFICACIÓN DINÁMICA POR PERFIL DE JUGADOR (NIVEL, EXPERIENCIA Y MONEDAS)
+                        if (item.Bet >= 500 || userCoins >= 1500 || totalGamesPlayed > 50 || userWins > 30)
+                        {
+                            effectiveDiff = "dificil"; // Experto / Saldo Alto -> Bot Arrecho (Muro de Banca)
+                        }
+                        else if (totalGamesPlayed <= 10 && userCoins <= 300)
+                        {
+                            effectiveDiff = "facil"; // Novato / Saldo Bajo -> Bot Condescendiente (Onboarding y Diversión)
+                        }
+                        else
+                        {
+                            effectiveDiff = "medio"; // Regular -> Bot Dramatizado (Partidas Reñidas y Cierre Letal)
+                        }
+                    }
 
                     // =========================================================================
                     // PLAN DE BLINDAJE INTEGRAL DE BANCA (70-30 ESTÁNDAR, MURO DIFÍCIL Y ANTIRACHAS)
