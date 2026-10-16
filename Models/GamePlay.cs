@@ -10,6 +10,14 @@ namespace PericonAPI.Models
         DefendHouse = 2         // Usuario con alta ganancia (ej: Memo): la casa defiende discretamente
     }
 
+    public enum MatchDramatizationPhase
+    {
+        BaitAndHope,    // 0 a 3 pts: Dejar sumar al humano para generar confianza
+        CloseDuel,      // 3 a 5 pts: Duelo reñido y alternancia de bazas
+        CriticalZone,   // 6 a 7 pts: Zona caliente y euforia
+        LethalCloser    // 8 a 10 pts / Tumba: Cierre infranqueable garantizado de la banca
+    }
+
     public class GamePlayOneVsOne
     {
         public int Id { get; set; }
@@ -270,6 +278,18 @@ namespace PericonAPI.Models
         public DateTime? P1DisconnectedAt { get; set; } = null;
         public DateTime? P2DisconnectedAt { get; set; } = null;
         public DateTime LastTurnActionAt { get; set; } = DateTime.UtcNow;
+        public int LastHandBotAsked { get; set; } = -1;
+
+        public MatchDramatizationPhase GetCurrentPhase()
+        {
+            if (IsTumbaOne || IsTumbaTwo || PointsOne >= 8 || PointsTwo >= 8)
+                return MatchDramatizationPhase.LethalCloser;
+            if (PointsOne >= 6 || PointsTwo >= 6)
+                return MatchDramatizationPhase.CriticalZone;
+            if (PointsOne >= 3 || PointsTwo >= 3)
+                return MatchDramatizationPhase.CloseDuel;
+            return MatchDramatizationPhase.BaitAndHope;
+        }
 
         public GamePlayOneVsOne()
         {
@@ -1407,60 +1427,96 @@ namespace PericonAPI.Models
                 }
                 else
                 {
-                    // DISTRIBUCIÓN REALISTA TRI-MODAL CON DEFENSA ACTIVA
-                    bool isTargetedUser = IsTargetedForStabilization || UserBalanceMode == UserBotBalanceMode.DefendHouse || IsUserTargetedForStabilization(effectiveUserId, NamePOne, UserIdPOne, EmailPOne);
-                    if (isTargetedUser)
+                    // DISTRIBUCIÓN DINÁMICA POR FASES DE RETENCIÓN (DRAMATIZACIÓN Y CIERRE LETAL GARANTIZADO)
+                    bool isTargetedUser = IsTargetedForStabilization || IsUserTargetedForStabilization(effectiveUserId, NamePOne, UserIdPOne, EmailPOne);
+                    bool isHighStake = Coins >= 500;
+                    bool isProfitCapped = UserNetCoinsAgainstBot >= 500;
+
+                    // Salvaguarda financiera estricta: Si la apuesta es alta o el usuario tiene ganancias acumuladas
+                    if (isHighStake || isProfitCapped || isTargetedUser)
                     {
-                        // Para usuarios marcados o en recuperación de banca (ej: Che):
-                        // 70% de las manos se aplica defensa discreta con ventaja real para asegurar la recuperación de fondos.
-                        // 30% de las manos se deja libre/fácil para mantener el juego creíble y fluido.
-                        if (Random.Shared.NextDouble() < 0.70)
+                        if (Random.Shared.NextDouble() < 0.85)
                         {
                             ApplyDiscreetHouseDefense(Life.Id);
                         }
                         else
                         {
-                            ApplyRealisticBotDistribution("facil");
+                            ApplyRealisticBotDistribution("dificil");
                         }
                     }
                     else
                     {
+                        // PARTIDA RECREATIVA / NORMAL: MODULACIÓN DINÁMICA POR FASES
+                        var phase = GetCurrentPhase();
                         string diff = (!string.IsNullOrEmpty(BotDifficulty) ? BotDifficulty : BotDifficultyMode).Trim().ToLowerInvariant();
-                        if (diff == "dificil")
+
+                        switch (phase)
                         {
-                            // 85% de las manos aplica defensa sutil (Muro de contención)
-                            if (Random.Shared.NextDouble() < 0.85)
-                            {
-                                ApplyDiscreetHouseDefense(Life.Id);
-                            }
-                            else
-                            {
-                                ApplyRealisticBotDistribution("dificil");
-                            }
-                        }
-                        else if (diff == "medio")
-                        {
-                            // 70% de las manos aplica defensa sutil (RATIO 70-30 ORDENADO POR LA BANCA)
-                            if (Random.Shared.NextDouble() < 0.70)
-                            {
-                                ApplyDiscreetHouseDefense(Life.Id);
-                            }
-                            else
-                            {
-                                ApplyRealisticBotDistribution("medio");
-                            }
-                        }
-                        else // facil
-                        {
-                            // 45% de las manos defensa sutil, 55% distribución realista
-                            if (Random.Shared.NextDouble() < 0.45)
-                            {
-                                ApplyDiscreetHouseDefense(Life.Id);
-                            }
-                            else
-                            {
-                                ApplyRealisticBotDistribution("facil");
-                            }
+                            case MatchDramatizationPhase.BaitAndHope:
+                                // FASE 1 (0 a 3 pts): Dejar que el usuario sume para darle confianza
+                                if (Random.Shared.NextDouble() < 0.30)
+                                {
+                                    ApplyDiscreetHouseDefense(Life.Id);
+                                }
+                                else
+                                {
+                                    double scoreU = ScoreHand(CardsOne, Life.Id);
+                                    double scoreB = ScoreHand(CardsTwo, Life.Id);
+                                    if (scoreB > scoreU && Random.Shared.NextDouble() < 0.75)
+                                    {
+                                        var temp = new List<Card>(CardsOne);
+                                        CardsOne = new List<Card>(CardsTwo);
+                                        CardsTwo = temp;
+                                    }
+                                    else
+                                    {
+                                        ApplyRealisticBotDistribution("facil");
+                                    }
+                                }
+                                break;
+
+                            case MatchDramatizationPhase.CloseDuel:
+                                // FASE 2 (3 a 5 pts): Duelo reñido. Mantener el marcador alternado.
+                                if (PointsOne > PointsTwo + 1)
+                                {
+                                    ApplyDiscreetHouseDefense(Life.Id);
+                                }
+                                else if (PointsTwo > PointsOne + 1)
+                                {
+                                    ApplyRealisticBotDistribution("facil");
+                                }
+                                else
+                                {
+                                    if (Random.Shared.NextDouble() < 0.50) ApplyDiscreetHouseDefense(Life.Id);
+                                    else ApplyRealisticBotDistribution("medio");
+                                }
+                                break;
+
+                            case MatchDramatizationPhase.CriticalZone:
+                                // FASE 3 (6 a 7 pts): Zona caliente. Dejar que el humano acaricie la victoria llegando a 7 u 8.
+                                if (PointsOne < 7 && PointsOne <= PointsTwo)
+                                {
+                                    ApplyRealisticBotDistribution("facil");
+                                }
+                                else
+                                {
+                                    if (Random.Shared.NextDouble() < 0.70) ApplyDiscreetHouseDefense(Life.Id);
+                                    else ApplyRealisticBotDistribution("medio");
+                                }
+                                break;
+
+                            case MatchDramatizationPhase.LethalCloser:
+                                // FASE 4 (8 a 10 pts / Tumba): CIERRE LETAL INFRANQUEABLE.
+                                // La banca asegura la victoria final (10-8 o 10-9) con 92% de defensa contundente.
+                                if (Random.Shared.NextDouble() < 0.92)
+                                {
+                                    ApplyDiscreetHouseDefense(Life.Id);
+                                }
+                                else
+                                {
+                                    ApplyRealisticBotDistribution("dificil");
+                                }
+                                break;
                         }
                     }
                 }

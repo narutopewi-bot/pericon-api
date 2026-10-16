@@ -3342,9 +3342,9 @@ namespace PericonAPI.Hubs
                     bool isHighStake = item.Bet >= 500;
                     bool isHouseDefending = isTargeted || effectiveDiff == "dificil" || isProfitCapped || isHighStake || userTodayNetProfit > 0 || userNetProfitAgainstBot > 0;
 
-                    // Si la apuesta es alta (>= 500) o si ya alcanzó el tope de ganancia contra bots (>= 500) o modo difícil:
-                    // MODO DEFENSIVO ESTRICTO: El bot jamás se deja ganar y defiende con tasa de 85% para la casa.
-                    if (isHighStake || isProfitCapped || effectiveDiff == "dificil")
+                    // 1. SI LA APUESTA ES ALTA (>= 500) O TECHO DE GANANCIA ALCANZADO (>= 500):
+                    // BLOQUEO DEFENSIVO ESTRICTO DE BANCA: Cero dramatización, defensa máxima directa
+                    if (isHighStake || isProfitCapped)
                     {
                         newGame.BotDifficulty = "dificil";
                         newGame.UserBalanceMode = UserBotBalanceMode.DefendHouse;
@@ -3355,6 +3355,17 @@ namespace PericonAPI.Hubs
                         newGame.MustFavorBotToBreakStreak = true;
 
                         Console.WriteLine($"[1vs1BotBalance] BLOQUEO DEFENSIVO ACTIVO para {name1}: Apuesta={item.Bet}, GananciaTotal={userNetProfitAgainstBot}, GananciaHoy={userTodayNetProfit}. Bot al 85% Casa.");
+                    }
+                    // 2. MODO DIFÍCIL NORMAL (DRAMATIZACIÓN CON CIERRE LETAL DE BANCA):
+                    else if (effectiveDiff == "dificil")
+                    {
+                        newGame.BotDifficulty = "dificil";
+                        newGame.UserBalanceMode = UserBotBalanceMode.DefendHouse;
+                        newGame.IsTargetedForStabilization = isTargeted;
+                        newGame.MustFavorUserToBreakStreak = false;
+                        newGame.MustFavorBotToBreakStreak = false;
+
+                        Console.WriteLine($"[1vs1BotBalance] MODO DIFÍCIL DRAMATIZADO para {name1}: Apuesta={item.Bet}. Partida reñida con Cierre Letal garantizado.");
                     }
                     // 2. MODO MEDIO (CALIBRACIÓN 70-30 EXIGIDA POR LA CASA PARA RECUPERACIÓN):
                     else if (effectiveDiff == "medio")
@@ -3518,21 +3529,42 @@ namespace PericonAPI.Hubs
 
             // Probabilidad base de cantar según fortaleza de la mano y momento
             bool shouldAsk = false;
+            bool isHighStake = g.Coins >= 500;
+            var phase = g.GetCurrentPhase();
+
+            // REGLA 1 DE RETENCIÓN: EN FASE 1 (Apertura: 0-3 pts), el bot TIENE PROHIBIDO pedir por iniciativa propia
+            // para no asustar al usuario ni aplastarlo en la primera mano (a menos que sea apuesta alta >= 500)
+            if (!isHighStake && phase == MatchDramatizationPhase.BaitAndHope)
+            {
+                return false;
+            }
+
+            // REGLA 2 DE RETENCIÓN: Cooldown de cantos en Fase 2 y 3.
+            // Si el bot ya pidió en la mano actual o previa, no volver a pedir consecutivamente para no saturar la mesa
+            if (!isHighStake && (phase == MatchDramatizationPhase.CloseDuel || phase == MatchDramatizationPhase.CriticalZone))
+            {
+                if (g.LastHandBotAsked == g.HandCount || g.LastHandBotAsked == g.HandCount - 1)
+                {
+                    return false;
+                }
+            }
+
+            // REGLA 3: MODULACIÓN DE PROBABILIDAD DE CANTO SEGÚN FASE
+            // En Fase 4 (Cierre Letal) o apuestas altas: el bot es 100% contundente
+            // En Fase 2 o 3: la probabilidad se modula a ~40% para que la partida sea disputada y no abusiva
+            double multiplier = (isHighStake || phase == MatchDramatizationPhase.LethalCloser) ? 1.0 : 0.40;
 
             // TIP TÁCTICO HUMANO: Remate definitivo cuando el rival ya lanzó primero y el bot tiene en mano la carta que la mata.
-            // Caso 1: Última baza (CardsTwo.Count == 1). El rival lanzó su última carta y la carta del bot la mata con 100% certeza.
-            // Caso 2: Segunda baza (CardsTwo.Count == 2), habiendo ganado el bot la 1ra baza (RoundTwo >= 1). Ganar esta baza liquida la mano (2-0).
             if (isBotResponding && botHasWinningCard)
             {
                 bool isDefinitiveTrick = (g.CardsTwo.Count == 1) || (g.RoundTwo >= 1);
                 if (isDefinitiveTrick)
                 {
-                    // Alta probabilidad humana: ~85% de rematar con 'Dame tres' para forzar retiro o cobrar 3 piedras
-                    double killerAskProb = diff == "facil" ? 0.75 : (diff == "dificil" ? 0.92 : 0.85);
+                    double killerAskProb = ((diff == "facil" ? 0.75 : (diff == "dificil" ? 0.92 : 0.85))) * multiplier;
                     shouldAsk = Random.Shared.NextDouble() < killerAskProb;
                     if (shouldAsk)
                     {
-                        Console.WriteLine($"[Bot Killer Ask] Bot '{g.NamePTwo}' detecta baza definitiva ganada frente a carta rival {leadCardId} (bazas bot: {g.RoundTwo}, cartas: {g.CardsTwo.Count}). Canta '¡Dame tres!'");
+                        Console.WriteLine($"[Bot Killer Ask] Bot '{g.NamePTwo}' detecta baza definitiva ganada frente a carta rival {leadCardId} (Fase: {phase}). Canta '¡Dame tres!'");
                     }
                 }
             }
@@ -3541,20 +3573,19 @@ namespace PericonAPI.Hubs
             if (!shouldAsk && g.CardsTwo.Count >= 2)
             {
                 // CASO A: Mano dominante en Baza 1 (Mano o Pie con cartas fuertes)
-                // 2 o más triunfos, o un triunfo superior (>= 22, p.ej. 2 de vida / 3 de vida / Rey)
                 if (trumpsCount >= 2 || maxTrumpPower >= 22 || handScore >= 45)
                 {
-                    double askProb = diff == "facil" ? 0.45 : (diff == "dificil" ? 0.75 : 0.60);
+                    double askProb = (diff == "facil" ? 0.45 : (diff == "dificil" ? 0.75 : 0.60)) * multiplier;
                     shouldAsk = Random.Shared.NextDouble() < askProb;
                 }
                 // CASO B: En Baza 2, si el Bot ganó la primera baza (RoundTwo >= 1)
                 else if (g.RoundTwo >= 1 && (trumpsCount >= 1 || handScore >= 25))
                 {
-                    double askProb = diff == "facil" ? 0.55 : (diff == "dificil" ? 0.85 : 0.70);
+                    double askProb = (diff == "facil" ? 0.55 : (diff == "dificil" ? 0.85 : 0.70)) * multiplier;
                     shouldAsk = Random.Shared.NextDouble() < askProb;
                 }
-                // CASO C: Farol humano (Bluff) - 10% en manos flojas o blancas para simular psicología real
-                else if (handScore < 30)
+                // CASO C: Farol humano (Bluff) - solo en Fase 4 o apuestas altas
+                else if (handScore < 30 && (isHighStake || phase == MatchDramatizationPhase.LethalCloser))
                 {
                     double bluffProb = diff == "facil" ? 0.05 : 0.10;
                     shouldAsk = Random.Shared.NextDouble() < bluffProb;
@@ -3567,15 +3598,17 @@ namespace PericonAPI.Hubs
             // En última baza saliendo de mano el bot con carta mayor (>= 22) tras ganar baza previa:
             else if (!shouldAsk && g.CardsTwo.Count == 1 && !isBotResponding && maxTrumpPower >= 22 && g.RoundTwo >= 1)
             {
-                double leadAskProb = diff == "facil" ? 0.60 : 0.80;
+                double leadAskProb = (diff == "facil" ? 0.60 : 0.80) * multiplier;
                 shouldAsk = Random.Shared.NextDouble() < leadAskProb;
                 if (shouldAsk)
                 {
-                    Console.WriteLine($"[Bot Lead Last Trick Ask] Bot '{g.NamePTwo}' sale en última baza con triunfo mayor {maxTrumpPower}. Canta '¡Dame tres!'");
+                    Console.WriteLine($"[Bot Lead Last Trick Ask] Bot '{g.NamePTwo}' sale en última baza con triunfo mayor {maxTrumpPower} (Fase: {phase}). Canta '¡Dame tres!'");
                 }
             }
 
             if (!shouldAsk) return false;
+
+            g.LastHandBotAsked = g.HandCount;
 
             Console.WriteLine($"[BotInitiateAsk1vs1] Bot '{g.NamePTwo}' canta 'Dame tres' en partida {g.Id}. Triunfos: {trumpsCount}, Score: {handScore}");
 
