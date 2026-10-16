@@ -2905,7 +2905,7 @@ namespace PericonAPI.Hubs
                                 {
                                     UserId = humanWon ? (finalWinnerDbId ?? (dbWinner?.Id ?? 0)) : (finalLoserDbId ?? (dbLoser?.Id ?? 0)),
                                     Username = humanWon ? (dbWinner?.Username ?? winnerName) : (dbLoser?.Username ?? loserName),
-                                    BotName = !string.IsNullOrEmpty(game.NamePTwo) ? game.NamePTwo : "Joel",
+                                    BotName = !string.IsNullOrEmpty(game.NamePTwo) ? game.NamePTwo : "Cheo",
                                     BetAmount = bet,
                                     UserWon = humanWon,
                                     CoinsWon = humanWon ? (winnerPrize - bet) : 0,
@@ -3196,7 +3196,7 @@ namespace PericonAPI.Hubs
         }
 
         // =========================================================================
-        // MOTOR AUTÓNOMO DE BOTS VIRTUALES 1 VS 1 (Joel, María, Gloria, La Gorda, Pedro, Ramón)
+        // MOTOR AUTÓNOMO DE BOTS VIRTUALES 1 VS 1 (Cheo, Tibisay, Coromoto, El Catire, Rosendo, Oswaldo)
         // =========================================================================
 
         private static async void ProcessMatchmakingQueueWithBots(object? state)
@@ -3232,7 +3232,7 @@ namespace PericonAPI.Hubs
                     virtualBots = await db.Users.Where(u => u.IsVirtualBot && u.IsActive).ToListAsync();
                     if (virtualBots.Count == 0)
                     {
-                        var botNames = new[] { "joel", "maría", "maria", "gloria", "la gorda", "pedro", "ramón", "ramon" };
+                        var botNames = new[] { "cheo", "tibisay", "coromoto", "el catire", "rosendo", "oswaldo", "joel", "maría", "maria", "gloria", "la gorda", "pedro", "ramón", "ramon" };
                         virtualBots = await db.Users.Where(u => botNames.Contains(u.Username.ToLower()) && u.IsActive).ToListAsync();
                         foreach (var b in virtualBots) b.IsVirtualBot = true;
                         if (virtualBots.Count > 0) await db.SaveChangesAsync();
@@ -3243,12 +3243,12 @@ namespace PericonAPI.Hubs
                 {
                     virtualBots = new List<User>
                     {
-                        new User { Id = 901, Username = "Joel", Email = "joel.bot@pericon.lat", BotDifficulty = "facil", IsVirtualBot = true, IsActive = true },
-                        new User { Id = 902, Username = "María", Email = "maria.bot@pericon.lat", BotDifficulty = "facil", IsVirtualBot = true, IsActive = true },
-                        new User { Id = 903, Username = "Gloria", Email = "gloria.bot@pericon.lat", BotDifficulty = "facil", IsVirtualBot = true, IsActive = true },
-                        new User { Id = 904, Username = "La Gorda", Email = "lagorda.bot@pericon.lat", BotDifficulty = "facil", IsVirtualBot = true, IsActive = true },
-                        new User { Id = 905, Username = "Pedro", Email = "pedro.bot@pericon.lat", BotDifficulty = "facil", IsVirtualBot = true, IsActive = true },
-                        new User { Id = 906, Username = "Ramón", Email = "ramon.bot@pericon.lat", BotDifficulty = "facil", IsVirtualBot = true, IsActive = true }
+                        new User { Id = 901, Username = "Cheo", Email = "cheo.bot@pericon.lat", BotDifficulty = "facil", IsVirtualBot = true, IsActive = true },
+                        new User { Id = 902, Username = "Tibisay", Email = "tibisay.bot@pericon.lat", BotDifficulty = "facil", IsVirtualBot = true, IsActive = true },
+                        new User { Id = 903, Username = "Coromoto", Email = "coromoto.bot@pericon.lat", BotDifficulty = "facil", IsVirtualBot = true, IsActive = true },
+                        new User { Id = 904, Username = "El Catire", Email = "elcatire.bot@pericon.lat", BotDifficulty = "facil", IsVirtualBot = true, IsActive = true },
+                        new User { Id = 905, Username = "Rosendo", Email = "rosendo.bot@pericon.lat", BotDifficulty = "facil", IsVirtualBot = true, IsActive = true },
+                        new User { Id = 906, Username = "Oswaldo", Email = "oswaldo.bot@pericon.lat", BotDifficulty = "facil", IsVirtualBot = true, IsActive = true }
                     };
                 }
 

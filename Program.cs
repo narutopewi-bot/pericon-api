@@ -769,23 +769,62 @@ using (var scope = app.Services.CreateScope())
         Console.WriteLine($"[Guardian Setup Error] {ex.Message}");
     }
 
-    // Garantizar existencia de los Bots Virtuales 1 vs 1 (Joel, María, Gloria, La Gorda, Pedro, Ramón)
+    // Garantizar existencia y renovación de los 6 Bots Virtuales 1 vs 1 (Cheo, Tibisay, Coromoto, El Catire, Rosendo, Oswaldo)
     try
     {
+        var oldToNewMap = new Dictionary<string, (string NewName, string NewEmail, string Level, int Wins, int Losses, int Coins)>
+        {
+            ["joel"] = ("Cheo", "cheo.bot@pericon.lat", "Gallo de Espuela", 28, 14, 1650),
+            ["maría"] = ("Tibisay", "tibisay.bot@pericon.lat", "Doña de la Baraja", 22, 11, 1340),
+            ["maria"] = ("Tibisay", "tibisay.bot@pericon.lat", "Doña de la Baraja", 22, 11, 1340),
+            ["gloria"] = ("Coromoto", "coromoto.bot@pericon.lat", "Patrona del Perico", 26, 13, 1550),
+            ["la gorda"] = ("El Catire", "elcatire.bot@pericon.lat", "Bravo de la Mesa", 35, 19, 2100),
+            ["pedro"] = ("Rosendo", "rosendo.bot@pericon.lat", "Taimador del Llano", 30, 17, 1820),
+            ["ramón"] = ("Oswaldo", "oswaldo.bot@pericon.lat", "Veterano de Apure", 33, 18, 1950),
+            ["ramon"] = ("Oswaldo", "oswaldo.bot@pericon.lat", "Veterano de Apure", 33, 18, 1950)
+        };
+
+        // Migrar bots viejos existentes por Username o Email antiguo para que no queden duplicados
+        var existingOldBots = db.Users.Where(u => u.IsVirtualBot || u.Email.Contains(".bot@pericon.lat")).ToList();
+        foreach (var b in existingOldBots)
+        {
+            var uLower = (b.Username ?? "").ToLower().Trim();
+            var eLower = (b.Email ?? "").ToLower().Trim();
+
+            string? matchKey = null;
+            if (oldToNewMap.ContainsKey(uLower)) matchKey = uLower;
+            else if (eLower.StartsWith("joel.")) matchKey = "joel";
+            else if (eLower.StartsWith("maria.")) matchKey = "maría";
+            else if (eLower.StartsWith("gloria.")) matchKey = "gloria";
+            else if (eLower.StartsWith("lagorda.")) matchKey = "la gorda";
+            else if (eLower.StartsWith("pedro.")) matchKey = "pedro";
+            else if (eLower.StartsWith("ramon.")) matchKey = "ramón";
+
+            if (matchKey != null && oldToNewMap.TryGetValue(matchKey, out var mapping))
+            {
+                b.Username = mapping.NewName;
+                b.Email = mapping.NewEmail;
+                b.Level = mapping.Level;
+                b.IsVirtualBot = true;
+                b.IsActive = true;
+            }
+        }
+        db.SaveChanges();
+
         var virtualBots = new (string Username, string Email, string Level, int Wins, int Losses, int Coins, string Avatar, string Diff)[]
         {
-            ("Joel", "joel.bot@pericon.lat", "Llanero Respetado", 24, 15, 1450, "/avatar.png", "facil"),
-            ("María", "maria.bot@pericon.lat", "Doña de la Mesa", 19, 12, 1120, "/avatar.png", "facil"),
-            ("Gloria", "gloria.bot@pericon.lat", "Capataz del Hato", 29, 18, 1890, "/avatar.png", "facil"),
-            ("La Gorda", "lagorda.bot@pericon.lat", "Dueña de la Hierra", 38, 22, 2350, "/avatar.png", "facil"),
-            ("Pedro", "pedro.bot@pericon.lat", "Patrón de Casona", 27, 16, 1600, "/avatar.png", "facil"),
-            ("Ramón", "ramon.bot@pericon.lat", "Catador de Cocuy", 31, 20, 1780, "/avatar.png", "facil")
+            ("Cheo", "cheo.bot@pericon.lat", "Gallo de Espuela", 28, 14, 1650, "/avatar.png", "facil"),
+            ("Tibisay", "tibisay.bot@pericon.lat", "Doña de la Baraja", 22, 11, 1340, "/avatar.png", "facil"),
+            ("Coromoto", "coromoto.bot@pericon.lat", "Patrona del Perico", 26, 13, 1550, "/avatar.png", "facil"),
+            ("El Catire", "elcatire.bot@pericon.lat", "Bravo de la Mesa", 35, 19, 2100, "/avatar.png", "facil"),
+            ("Rosendo", "rosendo.bot@pericon.lat", "Taimador del Llano", 30, 17, 1820, "/avatar.png", "facil"),
+            ("Oswaldo", "oswaldo.bot@pericon.lat", "Veterano de Apure", 33, 18, 1950, "/avatar.png", "facil")
         };
 
         bool anyBotAdded = false;
         foreach (var (bName, bEmail, bLevel, bWins, bLosses, bCoins, bAvatar, bDiff) in virtualBots)
         {
-            var botUser = db.Users.FirstOrDefault(u => u.Username.ToLower() == bName.ToLower());
+            var botUser = db.Users.FirstOrDefault(u => u.Username.ToLower() == bName.ToLower() || u.Email.ToLower() == bEmail.ToLower());
             if (botUser == null)
             {
                 db.Users.Add(new User
@@ -808,6 +847,8 @@ using (var scope = app.Services.CreateScope())
             }
             else
             {
+                botUser.Username = bName;
+                botUser.Email = bEmail;
                 botUser.IsVirtualBot = true;
                 botUser.IsActive = true;
                 if (string.IsNullOrEmpty(botUser.BotDifficulty)) botUser.BotDifficulty = bDiff;
@@ -817,7 +858,7 @@ using (var scope = app.Services.CreateScope())
         if (anyBotAdded)
         {
             db.SaveChanges();
-            Console.WriteLine("[VirtualBots] 6 Bots Virtuales 1vs1 inicializados/actualizados en la base de datos.");
+            Console.WriteLine("[VirtualBots] 6 Nuevos Bots Virtuales 1vs1 inicializados/actualizados en la base de datos.");
         }
     }
     catch (Exception ex)
