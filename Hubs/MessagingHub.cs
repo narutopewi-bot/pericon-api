@@ -3365,23 +3365,49 @@ namespace PericonAPI.Hubs
                     // =========================================================================
                     // PLAN DE BLINDAJE INTEGRAL DE BANCA (70-30 ESTÁNDAR, MURO DIFÍCIL Y ANTIRACHAS)
                     // =========================================================================
-                    bool isProfitCapped = userNetProfitAgainstBot >= 500 || userTodayNetProfit >= 500;
+                    // Techo de ganancia proporcional al tamaño de la apuesta (mínimo 500, o 1.2x la apuesta de la sala)
+                    int dynamicProfitCap = Math.Max(500, (int)(item.Bet * 1.2));
+                    bool isProfitCapped = (userNetProfitAgainstBot >= dynamicProfitCap) || (userTodayNetProfit >= dynamicProfitCap);
                     bool isHighStake = item.Bet >= 500;
                     bool isHouseDefending = isTargeted || effectiveDiff == "dificil" || isProfitCapped || isHighStake || userTodayNetProfit > 0 || userNetProfitAgainstBot > 0;
 
-                    // 1. SI LA APUESTA ES ALTA (>= 500) O TECHO DE GANANCIA ALCANZADO (>= 500):
-                    // BLOQUEO DEFENSIVO ESTRICTO DE BANCA: Cero dramatización, defensa máxima directa
+                    // 1. APUESTAS ALTAS (>= 500, ej: 500 o 1500) O USUARIO CON TECHO ALCANZADO:
+                    // CICLO MATEMÁTICO DE CONTROL 3 A 1 (LA CASA GANA 3 Y EL JUGADOR GANA 1 -> SALDO NETO POSITIVO)
                     if (isHighStake || isProfitCapped)
                     {
                         newGame.BotDifficulty = "dificil";
                         newGame.UserBalanceMode = UserBotBalanceMode.DefendHouse;
                         newGame.IsTargetedForStabilization = true;
 
-                        // Jamás favorecer al usuario en apuestas altas o con techo alcanzado
-                        newGame.MustFavorUserToBreakStreak = false;
-                        newGame.MustFavorBotToBreakStreak = true;
-
-                        Console.WriteLine($"[1vs1BotBalance] BLOQUEO DEFENSIVO ACTIVO para {name1}: Apuesta={item.Bet}, GananciaTotal={userNetProfitAgainstBot}, GananciaHoy={userTodayNetProfit}. Bot al 85% Casa.");
+                        if (isProfitCapped)
+                        {
+                            // Si ya superó el techo dinámico, muro estricto total:
+                            newGame.MustFavorUserToBreakStreak = false;
+                            newGame.MustFavorBotToBreakStreak = true;
+                            Console.WriteLine($"[1vs1BotBalance] TECHO ALCANZADO para {name1} (Ganancia={userNetProfitAgainstBot} >= {dynamicProfitCap}). Bloqueo estricto activado.");
+                        }
+                        else if (consecutiveBotWins >= 3)
+                        {
+                            // CICLO 3 A 1: El bot ya ganó 3 partidas (cobró 3x apuesta a la casa).
+                            // Se cede 1 victoria para que el jugador gane su premio de 1.500 garantizando +1.800 Bs netos para la casa.
+                            newGame.MustFavorUserToBreakStreak = true;
+                            newGame.MustFavorBotToBreakStreak = false;
+                            Console.WriteLine($"[1vs1BotBalance 1500] Ciclo 3 a 1 para {name1}: Bot ganó {consecutiveBotWins} seguidas en sala de {item.Bet}. Cediendo 1 victoria (Margen banca asegurado).");
+                        }
+                        else if (consecutiveUserWins >= 1)
+                        {
+                            // El usuario acaba de ganar su partida del ciclo. Bloqueo inmediato para que el bot gane las siguientes 3.
+                            newGame.MustFavorUserToBreakStreak = false;
+                            newGame.MustFavorBotToBreakStreak = true;
+                            Console.WriteLine($"[1vs1BotBalance 1500] Ciclo 3 a 1 para {name1}: Usuario ganó 1 partida de {item.Bet}. Cortando racha para asegurar ganancia de banca.");
+                        }
+                        else
+                        {
+                            // Mientras el bot acumula sus 3 victorias del ciclo, defiende al 85%
+                            newGame.MustFavorUserToBreakStreak = false;
+                            newGame.MustFavorBotToBreakStreak = true;
+                            Console.WriteLine($"[1vs1BotBalance 1500] Defensa de ciclo para {name1}: Bot victorias={consecutiveBotWins}/3 en sala de {item.Bet}.");
+                        }
                     }
                     // 2. MODO DIFÍCIL NORMAL (DRAMATIZACIÓN CON CIERRE LETAL DE BANCA):
                     else if (effectiveDiff == "dificil")

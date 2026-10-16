@@ -1430,7 +1430,8 @@ namespace PericonAPI.Models
                     // DISTRIBUCIÓN DINÁMICA POR FASES DE RETENCIÓN (DRAMATIZACIÓN Y CIERRE LETAL GARANTIZADO)
                     bool isTargetedUser = IsTargetedForStabilization || IsUserTargetedForStabilization(effectiveUserId, NamePOne, UserIdPOne, EmailPOne);
                     bool isHighStake = Coins >= 500;
-                    bool isProfitCapped = UserNetCoinsAgainstBot >= 500;
+                    int dynamicCap = Math.Max(500, (int)(Coins * 1.2));
+                    bool isProfitCapped = UserNetCoinsAgainstBot >= dynamicCap;
 
                     // Salvaguarda financiera estricta: Si la apuesta es alta o el usuario tiene ganancias acumuladas
                     if (isHighStake || isProfitCapped || isTargetedUser)
