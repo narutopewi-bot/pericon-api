@@ -126,24 +126,20 @@ namespace PericonAPI.Controllers
             var cleanEmail = dto.Email.Trim().ToLowerInvariant();
             var cleanUsername = dto.Username.Trim();
 
-            // 0. Validación Obligatoria del Código OTP enviado al Correo
+            // 0. Validación de Código OTP (Opcional - Verificación por correo deshabilitada)
             var cleanOtp = dto.VerificationCode?.Trim();
-            if (string.IsNullOrWhiteSpace(cleanOtp))
+            if (!string.IsNullOrWhiteSpace(cleanOtp))
             {
-                return BadRequest(new { message = "Debes ingresar el código de verificación de 6 dígitos enviado a tu correo electrónico." });
+                var validOtp = await _context.EmailVerificationCodes
+                    .Where(c => c.Email.ToLower() == cleanEmail && !c.IsUsed && c.ExpiresAt > DateTime.UtcNow)
+                    .OrderByDescending(c => c.CreatedAt)
+                    .FirstOrDefaultAsync();
+
+                if (validOtp != null && validOtp.Code == cleanOtp)
+                {
+                    validOtp.IsUsed = true;
+                }
             }
-
-            var validOtp = await _context.EmailVerificationCodes
-                .Where(c => c.Email.ToLower() == cleanEmail && !c.IsUsed && c.ExpiresAt > DateTime.UtcNow)
-                .OrderByDescending(c => c.CreatedAt)
-                .FirstOrDefaultAsync();
-
-            if (validOtp == null || validOtp.Code != cleanOtp)
-            {
-                return BadRequest(new { message = "Código de verificación por correo incorrecto o expirado. Por favor solicita uno nuevo." });
-            }
-
-            validOtp.IsUsed = true;
 
             // 1. Bloqueo de correos temporales / desechables
             var disposableDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase)

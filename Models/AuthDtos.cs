@@ -31,9 +31,7 @@ namespace PericonAPI.Models
 
         public string? BirthDate { get; set; }
 
-        [Required(ErrorMessage = "El código de verificación enviado a tu correo es requerido")]
-        [StringLength(10, MinimumLength = 4, ErrorMessage = "Código de verificación inválido")]
-        public string VerificationCode { get; set; } = string.Empty;
+        public string? VerificationCode { get; set; }
     }
 
     public class LoginDto
