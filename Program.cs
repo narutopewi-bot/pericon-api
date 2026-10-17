@@ -191,6 +191,7 @@ using (var scope = app.Services.CreateScope())
                     WinnerUsername TEXT NOT NULL,
                     LoserUsername TEXT NOT NULL,
                     EndReason TEXT NOT NULL,
+                    IsBotMatch INTEGER NOT NULL DEFAULT 0,
                     CreatedAt TEXT NOT NULL
                 );
             ");
@@ -546,6 +547,44 @@ using (var scope = app.Services.CreateScope())
         else
         {
             db.Database.ExecuteSqlRaw(@"ALTER TABLE ""BotMatchRecords"" ADD COLUMN IF NOT EXISTS ""HouseCommission"" INT NOT NULL DEFAULT 0;");
+        }
+    }
+    catch { }
+
+    // Migración automática: Columna IsBotMatch en MatchBetRecords para diferenciar humanos de bots
+    try
+    {
+        if (db.Database.IsSqlite())
+        {
+            try { db.Database.ExecuteSqlRaw("ALTER TABLE MatchBetRecords ADD COLUMN IsBotMatch INTEGER NOT NULL DEFAULT 0;"); } catch { }
+            try
+            {
+                db.Database.ExecuteSqlRaw(@"
+                    UPDATE MatchBetRecords 
+                    SET IsBotMatch = 1 
+                    WHERE PlayerTwoName IN ('Cheo', 'Tibisay', 'Coromoto', 'El Catire', 'Rosendo', 'Oswaldo', 'Pericón (Bot IA)')
+                       OR PlayerOneName IN ('Cheo', 'Tibisay', 'Coromoto', 'El Catire', 'Rosendo', 'Oswaldo', 'Pericón (Bot IA)')
+                       OR WinnerUsername IN ('Cheo', 'Tibisay', 'Coromoto', 'El Catire', 'Rosendo', 'Oswaldo', 'Pericón (Bot IA)')
+                       OR LoserUsername IN ('Cheo', 'Tibisay', 'Coromoto', 'El Catire', 'Rosendo', 'Oswaldo', 'Pericón (Bot IA)');
+                ");
+            }
+            catch { }
+        }
+        else
+        {
+            try { db.Database.ExecuteSqlRaw(@"ALTER TABLE ""MatchBetRecords"" ADD COLUMN IF NOT EXISTS ""IsBotMatch"" BOOLEAN NOT NULL DEFAULT FALSE;"); } catch { }
+            try
+            {
+                db.Database.ExecuteSqlRaw(@"
+                    UPDATE ""MatchBetRecords"" 
+                    SET ""IsBotMatch"" = TRUE 
+                    WHERE ""PlayerTwoName"" IN ('Cheo', 'Tibisay', 'Coromoto', 'El Catire', 'Rosendo', 'Oswaldo', 'Pericón (Bot IA)')
+                       OR ""PlayerOneName"" IN ('Cheo', 'Tibisay', 'Coromoto', 'El Catire', 'Rosendo', 'Oswaldo', 'Pericón (Bot IA)')
+                       OR ""WinnerUsername"" IN ('Cheo', 'Tibisay', 'Coromoto', 'El Catire', 'Rosendo', 'Oswaldo', 'Pericón (Bot IA)')
+                       OR ""LoserUsername"" IN ('Cheo', 'Tibisay', 'Coromoto', 'El Catire', 'Rosendo', 'Oswaldo', 'Pericón (Bot IA)');
+                ");
+            }
+            catch { }
         }
     }
     catch { }

@@ -583,13 +583,13 @@ namespace PericonAPI.Controllers
                 })
                 .ToListAsync();
 
-            // 2. Partidas PvP (Multijugador)
+            // 2. Partidas PvP (Multijugador entre humanos)
             var pvpMatches = await _context.MatchBetRecords
-                .Where(m =>
+                .Where(m => !m.IsBotMatch && (
                     (m.WinnerUsername != null && m.WinnerUsername.ToLower() == uname) ||
                     (m.LoserUsername != null && m.LoserUsername.ToLower() == uname) ||
                     (m.PlayerOneName != null && m.PlayerOneName.ToLower() == uname) ||
-                    (m.PlayerTwoName != null && m.PlayerTwoName.ToLower() == uname))
+                    (m.PlayerTwoName != null && m.PlayerTwoName.ToLower() == uname)))
                 .OrderByDescending(m => m.CreatedAt)
                 .Take(limit)
                 .Select(m => new

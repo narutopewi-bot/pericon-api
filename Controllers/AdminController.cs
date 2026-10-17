@@ -62,9 +62,10 @@ namespace PericonAPI.Controllers
             var totalBsWithdrawn = paidWithdrawals.Sum(w => w.AmountBs);
 
             var matchRecords = await _context.MatchBetRecords.ToListAsync();
+            var pvpRecords = matchRecords.Where(m => !m.IsBotMatch).ToList();
             var totalHouseCommissions = matchRecords.Sum(m => m.HouseCommission);
-            var totalMatchesFinished = matchRecords.Count;
-            var totalCoinsWagered = matchRecords.Sum(m => m.TotalPot);
+            var totalMatchesFinished = pvpRecords.Count;
+            var totalCoinsWagered = pvpRecords.Sum(m => m.TotalPot);
 
             var botMatches = await _context.BotMatchRecords.ToListAsync();
             var totalBotMatches = botMatches.Count;
@@ -532,9 +533,19 @@ namespace PericonAPI.Controllers
         }
 
         [HttpGet("matches")]
-        public async Task<IActionResult> GetMatches([FromQuery] string? player, [FromQuery] string? period)
+        public async Task<IActionResult> GetMatches([FromQuery] string? player, [FromQuery] string? period, [FromQuery] string? type)
         {
             var query = _context.MatchBetRecords.AsQueryable();
+
+            string matchType = (type ?? "pvp").Trim().ToLowerInvariant();
+            if (matchType == "pvp")
+            {
+                query = query.Where(m => !m.IsBotMatch);
+            }
+            else if (matchType == "bot")
+            {
+                query = query.Where(m => m.IsBotMatch);
+            }
 
             if (!string.IsNullOrWhiteSpace(player))
             {
@@ -583,6 +594,7 @@ namespace PericonAPI.Controllers
                     winnerUsername = m.WinnerUsername,
                     loserUsername = m.LoserUsername,
                     endReason = m.EndReason,
+                    isBotMatch = m.IsBotMatch,
                     createdAt = m.CreatedAt.AddHours(-4).ToString("yyyy-MM-dd HH:mm:ss")
                 })
                 .ToList();
@@ -612,6 +624,7 @@ namespace PericonAPI.Controllers
             return Ok(new
             {
                 period = activePeriod,
+                type = matchType,
                 summary,
                 dailyActivity,
                 matches

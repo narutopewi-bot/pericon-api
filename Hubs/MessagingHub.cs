@@ -2894,6 +2894,7 @@ namespace PericonAPI.Hubs
                                 WinnerUsername = !string.IsNullOrWhiteSpace(winUser) ? winUser : "Desconocido",
                                 LoserUsername = !string.IsNullOrWhiteSpace(loseUser) ? loseUser : "Desconocido",
                                 EndReason = isSala ? $"[SALA 100%] {reason}" : reason,
+                                IsBotMatch = game.IsBotMatch,
                                 CreatedAt = DateTime.UtcNow
                             };
                             db.MatchBetRecords.Add(betRecord);
@@ -4501,6 +4502,7 @@ namespace PericonAPI.Hubs
                                 WinnerUsername = "REEMBOLSO",
                                 LoserUsername = "REEMBOLSO",
                                 EndReason = "ReembolsoPorAbandonoMutuo",
+                                IsBotMatch = game.IsBotMatch,
                                 CreatedAt = DateTime.UtcNow
                             };
                             db.MatchBetRecords.Add(refundRecord);

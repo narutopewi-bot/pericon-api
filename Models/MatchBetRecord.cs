@@ -15,6 +15,7 @@ namespace PericonAPI.Models
         public string WinnerUsername { get; set; } = string.Empty;
         public string LoserUsername { get; set; } = string.Empty;
         public string EndReason { get; set; } = string.Empty; // "VictoriaPorPuntos", "Rendicion", "TiempoAgotado"
+        public bool IsBotMatch { get; set; } = false;
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     }
 }
