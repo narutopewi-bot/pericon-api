@@ -2,7 +2,9 @@ using System;
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Json;
 using System.Net.Mail;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -14,6 +16,7 @@ namespace PericonAPI.Classes
         Task SendRechargeNotificationAsync(string username, decimal amountBs, int coins, string reference, string? receiptImageUrl, bool isAutoApproved = false, string? reason = null);
         Task SendWithdrawalNotificationAsync(string username, decimal amountBs, int coins, string bankName, string phone, string idCard);
         Task<bool> SendVerificationCodeEmailAsync(string toEmail, string code, string? username = null);
+        Task SendAdminWhatsAppAsync(string message);
     }
 
     public class NotificationService : INotificationService
@@ -240,13 +243,30 @@ namespace PericonAPI.Classes
                     </p>
                 </div>";
 
-                await SendEmailAsync(toEmail, smtpUser, smtpPass, subject, bodyHtml, null);
-                return true;
+                return await SendEmailAsync(toEmail, smtpUser, smtpPass ?? "", subject, bodyHtml, null);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error enviando correo de código de verificación a {ToEmail}", toEmail);
                 return false;
+            }
+        }
+
+        public async Task SendAdminWhatsAppAsync(string message)
+        {
+            try
+            {
+                var section = _config.GetSection("Notifications");
+                var phone = section["WhatsAppPhone"];
+                var apiKey = section["WhatsAppApiKey"];
+                if (!string.IsNullOrWhiteSpace(phone) && !string.IsNullOrWhiteSpace(apiKey))
+                {
+                    await SendWhatsAppAsync(phone, apiKey, message);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error enviando WhatsApp al admin");
             }
         }
 
@@ -290,8 +310,112 @@ namespace PericonAPI.Classes
             }
         }
 
-        private async Task SendEmailAsync(string toEmail, string smtpUser, string smtpPass, string subject, string htmlBody, string? attachmentPath)
+        private async Task<bool> SendEmailViaHttpsApiAsync(string toEmail, string subject, string htmlBody)
         {
+            var section = _config.GetSection("Notifications");
+
+            // 1. Proveedor Resend (https://resend.com) - Puerto 443 HTTPS
+            var resendKey = section["ResendApiKey"] ?? Environment.GetEnvironmentVariable("RESEND_API_KEY");
+            if (!string.IsNullOrWhiteSpace(resendKey))
+            {
+                try
+                {
+                    using var req = new HttpRequestMessage(HttpMethod.Post, "https://api.resend.com/emails");
+                    req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", resendKey.Trim());
+                    var payload = new
+                    {
+                        from = section["ResendFrom"] ?? "El Pericón <onboarding@resend.dev>",
+                        to = new[] { toEmail },
+                        subject = subject,
+                        html = htmlBody
+                    };
+                    req.Content = JsonContent.Create(payload);
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                    var res = await _httpClient.SendAsync(req, cts.Token);
+                    if (res.IsSuccessStatusCode)
+                    {
+                        _logger.LogInformation("Correo enviado exitosamente vía Resend HTTPS a {ToEmail}", toEmail);
+                        return true;
+                    }
+                    var err = await res.Content.ReadAsStringAsync();
+                    _logger.LogWarning("Error en Resend API ({Status}): {Error}", res.StatusCode, err);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Excepción enviando correo vía Resend API");
+                }
+            }
+
+            // 2. Proveedor Brevo / Sendinblue (https://brevo.com) - Puerto 443 HTTPS
+            var brevoKey = section["BrevoApiKey"] ?? Environment.GetEnvironmentVariable("BREVO_API_KEY");
+            if (!string.IsNullOrWhiteSpace(brevoKey))
+            {
+                try
+                {
+                    using var req = new HttpRequestMessage(HttpMethod.Post, "https://api.brevo.com/v3/smtp/email");
+                    req.Headers.Add("api-key", brevoKey.Trim());
+                    var payload = new
+                    {
+                        sender = new { name = "El Pericón Criollo", email = section["AdminEmail"] ?? "narutopewi@gmail.com" },
+                        to = new[] { new { email = toEmail } },
+                        subject = subject,
+                        htmlContent = htmlBody
+                    };
+                    req.Content = JsonContent.Create(payload);
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                    var res = await _httpClient.SendAsync(req, cts.Token);
+                    if (res.IsSuccessStatusCode)
+                    {
+                        _logger.LogInformation("Correo enviado exitosamente vía Brevo HTTPS a {ToEmail}", toEmail);
+                        return true;
+                    }
+                    var err = await res.Content.ReadAsStringAsync();
+                    _logger.LogWarning("Error en Brevo API ({Status}): {Error}", res.StatusCode, err);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Excepción enviando correo vía Brevo API");
+                }
+            }
+
+            // 3. Proveedor Google Apps Script Webhook (Gmail nativo vía HTTPS 443)
+            var googleScriptUrl = section["GoogleScriptUrl"] ?? Environment.GetEnvironmentVariable("GOOGLE_SCRIPT_URL");
+            if (!string.IsNullOrWhiteSpace(googleScriptUrl))
+            {
+                try
+                {
+                    var payload = new
+                    {
+                        to = toEmail,
+                        subject = subject,
+                        htmlBody = htmlBody
+                    };
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(6));
+                    var res = await _httpClient.PostAsJsonAsync(googleScriptUrl.Trim(), payload, cts.Token);
+                    if (res.IsSuccessStatusCode)
+                    {
+                        _logger.LogInformation("Correo enviado exitosamente vía Google Apps Script a {ToEmail}", toEmail);
+                        return true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Excepción enviando correo vía Google Apps Script");
+                }
+            }
+
+            return false;
+        }
+
+        private async Task<bool> SendEmailAsync(string toEmail, string smtpUser, string smtpPass, string subject, string htmlBody, string? attachmentPath)
+        {
+            // Intentar primero vía HTTPS API si alguna está configurada (Resend, Brevo, GoogleScript)
+            if (await SendEmailViaHttpsApiAsync(toEmail, subject, htmlBody))
+            {
+                return true;
+            }
+
+            // Fallback a SMTP con timeout estricto de 3.5 segundos para no colgar peticiones en Railway
             try
             {
                 using var mail = new MailMessage();
@@ -306,17 +430,34 @@ namespace PericonAPI.Classes
                     mail.Attachments.Add(new Attachment(attachmentPath));
                 }
 
-                using var smtp = new SmtpClient("smtp.gmail.com", 587);
-                smtp.EnableSsl = true;
-                smtp.UseDefaultCredentials = false;
-                smtp.Credentials = new NetworkCredential(smtpUser, smtpPass.Replace(" ", ""));
+                using var smtp = new SmtpClient("smtp.gmail.com", 587)
+                {
+                    EnableSsl = true,
+                    UseDefaultCredentials = false,
+                    Credentials = new NetworkCredential(smtpUser, smtpPass.Replace(" ", "")),
+                    Timeout = 3000
+                };
 
-                await smtp.SendMailAsync(mail);
-                _logger.LogInformation("Correo de notificación enviado exitosamente a {ToEmail}", toEmail);
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3.5));
+                var sendTask = smtp.SendMailAsync(mail);
+                var completedTask = await Task.WhenAny(sendTask, Task.Delay(3500, cts.Token));
+
+                if (completedTask == sendTask)
+                {
+                    await sendTask;
+                    _logger.LogInformation("Correo de notificación enviado exitosamente a {ToEmail} vía SMTP", toEmail);
+                    return true;
+                }
+                else
+                {
+                    _logger.LogWarning("Timeout de 3.5s alcanzado conectando a smtp.gmail.com:587 (puerto bloqueado por cortafuegos en Railway).");
+                    return false;
+                }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "No se pudo enviar el correo de notificación por SMTP");
+                _logger.LogWarning("No se pudo enviar correo por SMTP ({Type}: {Msg})", ex.GetType().Name, ex.Message);
+                return false;
             }
         }
     }
