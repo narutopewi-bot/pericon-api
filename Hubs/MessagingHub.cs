@@ -596,6 +596,11 @@ namespace PericonAPI.Hubs
                     if (!string.IsNullOrEmpty(sentto)) await Clients.Client(sentto).SendAsync("Answered369Game", data);
                     await Clients.OthersInGroup($"game1vs1_{move.game}").SendAsync("Answered369Game", data);
 
+                    if (games[numg].IsBotMatch && callerIsP1)
+                    {
+                        _ = TriggerBotTaunt(games[numg], "miedo", "¡Te dio culillo!", "🐔", 400);
+                    }
+
                     {
                         int gId = move.game;
                         _ = Task.Run(async () =>
@@ -781,6 +786,121 @@ namespace PericonAPI.Hubs
                 seatIndex,
                 senderConnectionId = Context.ConnectionId
             });
+        }
+
+        // ==========================================
+        // SISTEMA DE MOFA CRIOLLA Y REACCIONES (BOTS Y JUGADORES)
+        // ==========================================
+        private static readonly Dictionary<int, DateTime> _botLastTauntTime = new Dictionary<int, DateTime>();
+
+        public static async Task TriggerBotTaunt(GamePlayOneVsOne g, string key, string text, string emoji, int delayMs = 600)
+        {
+            if (_staticHubContext == null || g == null || !g.IsBotMatch || !g.IsActive || g.HasPaidOut) return;
+
+            lock (_botLastTauntTime)
+            {
+                if (_botLastTauntTime.TryGetValue(g.Id, out DateTime lastTime))
+                {
+                    if ((DateTime.UtcNow - lastTime).TotalSeconds < 6) return;
+                }
+                _botLastTauntTime[g.Id] = DateTime.UtcNow;
+            }
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    if (delayMs > 0) await Task.Delay(delayMs);
+                    if (!g.IsActive || g.HasPaidOut) return;
+
+                    string botName = !string.IsNullOrWhiteSpace(g.NamePTwo) ? g.NamePTwo : "Cheo";
+                    var payload = new
+                    {
+                        gameId = g.Id,
+                        reactionKey = key,
+                        reactionText = text,
+                        emoji = emoji,
+                        senderId = "bot",
+                        senderName = botName,
+                        isPlayerOne = false,
+                        isBot = true
+                    };
+
+                    Console.WriteLine($"[BotTaunt] Bot '{botName}' en juego {g.Id}: {text} ({key})");
+                    if (!string.IsNullOrEmpty(g.IdPOne))
+                    {
+                        await _staticHubContext.Clients.Client(g.IdPOne).SendAsync("ReceiveGameReaction", payload);
+                    }
+                    await _staticHubContext.Clients.Group($"game1vs1_{g.Id}").SendAsync("ReceiveGameReaction", payload);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[TriggerBotTaunt Exception] {ex.Message}");
+                }
+            });
+        }
+
+        public async Task SendGameReaction(int gameId, string reactionKey, string reactionText, string emoji)
+        {
+            if (gameId <= 0 || string.IsNullOrWhiteSpace(reactionKey)) return;
+            int numg = FindGame1vs1(gameId);
+            if (numg < 0 || numg >= games.Count) return;
+            var g = games[numg];
+
+            string callerId = Context.ConnectionId;
+            string senderName = SearchPlayer(callerId)?.Name ?? "Jugador";
+            bool isP1 = (callerId == g.IdPOne);
+
+            var payload = new
+            {
+                gameId,
+                reactionKey,
+                reactionText,
+                emoji,
+                senderId = callerId,
+                senderName,
+                isPlayerOne = isP1,
+                isBot = false
+            };
+
+            Console.WriteLine($"[SendGameReaction] Game: {gameId}, De: {senderName}, Clave: {reactionKey}");
+            await Clients.Group($"game1vs1_{gameId}").SendAsync("ReceiveGameReaction", payload);
+            if (!string.IsNullOrEmpty(g.IdPOne) && g.IdPOne != callerId)
+            {
+                await Clients.Client(g.IdPOne).SendAsync("ReceiveGameReaction", payload);
+            }
+            if (!string.IsNullOrEmpty(g.IdPTwo) && g.IdPTwo != callerId)
+            {
+                await Clients.Client(g.IdPTwo).SendAsync("ReceiveGameReaction", payload);
+            }
+
+            // Si el rival es un bot, el bot responde de forma contextual con 40% de probabilidad
+            if (g.IsBotMatch && isP1)
+            {
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(Random.Shared.Next(1600, 2600));
+                    if (!g.IsActive || g.HasPaidOut) return;
+                    if (Random.Shared.NextDouble() < 0.40)
+                    {
+                        switch (reactionKey)
+                        {
+                            case "pide_guapo":
+                                await TriggerBotTaunt(g, "te_acepto", "¡Voy con todo!", "⚡", 0);
+                                break;
+                            case "te_tumbe":
+                                await TriggerBotTaunt(g, "espera", "¡Tranquilo que el juego no se acaba!", "😉", 0);
+                                break;
+                            case "mantequilla":
+                                await TriggerBotTaunt(g, "espera", "¡No cantes victoria todavía!", "😈", 0);
+                                break;
+                            case "perrera":
+                                await TriggerBotTaunt(g, "revancha", "¡Pide revancha a ver si es verdad!", "⚔️", 0);
+                                break;
+                        }
+                    }
+                });
+            }
         }
 
         // Métodos de desarrollo de los juegos a modo 1 vs 1
@@ -2265,11 +2385,28 @@ namespace PericonAPI.Hubs
 
                         if (isP2Winner)
                         {
+                            if (games[numg].IsBotMatch)
+                            {
+                                _ = TriggerBotTaunt(games[numg], "perrera", "¡Ta' barata la perrera!", "🐕", 600);
+                            }
                             await ProcessMatchPayout(numg, games[numg].IdPTwo, games[numg].IdPOne, "VictoriaPorPuntos");
+                        }
+                        else if (games[numg].IsBotMatch)
+                        {
+                            double r = Random.Shared.NextDouble();
+                            if (r < 0.40) _ = TriggerBotTaunt(games[numg], "te_tumbe", "¡Te tumbé, papá!", "🪓", 600);
+                            else if (r < 0.70) _ = TriggerBotTaunt(games[numg], "mantequilla", "¡Qué mantequilla!", "🧈", 600);
                         }
 
                         pone = games[numg].PointsOne.ToString();
                         ptwo = games[numg].PointsTwo.ToString();
+                    }
+                    else if (games[numg].IsBotMatch && games[numg].RoundTwo == 1 && games[numg].RoundOne == 0)
+                    {
+                        if (Random.Shared.NextDouble() < 0.30)
+                        {
+                            _ = TriggerBotTaunt(games[numg], "te_tumbe", "¡La primera es mía!", "🪓", 600);
+                        }
                     }
                 }
                 pone = games[numg].PointsOne.ToString();
@@ -3693,6 +3830,11 @@ namespace PericonAPI.Hubs
             }
             await _staticHubContext.Clients.Group($"game1vs1_{g.Id}").SendAsync("Asked369Game", askData);
 
+            if (Random.Shared.NextDouble() < 0.45)
+            {
+                _ = TriggerBotTaunt(g, "pide_guapo", "¡Pide si eres guapo!", "🔥", 350);
+            }
+
             return true;
         }
 
@@ -4298,6 +4440,16 @@ namespace PericonAPI.Hubs
                             Console.WriteLine($"[GameScavenger] Partida {g.Id} contra bot abandonada por humano (desconectado {p1Elapsed:F0}s). Adjudicando victoria al Bot...");
                             await ExecuteScavengerPayout(numg, g.IdPTwo, g.IdPOne, "AbandonoContraBot");
                             continue;
+                        }
+                    }
+
+                    // Caso C.0: Mofa del Bot si el humano tarda mucho en tirar carta (> 18s)
+                    if (g.IsBotMatch && !g.IsFinished && g.IsActive && g.PlayerTurn == true && p1Alive)
+                    {
+                        var humanElapsed = (now - g.LastTurnActionAt).TotalSeconds;
+                        if (humanElapsed >= 18 && humanElapsed < 24)
+                        {
+                            _ = TriggerBotTaunt(g, "sopa", "¡Épale, que se te enfría la sopa!", "⏳", 0);
                         }
                     }
 
