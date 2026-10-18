@@ -852,12 +852,12 @@ using (var scope = app.Services.CreateScope())
 
         var virtualBots = new (string Username, string Email, string Level, int Wins, int Losses, int Coins, string Avatar, string Diff)[]
         {
-            ("Cheo", "cheo.bot@pericon.lat", "Gallo de Espuela", 28, 14, 1650, "/avatar.png", "facil"),
-            ("Tibisay", "tibisay.bot@pericon.lat", "Doña de la Baraja", 22, 11, 1340, "/avatar.png", "facil"),
-            ("Coromoto", "coromoto.bot@pericon.lat", "Patrona del Perico", 26, 13, 1550, "/avatar.png", "facil"),
-            ("El Catire", "elcatire.bot@pericon.lat", "Bravo de la Mesa", 35, 19, 2100, "/avatar.png", "facil"),
-            ("Rosendo", "rosendo.bot@pericon.lat", "Taimador del Llano", 30, 17, 1820, "/avatar.png", "facil"),
-            ("Oswaldo", "oswaldo.bot@pericon.lat", "Veterano de Apure", 33, 18, 1950, "/avatar.png", "facil")
+            ("Cheo", "cheo.bot@pericon.lat", "Peón de Casona", 0, 0, 1000, "/avatar.png", "facil"),
+            ("Tibisay", "tibisay.bot@pericon.lat", "Peón de Casona", 0, 0, 1000, "/avatar.png", "facil"),
+            ("Coromoto", "coromoto.bot@pericon.lat", "Peón de Casona", 0, 0, 1000, "/avatar.png", "facil"),
+            ("El Catire", "elcatire.bot@pericon.lat", "Peón de Casona", 0, 0, 1000, "/avatar.png", "facil"),
+            ("Rosendo", "rosendo.bot@pericon.lat", "Peón de Casona", 0, 0, 1000, "/avatar.png", "facil"),
+            ("Oswaldo", "oswaldo.bot@pericon.lat", "Peón de Casona", 0, 0, 1000, "/avatar.png", "facil")
         };
 
         bool anyBotAdded = false;
@@ -890,14 +890,40 @@ using (var scope = app.Services.CreateScope())
                 botUser.Email = bEmail;
                 botUser.IsVirtualBot = true;
                 botUser.IsActive = true;
+                botUser.Wins = 0;
+                botUser.Losses = 0;
+                botUser.Experience = 0;
+                botUser.Coins = 1000;
+                botUser.Level = "Peón de Casona";
                 if (string.IsNullOrEmpty(botUser.BotDifficulty)) botUser.BotDifficulty = bDiff;
                 anyBotAdded = true;
             }
         }
+
+        // Limpiar ranking e historial de partidas de bots anteriores para que comiencen 100% de cero
+        try
+        {
+            var allOldBots = db.Users.Where(u => u.IsVirtualBot || u.Email.Contains(".bot@pericon.lat")).ToList();
+            foreach (var b in allOldBots)
+            {
+                b.Wins = 0;
+                b.Losses = 0;
+                b.Experience = 0;
+                b.Coins = 1000;
+                b.Level = "Peón de Casona";
+            }
+            db.BotMatchRecords.RemoveRange(db.BotMatchRecords);
+            anyBotAdded = true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[VirtualBots Clean Error] {ex.Message}");
+        }
+
         if (anyBotAdded)
         {
             db.SaveChanges();
-            Console.WriteLine("[VirtualBots] 6 Nuevos Bots Virtuales 1vs1 inicializados/actualizados en la base de datos.");
+            Console.WriteLine("[VirtualBots] 6 Bots Virtuales reiniciados a 0 victorias en el ranking e inicializados.");
         }
     }
     catch (Exception ex)
