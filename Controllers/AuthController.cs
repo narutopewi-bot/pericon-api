@@ -269,6 +269,20 @@ namespace PericonAPI.Controllers
             // Primera y única cuenta del dispositivo recibe 300 monedas de bienvenida de lanzamiento
             int welcomeCoins = 300;
             int welcomeBonus = 300;
+            int promoReward = 0;
+            PromoCode? appliedPromo = null;
+
+            if (!string.IsNullOrWhiteSpace(dto.PromoCode))
+            {
+                var cleanPromo = dto.PromoCode.Trim().ToUpperInvariant();
+                appliedPromo = await _context.PromoCodes.FirstOrDefaultAsync(p => p.Code == cleanPromo);
+                if (appliedPromo != null && appliedPromo.IsActive && (!appliedPromo.ExpiresAt.HasValue || appliedPromo.ExpiresAt.Value > DateTime.UtcNow) && appliedPromo.TimesUsed < appliedPromo.MaxUses)
+                {
+                    promoReward = appliedPromo.CoinsReward;
+                    welcomeCoins += promoReward;
+                    welcomeBonus += promoReward;
+                }
+            }
 
             var user = new User
             {
@@ -291,6 +305,19 @@ namespace PericonAPI.Controllers
             _context.Users.Add(user);
             await _context.SaveChangesAsync();
 
+            if (appliedPromo != null && promoReward > 0)
+            {
+                appliedPromo.TimesUsed += 1;
+                _context.PromoCodeRedemptions.Add(new PromoCodeRedemption
+                {
+                    PromoCodeId = appliedPromo.Id,
+                    UserId = user.Id,
+                    CoinsAwarded = promoReward,
+                    RedeemedAt = DateTime.UtcNow
+                });
+                await _context.SaveChangesAsync();
+            }
+
             return Ok(new AuthResponseDto
             {
                 Id = user.Id,
@@ -308,7 +335,9 @@ namespace PericonAPI.Controllers
                 Level = user.GetCalculatedLevel(),
                 Experience = user.Experience,
                 AvatarUrl = user.AvatarUrl,
-                Message = "Usuario registrado exitosamente."
+                Message = promoReward > 0
+                    ? $"¡Bienvenido a El Pericón! Se te han acreditado 300 monedas iniciales + {promoReward} monedas de regalo del código '{appliedPromo?.Code}'."
+                    : "Usuario registrado exitosamente."
             });
         }
 

@@ -922,6 +922,21 @@ using (var scope = app.Services.CreateScope())
             db.SaveChanges();
             Console.WriteLine("[PromoCode] Código promocional 'PERICON2026' activado.");
         }
+
+        if (!db.PromoCodes.Any(p => p.Code == "PERICONQR"))
+        {
+            db.PromoCodes.Add(new PromoCode
+            {
+                Code = "PERICONQR",
+                CoinsReward = 100,
+                MaxUses = 100000,
+                TimesUsed = 0,
+                IsActive = true,
+                CreatedAt = DateTime.UtcNow
+            });
+            db.SaveChanges();
+            Console.WriteLine("[PromoCode] Código promocional de Flyer 'PERICONQR' (+100 monedas) activado.");
+        }
     }
     catch (Exception ex)
     {

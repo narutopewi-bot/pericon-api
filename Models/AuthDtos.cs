@@ -32,6 +32,9 @@ namespace PericonAPI.Models
         public string? BirthDate { get; set; }
 
         public string? VerificationCode { get; set; }
+
+        [MaxLength(50)]
+        public string? PromoCode { get; set; }
     }
 
     public class LoginDto
