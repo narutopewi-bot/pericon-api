@@ -937,6 +937,21 @@ using (var scope = app.Services.CreateScope())
             db.SaveChanges();
             Console.WriteLine("[PromoCode] Código promocional de Flyer 'PERICONQR' (+100 monedas) activado.");
         }
+
+        if (!db.PromoCodes.Any(p => p.Code == "DEMO400"))
+        {
+            db.PromoCodes.Add(new PromoCode
+            {
+                Code = "DEMO400",
+                CoinsReward = 100,
+                MaxUses = 500000,
+                TimesUsed = 0,
+                IsActive = true,
+                CreatedAt = DateTime.UtcNow
+            });
+            db.SaveChanges();
+            Console.WriteLine("[PromoCode] Código promocional de Modo Demo 'DEMO400' (+100 monedas) activado.");
+        }
     }
     catch (Exception ex)
     {

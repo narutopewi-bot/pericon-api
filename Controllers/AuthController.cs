@@ -259,6 +259,7 @@ namespace PericonAPI.Controllers
             int welcomeBonus = 300;
             int promoReward = 0;
             PromoCode? appliedPromo = null;
+            User? referrerUser = null;
 
             if (!string.IsNullOrWhiteSpace(dto.PromoCode))
             {
@@ -269,6 +270,20 @@ namespace PericonAPI.Controllers
                     promoReward = appliedPromo.CoinsReward;
                     welcomeCoins += promoReward;
                     welcomeBonus += promoReward;
+                }
+                else
+                {
+                    // Verificar si es un código de referido o bodega
+                    referrerUser = await _context.Users.FirstOrDefaultAsync(u =>
+                        (u.ReferralCode != null && u.ReferralCode.ToUpper() == cleanPromo) ||
+                        u.Username.ToUpper() == cleanPromo);
+
+                    if (referrerUser != null)
+                    {
+                        promoReward = 100;
+                        welcomeCoins += 100;
+                        welcomeBonus += 100;
+                    }
                 }
             }
 
@@ -284,6 +299,8 @@ namespace PericonAPI.Controllers
                 PasswordHash = passwordHash,
                 Coins = welcomeCoins,
                 BonusCoins = welcomeBonus,
+                ReferredByUserId = referrerUser?.Id,
+                ReferralCode = referrerUser != null ? (referrerUser.ReferralCode ?? referrerUser.Username.ToUpper()) : null,
                 Level = "Peón de Casona",
                 Experience = 0,
                 CreatedAt = DateTime.UtcNow,
@@ -302,6 +319,21 @@ namespace PericonAPI.Controllers
                     UserId = user.Id,
                     CoinsAwarded = promoReward,
                     RedeemedAt = DateTime.UtcNow
+                });
+                await _context.SaveChangesAsync();
+            }
+            else if (referrerUser != null)
+            {
+                _context.ReferralRecords.Add(new ReferralRecord
+                {
+                    ReferrerUserId = referrerUser.Id,
+                    ReferredUserId = user.Id,
+                    ReferralCode = referrerUser.ReferralCode ?? referrerUser.Username.ToUpper(),
+                    ReferredUsername = user.Username,
+                    CoinsAwardedReferred = 100,
+                    CoinsAwardedReferrer = 150,
+                    Status = "Pendiente",
+                    CreatedAt = DateTime.UtcNow
                 });
                 await _context.SaveChangesAsync();
             }
