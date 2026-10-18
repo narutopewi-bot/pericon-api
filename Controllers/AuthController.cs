@@ -165,7 +165,7 @@ namespace PericonAPI.Controllers
                 return BadRequest(new { message = "El nombre de usuario ya está en uso." });
             }
 
-            // 2. Validación de Mayor de Edad (Fecha de Nacimiento >= 18 años)
+            // 2. Validación de Fecha de Nacimiento (Opcional en registro, se valida en retiros)
             DateTime? parsedBirthDate = null;
             if (!string.IsNullOrWhiteSpace(dto.BirthDate))
             {
@@ -180,60 +180,48 @@ namespace PericonAPI.Controllers
                         return BadRequest(new { message = "Debes tener al menos 18 años cumplidos para registrarte y jugar en El Pericón." });
                     }
                 }
-                else
-                {
-                    return BadRequest(new { message = "Formato de fecha de nacimiento inválido." });
-                }
-            }
-            else
-            {
-                return BadRequest(new { message = "La fecha de nacimiento es obligatoria para verificar que seas mayor de edad." });
             }
 
-            // 3. Validación de Cédula de Identidad (Única)
-            var cleanCedula = dto.Cedula?.Trim().ToUpperInvariant();
-            if (string.IsNullOrWhiteSpace(cleanCedula))
+            // 3. Validación de Cédula de Identidad (Opcional en registro, obligatoria al retirar)
+            string? cleanCedula = null;
+            if (!string.IsNullOrWhiteSpace(dto.Cedula))
             {
-                return BadRequest(new { message = "La cédula de identidad es requerida para el registro." });
-            }
-            cleanCedula = System.Text.RegularExpressions.Regex.Replace(cleanCedula, @"\s+", "");
-            if (!cleanCedula.StartsWith("V-") && !cleanCedula.StartsWith("E-"))
-            {
-                if (cleanCedula.StartsWith("V") || cleanCedula.StartsWith("E"))
+                cleanCedula = dto.Cedula.Trim().ToUpperInvariant();
+                cleanCedula = System.Text.RegularExpressions.Regex.Replace(cleanCedula, @"\s+", "");
+                if (!cleanCedula.StartsWith("V-") && !cleanCedula.StartsWith("E-"))
                 {
-                    cleanCedula = cleanCedula.Substring(0, 1) + "-" + cleanCedula.Substring(1);
+                    if (cleanCedula.StartsWith("V") || cleanCedula.StartsWith("E"))
+                    {
+                        cleanCedula = cleanCedula.Substring(0, 1) + "-" + cleanCedula.Substring(1);
+                    }
+                    else
+                    {
+                        cleanCedula = "V-" + cleanCedula;
+                    }
                 }
-                else
+                if (await _context.Users.AnyAsync(u => u.Cedula != null && u.Cedula.ToLower() == cleanCedula.ToLower()))
                 {
-                    cleanCedula = "V-" + cleanCedula;
+                    return BadRequest(new { message = "Esta cédula de identidad ya se encuentra registrada con otra cuenta en El Pericón." });
                 }
-            }
-            if (await _context.Users.AnyAsync(u => u.Cedula != null && u.Cedula.ToLower() == cleanCedula.ToLower()))
-            {
-                return BadRequest(new { message = "Esta cédula de identidad ya se encuentra registrada con otra cuenta en El Pericón." });
             }
 
-            // 4. Validación de Banco
-            var cleanBank = dto.BankName?.Trim();
-            if (string.IsNullOrWhiteSpace(cleanBank))
-            {
-                return BadRequest(new { message = "Debes seleccionar tu banco para Pago Móvil." });
-            }
+            // 4. Banco (Opcional en registro, obligatorio al retirar)
+            string? cleanBank = !string.IsNullOrWhiteSpace(dto.BankName) ? dto.BankName.Trim() : null;
 
-            // 5. Validación de Teléfono / WhatsApp (Único)
+            // 5. Validación de Teléfono / WhatsApp (OBLIGATORIO Y ÚNICO)
             string? rawPhone = !string.IsNullOrWhiteSpace(dto.PhoneNumber) ? dto.PhoneNumber.Trim() : (!string.IsNullOrWhiteSpace(dto.Phone) ? dto.Phone.Trim() : null);
             if (string.IsNullOrWhiteSpace(rawPhone))
             {
-                return BadRequest(new { message = "El número de teléfono de Pago Móvil es requerido." });
+                return BadRequest(new { message = "El número de WhatsApp es requerido para el registro." });
             }
             var digitsOnly = System.Text.RegularExpressions.Regex.Replace(rawPhone, @"\D", "");
             if (digitsOnly.Length < 10 || digitsOnly.Length > 12)
             {
-                return BadRequest(new { message = "Ingresa un número telefónico venezolano válido (ej: 04121234567)." });
+                return BadRequest(new { message = "Ingresa un número de WhatsApp venezolano válido (ej: 04121234567)." });
             }
             if (await _context.Users.AnyAsync(u => u.PhoneNumber != null && (u.PhoneNumber == rawPhone || u.PhoneNumber == digitsOnly)))
             {
-                return BadRequest(new { message = "Este número de teléfono ya se encuentra registrado con otra cuenta." });
+                return BadRequest(new { message = "Este número de WhatsApp ya se encuentra registrado con otra cuenta." });
             }
 
             // 6. BLOQUEO TOTAL DE MULTICUENTAS POR DISPOSITIVO E IP:

@@ -583,6 +583,20 @@ namespace PericonAPI.Controllers
             // Descontar monedas de inmediato para evitar doble gasto
             user.Coins -= dto.CoinsAmount;
 
+            // Si el usuario no tenía cédula, banco o teléfono guardados en su perfil de User, guardarlos ahora
+            if (string.IsNullOrWhiteSpace(user.Cedula))
+            {
+                user.Cedula = dto.IdCard.Trim();
+            }
+            if (string.IsNullOrWhiteSpace(user.BankName))
+            {
+                user.BankName = dto.BankName.Trim();
+            }
+            if (string.IsNullOrWhiteSpace(user.PhoneNumber))
+            {
+                user.PhoneNumber = dto.PhoneNumber.Trim();
+            }
+
             var withdrawal = new PaymentWithdrawal
             {
                 UserId = dto.UserId,
