@@ -136,6 +136,23 @@ using (var scope = app.Services.CreateScope())
         try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN BonusCoins INTEGER NOT NULL DEFAULT 0;"); } catch { }
         try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN IsVirtualBot INTEGER NOT NULL DEFAULT 0;"); } catch { }
         try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN BotDifficulty TEXT NOT NULL DEFAULT 'facil';"); } catch { }
+        try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN DailyWins INTEGER NOT NULL DEFAULT 0;"); } catch { }
+        try { db.Database.ExecuteSqlRaw("ALTER TABLE Users ADD COLUMN LastDailyWinDate TEXT NULL;"); } catch { }
+        try
+        {
+            db.Database.ExecuteSqlRaw(@"
+                CREATE TABLE IF NOT EXISTS DailyLeaderboardRewards (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    UserId INTEGER NOT NULL,
+                    Username TEXT NOT NULL,
+                    Rank INTEGER NOT NULL,
+                    CoinsAwarded INTEGER NOT NULL,
+                    WinsCount INTEGER NOT NULL,
+                    RewardDate TEXT NOT NULL,
+                    CreatedAt TEXT NOT NULL
+                );
+            ");
+        } catch { }
         try
         {
             db.Database.ExecuteSqlRaw(@"
@@ -329,6 +346,20 @@ using (var scope = app.Services.CreateScope())
             db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""BonusCoins"" INTEGER NOT NULL DEFAULT 0;");
             db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""IsVirtualBot"" BOOLEAN NOT NULL DEFAULT FALSE;");
             db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""BotDifficulty"" VARCHAR(20) NOT NULL DEFAULT 'facil';");
+            db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""DailyWins"" INTEGER NOT NULL DEFAULT 0;");
+            db.Database.ExecuteSqlRaw(@"ALTER TABLE ""Users"" ADD COLUMN IF NOT EXISTS ""LastDailyWinDate"" TIMESTAMP WITH TIME ZONE NULL;");
+            db.Database.ExecuteSqlRaw(@"
+                CREATE TABLE IF NOT EXISTS ""DailyLeaderboardRewards"" (
+                    ""Id"" SERIAL PRIMARY KEY,
+                    ""UserId"" INT NOT NULL,
+                    ""Username"" VARCHAR(50) NOT NULL,
+                    ""Rank"" INT NOT NULL,
+                    ""CoinsAwarded"" INT NOT NULL,
+                    ""WinsCount"" INT NOT NULL,
+                    ""RewardDate"" VARCHAR(20) NOT NULL,
+                    ""CreatedAt"" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+                );
+            ");
         }
         catch { }
 

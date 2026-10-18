@@ -25,6 +25,8 @@ namespace PericonAPI.Models
         public int GetRetirableCoins() => Math.Max(0, Coins - BonusCoins);
 
         public int Wins { get; set; } = 0;
+        public int DailyWins { get; set; } = 0;
+        public DateTime? LastDailyWinDate { get; set; }
 
         public int Losses { get; set; } = 0;
 

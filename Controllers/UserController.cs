@@ -126,6 +126,19 @@ namespace PericonAPI.Controllers
             if (dto.Won)
             {
                 user.Wins += 1;
+                if (!user.IsVirtualBot)
+                {
+                    var todayUtc = DateTime.UtcNow.Date;
+                    if (user.LastDailyWinDate == null || user.LastDailyWinDate.Value.Date != todayUtc)
+                    {
+                        user.DailyWins = 1;
+                        user.LastDailyWinDate = DateTime.UtcNow;
+                    }
+                    else
+                    {
+                        user.DailyWins += 1;
+                    }
+                }
                 houseCommission = (int)Math.Round(bet * 0.10);
                 int userPrize = bet - houseCommission;
 
@@ -425,7 +438,7 @@ namespace PericonAPI.Controllers
         public async Task<IActionResult> GetLeaderboard()
         {
             var topPlayersList = await _context.Users
-                .Where(u => u.IsActive && u.Username != "Guardian")
+                .Where(u => u.IsActive && !u.IsVirtualBot && u.Username != "Guardian")
                 .OrderByDescending(u => u.Wins)
                 .ThenByDescending(u => u.Coins)
                 .Take(10)
@@ -449,6 +462,118 @@ namespace PericonAPI.Controllers
             }).ToList();
 
             return Ok(topPlayers);
+        }
+
+        [HttpGet("daily-leaderboard")]
+        public async Task<IActionResult> GetDailyLeaderboard()
+        {
+            var nowUtc = DateTime.UtcNow;
+            var vetNow = nowUtc.AddHours(-4); // Hora de Venezuela (UTC-4)
+            var todayUtcDate = nowUtc.Date;
+
+            // Liquidación automática si el día de ayer no se liquidó
+            await CheckAndSettleYesterdayLeaderboard(vetNow);
+
+            // Consultar jugadores humanos activos con victorias hoy (Exclusión total de bots)
+            var dailyPlayers = await _context.Users
+                .Where(u => u.IsActive && !u.IsVirtualBot && u.Username != "Guardian" && u.DailyWins > 0 && u.LastDailyWinDate != null && u.LastDailyWinDate.Value.Date == todayUtcDate)
+                .OrderByDescending(u => u.DailyWins)
+                .ThenByDescending(u => u.Coins)
+                .Take(10)
+                .ToListAsync();
+
+            var list = dailyPlayers.Select((u, idx) => new
+            {
+                rank = idx + 1,
+                id = u.Id,
+                username = u.Username,
+                dailyWins = u.DailyWins,
+                totalWins = u.Wins,
+                coins = u.Coins,
+                avatarUrl = u.AvatarUrl,
+                level = u.GetCalculatedLevel(),
+                prizeCoins = idx == 0 ? 500 : (idx == 1 ? 300 : (idx == 2 ? 200 : 0))
+            }).ToList();
+
+            // Calcular segundos restantes para la medianoche en Venezuela (11:59:59 PM VET)
+            var vetMidnight = vetNow.Date.AddDays(1);
+            var secondsRemaining = Math.Max(0, (int)(vetMidnight - vetNow).TotalSeconds);
+
+            // Obtener ganadores de ayer
+            var yesterdayStr = vetNow.Date.AddDays(-1).ToString("yyyy-MM-dd");
+            var yesterdayRewards = await _context.DailyLeaderboardRewards
+                .Where(r => r.RewardDate == yesterdayStr)
+                .OrderBy(r => r.Rank)
+                .ToListAsync();
+
+            return Ok(new
+            {
+                players = list,
+                prizes = new[]
+                {
+                    new { rank = 1, prize = 500, label = "Campeón del Día (50%)" },
+                    new { rank = 2, prize = 300, label = "Subcampeón (30%)" },
+                    new { rank = 3, prize = 200, label = "Tercer Gallo (20%)" }
+                },
+                minWinsRequired = 5,
+                secondsRemaining,
+                yesterdayDate = yesterdayStr,
+                yesterdayWinners = yesterdayRewards.Select(r => new
+                {
+                    rank = r.Rank,
+                    username = r.Username,
+                    prizeCoins = r.CoinsAwarded,
+                    winsCount = r.WinsCount
+                })
+            });
+        }
+
+        private async Task CheckAndSettleYesterdayLeaderboard(DateTime vetNow)
+        {
+            try
+            {
+                var yesterdayDate = vetNow.Date.AddDays(-1);
+                var yesterdayStr = yesterdayDate.ToString("yyyy-MM-dd");
+
+                // Verificar si ya fue liquidado
+                bool alreadySettled = await _context.DailyLeaderboardRewards.AnyAsync(r => r.RewardDate == yesterdayStr);
+                if (alreadySettled) return;
+
+                // Buscar el Top 3 de ayer con mínimo 5 victorias
+                var yesterdayWinners = await _context.Users
+                    .Where(u => u.IsActive && !u.IsVirtualBot && u.Username != "Guardian" && u.DailyWins >= 5 && u.LastDailyWinDate != null && u.LastDailyWinDate.Value.Date == yesterdayDate)
+                    .OrderByDescending(u => u.DailyWins)
+                    .ThenByDescending(u => u.Coins)
+                    .Take(3)
+                    .ToListAsync();
+
+                if (yesterdayWinners.Any())
+                {
+                    int[] prizes = { 500, 300, 200 };
+                    for (int i = 0; i < yesterdayWinners.Count; i++)
+                    {
+                        var winner = yesterdayWinners[i];
+                        int prize = prizes[i];
+                        winner.Coins += prize; // Acreditar monedas reales
+
+                        _context.DailyLeaderboardRewards.Add(new DailyLeaderboardReward
+                        {
+                            UserId = winner.Id,
+                            Username = winner.Username,
+                            Rank = i + 1,
+                            CoinsAwarded = prize,
+                            WinsCount = winner.DailyWins,
+                            RewardDate = yesterdayStr,
+                            CreatedAt = DateTime.UtcNow
+                        });
+                    }
+                    await _context.SaveChangesAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[DailyLeaderboard Settlement Warn] {ex.Message}");
+            }
         }
 
         [HttpPut("update-profile")]

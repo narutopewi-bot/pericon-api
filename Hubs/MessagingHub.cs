@@ -2919,6 +2919,19 @@ namespace PericonAPI.Hubs
                             if (dbWinner != null)
                             {
                                 dbWinner.Wins += 1;
+                                if (!dbWinner.IsVirtualBot)
+                                {
+                                    var todayUtc = DateTime.UtcNow.Date;
+                                    if (dbWinner.LastDailyWinDate == null || dbWinner.LastDailyWinDate.Value.Date != todayUtc)
+                                    {
+                                        dbWinner.DailyWins = 1;
+                                        dbWinner.LastDailyWinDate = DateTime.UtcNow;
+                                    }
+                                    else
+                                    {
+                                        dbWinner.DailyWins += 1;
+                                    }
+                                }
                                 dbWinner.Level = dbWinner.GetCalculatedLevel();
                                 winnerNewCoins = dbWinner.Coins;
                                 winnerPlayer.Coins = winnerNewCoins;
@@ -2989,6 +3002,19 @@ namespace PericonAPI.Hubs
                                 }
 
                                 dbWinner.Wins += 1;
+                                if (!dbWinner.IsVirtualBot)
+                                {
+                                    var todayUtc = DateTime.UtcNow.Date;
+                                    if (dbWinner.LastDailyWinDate == null || dbWinner.LastDailyWinDate.Value.Date != todayUtc)
+                                    {
+                                        dbWinner.DailyWins = 1;
+                                        dbWinner.LastDailyWinDate = DateTime.UtcNow;
+                                    }
+                                    else
+                                    {
+                                        dbWinner.DailyWins += 1;
+                                    }
+                                }
                                 dbWinner.Level = dbWinner.GetCalculatedLevel();
                                 winnerNewCoins = dbWinner.Coins;
                                 winnerPlayer.Coins = winnerNewCoins;

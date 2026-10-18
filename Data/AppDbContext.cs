@@ -25,6 +25,7 @@ namespace PericonAPI.Data
         public DbSet<TournamentMatch> TournamentMatches { get; set; }
         public DbSet<ReferralRecord> ReferralRecords { get; set; }
         public DbSet<EmailVerificationCode> EmailVerificationCodes { get; set; }
+        public DbSet<DailyLeaderboardReward> DailyLeaderboardRewards { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
