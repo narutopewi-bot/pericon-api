@@ -4775,6 +4775,19 @@ namespace PericonAPI.Hubs
                                     dbUser.Coins += netGain;
                                 }
                                 dbUser.Wins += 1;
+                                if (!dbUser.IsVirtualBot)
+                                {
+                                    var todayUtc = DateTime.UtcNow.Date;
+                                    if (dbUser.LastDailyWinDate == null || dbUser.LastDailyWinDate.Value.Date != todayUtc)
+                                    {
+                                        dbUser.DailyWins = 1;
+                                        dbUser.LastDailyWinDate = DateTime.UtcNow;
+                                    }
+                                    else
+                                    {
+                                        dbUser.DailyWins += 1;
+                                    }
+                                }
                             }
                             else
                             {
