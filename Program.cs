@@ -921,30 +921,59 @@ using (var scope = app.Services.CreateScope())
             }
         }
 
-        // Limpiar ranking e historial de partidas de bots anteriores para que comiencen 100% de cero
+        // Restauración y resguardo del historial de partidas vs bots desde MatchBetRecords si BotMatchRecords está vacío
         try
         {
-            var allOldBots = db.Users.Where(u => u.IsVirtualBot || u.Email.Contains(".bot@pericon.lat")).ToList();
-            foreach (var b in allOldBots)
+            if (!db.BotMatchRecords.Any())
             {
-                b.Wins = 0;
-                b.Losses = 0;
-                b.Experience = 0;
-                b.Coins = 1000;
-                b.Level = "Peón de Casona";
+                var botBetMatches = db.MatchBetRecords.Where(m => m.IsBotMatch).OrderBy(m => m.CreatedAt).ToList();
+                if (botBetMatches.Count > 0)
+                {
+                    var dbBots = db.Users.Where(u => u.IsVirtualBot).ToList();
+                    var botNames = new HashSet<string>(dbBots.Select(u => u.Username.ToLower()), StringComparer.OrdinalIgnoreCase);
+
+                    foreach (var m in botBetMatches)
+                    {
+                        bool p2IsBot = botNames.Contains(m.PlayerTwoName.ToLower()) || 
+                                       m.PlayerTwoName.ToLower().Contains("bot") || 
+                                       !botNames.Contains(m.PlayerOneName.ToLower());
+                        
+                        string botName = p2IsBot ? m.PlayerTwoName : m.PlayerOneName;
+                        string humanName = p2IsBot ? m.PlayerOneName : m.PlayerTwoName;
+                        bool humanWon = m.WinnerUsername.Equals(humanName, StringComparison.OrdinalIgnoreCase);
+
+                        int bet = m.BetPerPlayer > 0 ? m.BetPerPlayer : 200;
+                        int houseCommission = m.HouseCommission > 0 ? m.HouseCommission : (int)Math.Round(bet * 0.1);
+                        int winnerPrize = m.WinnerPrize > 0 ? m.WinnerPrize : (bet * 2 - houseCommission);
+
+                        var humanUser = db.Users.FirstOrDefault(u => u.Username == humanName);
+
+                        var botRecord = new BotMatchRecord
+                        {
+                            UserId = humanUser?.Id ?? 0,
+                            Username = humanName,
+                            BotName = botName,
+                            BetAmount = bet,
+                            UserWon = humanWon,
+                            CoinsWon = humanWon ? (winnerPrize - bet) : 0,
+                            CoinsLost = humanWon ? 0 : bet,
+                            HouseCommission = houseCommission,
+                            HouseProfit = humanWon ? -(winnerPrize - bet) : bet,
+                            UserCoinsBefore = 0,
+                            UserCoinsAfter = humanUser?.Coins ?? 0,
+                            EndReason = !string.IsNullOrEmpty(m.EndReason) ? m.EndReason : "VictoriaPorPuntos",
+                            CreatedAt = m.CreatedAt
+                        };
+                        db.BotMatchRecords.Add(botRecord);
+                    }
+                    db.SaveChanges();
+                    Console.WriteLine($"[RestoreBotMatches] Se restauraron con éxito {botBetMatches.Count} partidas vs Bot desde MatchBetRecords.");
+                }
             }
-            db.BotMatchRecords.RemoveRange(db.BotMatchRecords);
-            anyBotAdded = true;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[VirtualBots Clean Error] {ex.Message}");
-        }
-
-        if (anyBotAdded)
-        {
-            db.SaveChanges();
-            Console.WriteLine("[VirtualBots] 6 Bots Virtuales reiniciados a 0 victorias en el ranking e inicializados.");
+            Console.WriteLine($"[RestoreBotMatches Error] {ex.Message}");
         }
     }
     catch (Exception ex)

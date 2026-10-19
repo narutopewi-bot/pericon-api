@@ -699,6 +699,49 @@ namespace PericonAPI.Controllers
         [HttpGet("bot-matches")]
         public async Task<IActionResult> GetBotMatches([FromQuery] string? search, [FromQuery] string? filter)
         {
+            // Respaldo de seguridad: si BotMatchRecords está vacío y MatchBetRecords tiene partidas vs Bot, restaurar inmediatamente
+            if (!await _context.BotMatchRecords.AnyAsync() && await _context.MatchBetRecords.AnyAsync(m => m.IsBotMatch))
+            {
+                var botBetMatches = await _context.MatchBetRecords.Where(m => m.IsBotMatch).OrderBy(m => m.CreatedAt).ToListAsync();
+                var virtualBots = await _context.Users.Where(u => u.IsVirtualBot).ToListAsync();
+                var botNames = new HashSet<string>(virtualBots.Select(u => u.Username.ToLower()), StringComparer.OrdinalIgnoreCase);
+
+                foreach (var m in botBetMatches)
+                {
+                    bool p2IsBot = botNames.Contains(m.PlayerTwoName.ToLower()) || 
+                                   m.PlayerTwoName.ToLower().Contains("bot") || 
+                                   !botNames.Contains(m.PlayerOneName.ToLower());
+                    
+                    string botName = p2IsBot ? m.PlayerTwoName : m.PlayerOneName;
+                    string humanName = p2IsBot ? m.PlayerOneName : m.PlayerTwoName;
+                    bool humanWon = m.WinnerUsername.Equals(humanName, StringComparison.OrdinalIgnoreCase);
+
+                    int bet = m.BetPerPlayer > 0 ? m.BetPerPlayer : 200;
+                    int houseCommission = m.HouseCommission > 0 ? m.HouseCommission : (int)Math.Round(bet * 0.1);
+                    int winnerPrize = m.WinnerPrize > 0 ? m.WinnerPrize : (bet * 2 - houseCommission);
+
+                    var humanUser = await _context.Users.FirstOrDefaultAsync(u => u.Username == humanName);
+
+                    _context.BotMatchRecords.Add(new BotMatchRecord
+                    {
+                        UserId = humanUser?.Id ?? 0,
+                        Username = humanName,
+                        BotName = botName,
+                        BetAmount = bet,
+                        UserWon = humanWon,
+                        CoinsWon = humanWon ? (winnerPrize - bet) : 0,
+                        CoinsLost = humanWon ? 0 : bet,
+                        HouseCommission = houseCommission,
+                        HouseProfit = humanWon ? -(winnerPrize - bet) : bet,
+                        UserCoinsBefore = 0,
+                        UserCoinsAfter = humanUser?.Coins ?? 0,
+                        EndReason = !string.IsNullOrEmpty(m.EndReason) ? m.EndReason : "VictoriaPorPuntos",
+                        CreatedAt = m.CreatedAt
+                    });
+                }
+                await _context.SaveChangesAsync();
+            }
+
             var query = _context.BotMatchRecords.AsQueryable();
 
             if (!string.IsNullOrWhiteSpace(search))
@@ -727,11 +770,10 @@ namespace PericonAPI.Controllers
 
             // CÁLCULO DIARIO (Hora de Venezuela UTC-4): Inicia en Cero a la medianoche
             var vzlaNow = VenezuelaTime.Now;
-            var todayVzla = vzlaNow.Date;
-            var todayStartUtc = todayVzla.AddHours(4);
-            var todayEndUtc = todayStartUtc.AddDays(1);
+            var todayStr = vzlaNow.ToString("yyyy-MM-dd");
+            var yesterdayStr = vzlaNow.AddDays(-1).ToString("yyyy-MM-dd");
 
-            var todayList = allList.Where(m => m.CreatedAt >= todayStartUtc && m.CreatedAt < todayEndUtc).ToList();
+            var todayList = allList.Where(m => m.CreatedAt.AddHours(-4).ToString("yyyy-MM-dd") == todayStr).ToList();
             var todayTotalMatches = todayList.Count;
             var todayUserWins = todayList.Count(m => m.UserWon);
             var todayBotWins = todayList.Count(m => !m.UserWon);
@@ -745,7 +787,7 @@ namespace PericonAPI.Controllers
 
             var todaySummary = new
             {
-                date = todayVzla.ToString("yyyy-MM-dd"),
+                date = todayStr,
                 totalMatches = todayTotalMatches,
                 botWins = todayBotWins,
                 userWins = todayUserWins,
@@ -760,11 +802,7 @@ namespace PericonAPI.Controllers
             };
 
             // CÁLCULO AYER (Hora de Venezuela UTC-4)
-            var yesterdayVzla = todayVzla.AddDays(-1);
-            var yesterdayStartUtc = todayStartUtc.AddDays(-1);
-            var yesterdayEndUtc = todayStartUtc;
-
-            var yesterdayList = allList.Where(m => m.CreatedAt >= yesterdayStartUtc && m.CreatedAt < yesterdayEndUtc).ToList();
+            var yesterdayList = allList.Where(m => m.CreatedAt.AddHours(-4).ToString("yyyy-MM-dd") == yesterdayStr).ToList();
             var yesterdayTotalMatches = yesterdayList.Count;
             var yesterdayUserWins = yesterdayList.Count(m => m.UserWon);
             var yesterdayBotWins = yesterdayList.Count(m => !m.UserWon);
@@ -778,7 +816,7 @@ namespace PericonAPI.Controllers
 
             var yesterdaySummary = new
             {
-                date = yesterdayVzla.ToString("yyyy-MM-dd"),
+                date = yesterdayStr,
                 totalMatches = yesterdayTotalMatches,
                 botWins = yesterdayBotWins,
                 userWins = yesterdayUserWins,
