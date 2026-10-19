@@ -694,6 +694,39 @@ namespace PericonAPI.Controllers
                 targetWinRate = 60.0
             };
 
+            // CÁLCULO AYER (Hora de Venezuela UTC-4)
+            var yesterdayVzla = todayVzla.AddDays(-1);
+            var yesterdayStartUtc = todayStartUtc.AddDays(-1);
+            var yesterdayEndUtc = todayStartUtc;
+
+            var yesterdayList = allList.Where(m => m.CreatedAt >= yesterdayStartUtc && m.CreatedAt < yesterdayEndUtc).ToList();
+            var yesterdayTotalMatches = yesterdayList.Count;
+            var yesterdayUserWins = yesterdayList.Count(m => m.UserWon);
+            var yesterdayBotWins = yesterdayList.Count(m => !m.UserWon);
+            var yesterdayUserWinRate = yesterdayTotalMatches > 0 ? Math.Round((double)yesterdayUserWins / yesterdayTotalMatches * 100, 1) : 0;
+            var yesterdayBotWinRate = yesterdayTotalMatches > 0 ? Math.Round((double)yesterdayBotWins / yesterdayTotalMatches * 100, 1) : 0;
+            var yesterdayCoinsWagered = yesterdayList.Sum(m => m.BetAmount);
+            var yesterdayCoinsWonByUser = yesterdayList.Sum(m => m.CoinsWon);
+            var yesterdayCoinsWonByHouse = yesterdayList.Sum(m => m.CoinsLost);
+            var yesterdayHouseCommission = yesterdayList.Sum(m => m.HouseCommission);
+            var yesterdayNetHouseProfit = yesterdayList.Sum(m => m.HouseProfit);
+
+            var yesterdaySummary = new
+            {
+                date = yesterdayVzla.ToString("yyyy-MM-dd"),
+                totalMatches = yesterdayTotalMatches,
+                botWins = yesterdayBotWins,
+                userWins = yesterdayUserWins,
+                botWinRate = yesterdayBotWinRate,
+                userWinRate = yesterdayUserWinRate,
+                totalCoinsWagered = yesterdayCoinsWagered,
+                coinsWonByUser = yesterdayCoinsWonByUser,
+                coinsWonByHouse = yesterdayCoinsWonByHouse,
+                houseCommission = yesterdayHouseCommission,
+                netHouseProfit = yesterdayNetHouseProfit,
+                targetWinRate = 60.0
+            };
+
             // DESGLOSE HISTÓRICO DÍA POR DÍA (HORA VENEZUELA)
             var dailyBreakdown = allList
                 .GroupBy(m => m.CreatedAt.AddHours(-4).ToString("yyyy-MM-dd"))
@@ -759,6 +792,7 @@ namespace PericonAPI.Controllers
                     netHouseProfit
                 },
                 todaySummary,
+                yesterdaySummary,
                 dailyBreakdown,
                 matches
             });
