@@ -892,42 +892,32 @@ using (var scope = app.Services.CreateScope())
         };
 
         bool anyBotAdded = false;
-        foreach (var (bName, bEmail, bLevel, bWins, bLosses, bCoins, bAvatar, bDiff) in virtualBots)
+        var totalExistingVirtualBots = db.Users.Count(u => u.IsVirtualBot);
+        if (totalExistingVirtualBots == 0)
         {
-            var botUser = db.Users.FirstOrDefault(u => u.Username.ToLower() == bName.ToLower() || u.Email.ToLower() == bEmail.ToLower());
-            if (botUser == null)
+            foreach (var (bName, bEmail, bLevel, bWins, bLosses, bCoins, bAvatar, bDiff) in virtualBots)
             {
-                db.Users.Add(new User
+                var botUser = db.Users.FirstOrDefault(u => u.Username.ToLower() == bName.ToLower() || u.Email.ToLower() == bEmail.ToLower());
+                if (botUser == null)
                 {
-                    Username = bName,
-                    Email = bEmail,
-                    PasswordHash = BCrypt.Net.BCrypt.HashPassword($"BotPass.{bName}.2026"),
-                    Coins = bCoins,
-                    Wins = bWins,
-                    Losses = bLosses,
-                    Level = bLevel,
-                    AvatarUrl = bAvatar,
-                    IsActive = true,
-                    IsAdmin = false,
-                    IsVirtualBot = true,
-                    BotDifficulty = bDiff,
-                    CreatedAt = DateTime.UtcNow.AddDays(-15)
-                });
-                anyBotAdded = true;
-            }
-            else
-            {
-                botUser.Username = bName;
-                botUser.Email = bEmail;
-                botUser.IsVirtualBot = true;
-                botUser.IsActive = true;
-                botUser.Wins = 0;
-                botUser.Losses = 0;
-                botUser.Experience = 0;
-                botUser.Coins = 1000;
-                botUser.Level = "Peón de Casona";
-                if (string.IsNullOrEmpty(botUser.BotDifficulty)) botUser.BotDifficulty = bDiff;
-                anyBotAdded = true;
+                    db.Users.Add(new User
+                    {
+                        Username = bName,
+                        Email = bEmail,
+                        PasswordHash = BCrypt.Net.BCrypt.HashPassword($"BotPass.{bName}.2026"),
+                        Coins = bCoins,
+                        Wins = bWins,
+                        Losses = bLosses,
+                        Level = bLevel,
+                        AvatarUrl = bAvatar,
+                        IsActive = true,
+                        IsAdmin = false,
+                        IsVirtualBot = true,
+                        BotDifficulty = bDiff,
+                        CreatedAt = DateTime.UtcNow.AddDays(-15)
+                    });
+                    anyBotAdded = true;
+                }
             }
         }
 

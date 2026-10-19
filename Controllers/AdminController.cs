@@ -305,6 +305,71 @@ namespace PericonAPI.Controllers
             return Ok(new { success = true, message = $"Configuración de {bot.Username} actualizada.", bot });
         }
 
+        public class RenameVirtualBotRequest
+        {
+            public int BotId { get; set; }
+            public string NewName { get; set; } = string.Empty;
+        }
+
+        [HttpPost("virtual-bots/rename")]
+        public async Task<IActionResult> RenameVirtualBot([FromBody] RenameVirtualBotRequest request)
+        {
+            if (request == null || request.BotId <= 0)
+                return BadRequest(new { message = "ID de bot inválido." });
+
+            if (string.IsNullOrWhiteSpace(request.NewName))
+                return BadRequest(new { message = "El nombre del bot no puede estar vacío." });
+
+            var cleanName = request.NewName.Trim();
+            if (cleanName.Length < 2 || cleanName.Length > 25)
+                return BadRequest(new { message = "El nombre debe tener entre 2 y 25 caracteres." });
+
+            var bot = await _context.Users.FirstOrDefaultAsync(u => u.Id == request.BotId && u.IsVirtualBot);
+            if (bot == null)
+                return NotFound(new { message = "Bot no encontrado." });
+
+            var nameLower = cleanName.ToLower();
+            if (nameLower == "guardian" || nameLower == "admin")
+                return BadRequest(new { message = "Ese nombre está reservado para el sistema." });
+
+            var nameExists = await _context.Users.AnyAsync(u => u.Id != bot.Id && u.Username.ToLower() == nameLower);
+            if (nameExists)
+                return BadRequest(new { message = $"El nombre '{cleanName}' ya está en uso por otro jugador o bot." });
+
+            var oldName = bot.Username;
+            bot.Username = cleanName;
+
+            // Actualizar histórico de partidas contra bot para que sus estadísticas sigan vinculadas
+            var botMatches = await _context.BotMatchRecords
+                .Where(m => m.BotName.ToLower() == oldName.ToLower())
+                .ToListAsync();
+            foreach (var bm in botMatches)
+            {
+                bm.BotName = cleanName;
+            }
+
+            var pvpMatches = await _context.MatchBetRecords
+                .Where(m => m.PlayerTwoName.ToLower() == oldName.ToLower())
+                .ToListAsync();
+            foreach (var pm in pvpMatches)
+            {
+                pm.PlayerTwoName = cleanName;
+                if (pm.WinnerUsername.ToLower() == oldName.ToLower()) pm.WinnerUsername = cleanName;
+                if (pm.LoserUsername.ToLower() == oldName.ToLower()) pm.LoserUsername = cleanName;
+            }
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                success = true,
+                message = $"Bot renombrado con éxito de '{oldName}' a '{cleanName}'.",
+                botId = bot.Id,
+                oldName,
+                newName = cleanName
+            });
+        }
+
         [HttpGet("bot-stabilization")]
         public async Task<IActionResult> GetBotStabilization()
         {
