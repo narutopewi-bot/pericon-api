@@ -244,24 +244,19 @@ namespace PericonAPI.Controllers
             var existingAccountOnDevice = await _context.Users
                 .FirstOrDefaultAsync(u => u.DeviceFingerprint == cleanFingerprint);
 
-            if (existingAccountOnDevice != null)
-            {
-                return BadRequest(new 
-                { 
-                    message = $"Ya existe una cuenta registrada en este dispositivo ({existingAccountOnDevice.Username}). En El Pericón solo se permite una cuenta por persona. Por favor inicia sesión con tu cuenta existente." 
-                });
-            }
+            // Si el dispositivo ya fue utilizado por otra cuenta, permitimos crear la cuenta (cero bloqueo) pero con 0 monedas (anti-farming / multi-cuentas)
+            bool isDeviceAlreadyUsed = existingAccountOnDevice != null;
 
             var passwordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password);
 
-            // Primera y única cuenta del dispositivo recibe 300 monedas de bienvenida de lanzamiento
-            int welcomeCoins = 300;
-            int welcomeBonus = 300;
+            // Solo la primera cuenta del dispositivo recibe las 300 monedas de bienvenida
+            int welcomeCoins = isDeviceAlreadyUsed ? 0 : 300;
+            int welcomeBonus = isDeviceAlreadyUsed ? 0 : 300;
             int promoReward = 0;
             PromoCode? appliedPromo = null;
             User? referrerUser = null;
 
-            if (!string.IsNullOrWhiteSpace(dto.PromoCode))
+            if (!isDeviceAlreadyUsed && !string.IsNullOrWhiteSpace(dto.PromoCode))
             {
                 var cleanPromo = dto.PromoCode.Trim().ToUpperInvariant();
                 appliedPromo = await _context.PromoCodes.FirstOrDefaultAsync(p => p.Code == cleanPromo);
@@ -355,9 +350,12 @@ namespace PericonAPI.Controllers
                 Level = user.GetCalculatedLevel(),
                 Experience = user.Experience,
                 AvatarUrl = user.AvatarUrl,
-                Message = promoReward > 0
-                    ? $"¡Bienvenido a El Pericón! Se te han acreditado 300 monedas iniciales + {promoReward} monedas de regalo del código '{appliedPromo?.Code}'."
-                    : "Usuario registrado exitosamente."
+                IsDeviceAlreadyUsed = isDeviceAlreadyUsed,
+                Message = isDeviceAlreadyUsed
+                    ? $"¡Cuenta creada con éxito! Al registrarte desde un dispositivo previamente utilizado ({existingAccountOnDevice!.Username}), tu saldo inicial es de 0 monedas. Recarga en el cajero o recibe monedas de amigos para jugar en las mesas."
+                    : (promoReward > 0
+                        ? $"¡Bienvenido a El Pericón! Se te han acreditado 300 monedas iniciales + {promoReward} monedas de regalo del código '{appliedPromo?.Code}'."
+                        : "Usuario registrado exitosamente.")
             });
         }
 
@@ -482,21 +480,20 @@ namespace PericonAPI.Controllers
             if (user == null)
             {
                 var cleanFingerprint = dto.DeviceFingerprint?.Trim();
+                bool isDeviceAlreadyUsed = false;
+                User? existingAccountOnDevice = null;
                 if (!string.IsNullOrWhiteSpace(cleanFingerprint))
                 {
-                    var existingAccountOnDevice = await _context.Users
+                    existingAccountOnDevice = await _context.Users
                         .FirstOrDefaultAsync(u => u.DeviceFingerprint == cleanFingerprint);
                     if (existingAccountOnDevice != null)
                     {
-                        return BadRequest(new 
-                        { 
-                            message = $"Ya existe una cuenta registrada en este dispositivo ({existingAccountOnDevice.Username}). En El Pericón solo se permite una cuenta por persona." 
-                        });
+                        isDeviceAlreadyUsed = true;
                     }
                 }
 
-                int welcomeCoins = 300;
-                int welcomeBonus = 300;
+                int welcomeCoins = isDeviceAlreadyUsed ? 0 : 300;
+                int welcomeBonus = isDeviceAlreadyUsed ? 0 : 300;
 
                 // Generar un username único
                 var baseUsername = string.IsNullOrWhiteSpace(name) ? cleanEmail.Split('@')[0] : name.Trim();
@@ -579,7 +576,10 @@ namespace PericonAPI.Controllers
                 Level = calculatedLevel,
                 Experience = user.Experience,
                 AvatarUrl = user.AvatarUrl,
-                Message = "Autenticación con Google exitosa."
+                IsDeviceAlreadyUsed = user.Coins == 0,
+                Message = user.Coins == 0
+                    ? "Autenticación con Google exitosa. Saldo inicial de 0 monedas por registrarse en un dispositivo previamente utilizado."
+                    : "Autenticación con Google exitosa."
             });
         }
 

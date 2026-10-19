@@ -77,6 +77,7 @@ namespace PericonAPI.Models
         public string? PhoneNumber { get; set; }
         public string? Cedula { get; set; }
         public string? BankName { get; set; }
+        public bool IsDeviceAlreadyUsed { get; set; } = false;
         public string Message { get; set; } = string.Empty;
     }
 
