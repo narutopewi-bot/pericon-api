@@ -352,7 +352,7 @@ namespace PericonAPI.Controllers
                 AvatarUrl = user.AvatarUrl,
                 IsDeviceAlreadyUsed = isDeviceAlreadyUsed,
                 Message = isDeviceAlreadyUsed
-                    ? $"¡Cuenta creada con éxito! Al registrarte desde un dispositivo previamente utilizado ({existingAccountOnDevice!.Username}), tu saldo inicial es de 0 monedas. Recarga en el cajero o recibe monedas de amigos para jugar en las mesas."
+                    ? $"¡Cuenta creada con éxito! Al registrarte desde un dispositivo previamente utilizado ({existingAccountOnDevice!.Username}), tu saldo inicial es de 0 monedas. Recarga en el cajero oficial o reclama recompensas diarias para jugar en las mesas."
                     : (promoReward > 0
                         ? $"¡Bienvenido a El Pericón! Se te han acreditado 300 monedas iniciales + {promoReward} monedas de regalo del código '{appliedPromo?.Code}'."
                         : "Usuario registrado exitosamente.")
