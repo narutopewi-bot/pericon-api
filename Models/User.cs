@@ -55,6 +55,9 @@ namespace PericonAPI.Models
         public DateTime? LastDailyClaim { get; set; }
         public int DailyStreak { get; set; } = 0;
 
+        public DateTime? LastReactivatedAt { get; set; }
+        public int ReactivationCount { get; set; } = 0;
+
         [MaxLength(20)]
         public string? ReferralCode { get; set; }
         public int? ReferredByUserId { get; set; }

@@ -2165,6 +2165,114 @@ namespace PericonAPI.Controllers
 
             return Ok(new { success = true, message = "Opinión eliminada correctamente." });
         }
+
+        [HttpGet("reactivation/candidates")]
+        public async Task<IActionResult> GetReactivationCandidates()
+        {
+            var query = _context.Users
+                .Where(u => !u.IsVirtualBot && !u.IsAdmin && u.IsActive && !string.IsNullOrWhiteSpace(u.PhoneNumber));
+
+            var sevenDaysAgo = DateTime.UtcNow.AddDays(-7);
+            var eligibleQuery = query.Where(u => u.LastReactivatedAt == null || u.LastReactivatedAt < sevenDaysAgo);
+
+            var totalEligible = await eligibleQuery.CountAsync();
+
+            var candidates = await eligibleQuery
+                .OrderBy(u => u.Coins)
+                .ThenBy(u => u.LastReactivatedAt)
+                .ThenBy(u => u.CreatedAt)
+                .Take(10)
+                .Select(u => new
+                {
+                    id = u.Id,
+                    username = u.Username,
+                    phoneNumber = u.PhoneNumber,
+                    coins = u.Coins,
+                    bonusCoins = u.BonusCoins,
+                    wins = u.Wins,
+                    level = u.Level,
+                    createdAt = u.CreatedAt.ToString("yyyy-MM-dd"),
+                    lastReactivatedAt = u.LastReactivatedAt.HasValue ? u.LastReactivatedAt.Value.ToString("yyyy-MM-dd HH:mm") : null,
+                    reactivationCount = u.ReactivationCount
+                })
+                .ToListAsync();
+
+            var result = candidates.Select(c =>
+            {
+                var rawPhone = c.phoneNumber ?? "";
+                var cleanDigits = System.Text.RegularExpressions.Regex.Replace(rawPhone, @"[^\d]", "");
+                if (cleanDigits.StartsWith("04"))
+                {
+                    cleanDigits = "58" + cleanDigits.Substring(1);
+                }
+                else if (cleanDigits.Length == 10 && (cleanDigits.StartsWith("412") || cleanDigits.StartsWith("414") || cleanDigits.StartsWith("424") || cleanDigits.StartsWith("416") || cleanDigits.StartsWith("426")))
+                {
+                    cleanDigits = "58" + cleanDigits;
+                }
+
+                var customMsg = $"¡Hola {c.username}! Saludos de parte de El Pericón Criollo 🌵. Vimos que tienes unos días sin jugar y te acabamos de recargar 300 MONEDAS DE CORTESÍA en tu cuenta para que compitas en el nuevo Ranking Diario con premios en Pago Móvil 🏆. ¡Entra ya a disfrutarlas!: https://pericon.lat";
+
+                return new
+                {
+                    c.id,
+                    c.username,
+                    originalPhone = c.phoneNumber,
+                    cleanPhone = cleanDigits,
+                    c.coins,
+                    c.wins,
+                    c.level,
+                    c.createdAt,
+                    c.lastReactivatedAt,
+                    c.reactivationCount,
+                    suggestedMessage = customMsg,
+                    waUrl = $"https://wa.me/{cleanDigits}?text={Uri.EscapeDataString(customMsg)}"
+                };
+            }).ToList();
+
+            return Ok(new
+            {
+                success = true,
+                totalEligible,
+                batchSize = result.Count,
+                candidates = result
+            });
+        }
+
+        [HttpPost("reactivation/credit-user")]
+        public async Task<IActionResult> CreditUserReactivation([FromBody] CreditReactivationDto request)
+        {
+            var user = await _context.Users.FindAsync(request.UserId);
+            if (user == null)
+            {
+                return NotFound(new { success = false, message = "Usuario no encontrado." });
+            }
+
+            int amount = request.BonusCoins > 0 ? request.BonusCoins : 300;
+            user.Coins += amount;
+            user.BonusCoins += amount;
+            user.LastReactivatedAt = DateTime.UtcNow;
+            user.ReactivationCount += 1;
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                success = true,
+                userId = user.Id,
+                username = user.Username,
+                newCoins = user.Coins,
+                bonusCoins = user.BonusCoins,
+                reactivatedAt = user.LastReactivatedAt.Value.ToString("yyyy-MM-dd HH:mm"),
+                message = $"Se acreditaron con éxito +{amount} monedas de reactivación a @{user.Username}."
+            });
+        }
+    }
+
+
+    public class CreditReactivationDto
+    {
+        public int UserId { get; set; }
+        public int BonusCoins { get; set; } = 300;
     }
 
     public class ResetSeasonDto
