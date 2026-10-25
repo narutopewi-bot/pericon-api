@@ -396,11 +396,7 @@ namespace PericonAPI.Controllers
                 if (marproUser != null) targetUsers.Add(marproUser);
             }
 
-            if (!targetUsers.Any(u => u.Id == 202 || u.Username.Equals("Che", StringComparison.OrdinalIgnoreCase)))
-            {
-                var cheUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == 202 || u.Username == "Che");
-                if (cheUser != null) targetUsers.Add(cheUser);
-            }
+            // Che ahora es gestionado dinámicamente mediante el nuevo modo de calibración
 
             foreach (var u in targetUsers)
             {
@@ -1409,67 +1405,271 @@ namespace PericonAPI.Controllers
             }
 
             string clean = (request?.Difficulty ?? "medio").Trim().ToLowerInvariant();
-            if (clean != "facil" && clean != "medio" && clean != "dificil" && clean != "general" && clean != "global")
+
+            if (clean != "facil" && clean != "medio" && clean != "dificil" && clean != "general" && clean != "global" && clean != "favor_jugador" && clean != "favorecido" && clean != "favor_40_60")
+
             {
-                return BadRequest(new { message = "Dificultad inválida. Debe ser 'facil', 'medio', 'dificil' o 'general'." });
+
+                return BadRequest(new { message = "Dificultad inválida. Debe ser 'facil', 'medio', 'dificil', 'general' o 'favor_jugador'." });
+
             }
+
+
+
+            if (clean == "favor_40_60" || clean == "favorecido") clean = "favor_jugador";
+
+
 
             if (clean == "general" || clean == "global")
+
             {
+
                 user.BotDifficulty = null;
+
                 GamePlayOneVsOne.StabilizedUserIds.Remove(user.Id);
+
                 GamePlayOneVsOne.StabilizedUsers.Remove(user.Username);
+
                 GamePlayOneVsOne.FavoredVipUserIds.Remove(user.Id);
+
                 GamePlayOneVsOne.FavoredVipUsers.Remove(user.Username);
+
             }
-            else
+
+            else if (clean == "favor_jugador")
+
             {
+
+                user.BotDifficulty = "favor_jugador";
+
+                GamePlayOneVsOne.StabilizedUserIds.Remove(user.Id);
+
+                GamePlayOneVsOne.StabilizedUsers.Remove(user.Username);
+
+                GamePlayOneVsOne.FavoredVipUserIds.Add(user.Id);
+
+                GamePlayOneVsOne.FavoredVipUsers.Add(user.Username);
+
+            }
+
+            else
+
+            {
+
                 user.BotDifficulty = clean;
 
+
+
                 // Sincronizar listas en memoria
+
                 if (clean == "dificil")
+
                 {
+
                     GamePlayOneVsOne.StabilizedUserIds.Add(user.Id);
+
                     GamePlayOneVsOne.StabilizedUsers.Add(user.Username);
+
                     GamePlayOneVsOne.FavoredVipUserIds.Remove(user.Id);
+
                     GamePlayOneVsOne.FavoredVipUsers.Remove(user.Username);
+
                 }
+
                 else if (clean == "facil")
+
                 {
+
                     GamePlayOneVsOne.FavoredVipUserIds.Add(user.Id);
+
                     GamePlayOneVsOne.FavoredVipUsers.Add(user.Username);
+
                     GamePlayOneVsOne.StabilizedUserIds.Remove(user.Id);
+
                     GamePlayOneVsOne.StabilizedUsers.Remove(user.Username);
+
                 }
+
                 else // medio (estándar 70-30 de tesorería)
+
                 {
+
                     GamePlayOneVsOne.StabilizedUserIds.Remove(user.Id);
+
                     GamePlayOneVsOne.StabilizedUsers.Remove(user.Username);
+
                     GamePlayOneVsOne.FavoredVipUserIds.Remove(user.Id);
+
                     GamePlayOneVsOne.FavoredVipUsers.Remove(user.Username);
+
                 }
+
             }
 
+
+
             GamePlayOneVsOne.SaveBotSettingsToFile();
+
             await _context.SaveChangesAsync();
 
+
+
             string desc = clean switch
+
             {
+
+                "favor_jugador" => "⭐ 60/40 A FAVOR DEL JUGADOR (60% Jugador / 40% Casa - Calibración Ganadora)",
+
                 "facil" => "FÁCIL (50% Casa / 50% Jugador - Modo Recreativo)",
+
                 "dificil" => "DIFÍCIL (85% Casa / 15% Jugador - Muro Total de Contención)",
+
                 "general" or "global" => $"GENERAL (Hereda la dificultad global: {GamePlayOneVsOne.BotDifficultyMode.ToUpperInvariant()})",
+
                 _ => "MEDIO (70% Casa / 30% Jugador - Recuperación de Tesorería)"
+
             };
 
             Console.WriteLine($"[AdminController] Dificultad de bots para {user.Username} (ID {user.Id}) cambiada a {desc} por Administrador.");
 
             return Ok(new
+
             {
+
                 id = user.Id,
+
                 username = user.Username,
+
                 botDifficulty = user.BotDifficulty ?? "general",
+
                 message = $"Dificultad de bots para {user.Username} establecida en {desc}."
+
             });
+
+        }
+
+
+
+        public class SetCheDifficultyRequest
+
+        {
+
+            public string Mode { get; set; } = "favor_jugador";
+
+        }
+
+
+
+        [HttpGet("special-user/che")]
+
+        public async Task<IActionResult> GetCheSpecialStatus()
+
+        {
+
+            var cheUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == 202 || u.Username.Equals("Che", StringComparison.OrdinalIgnoreCase) || u.Username == "Che");
+
+            if (cheUser == null)
+
+            {
+
+                return NotFound(new { message = "Usuario Che no encontrado en la base de datos." });
+
+            }
+
+
+
+            var recentMatches = await _context.BotMatchRecords
+
+                .Where(m => m.UserId == cheUser.Id || m.Username.Equals(cheUser.Username, StringComparison.OrdinalIgnoreCase))
+
+                .OrderByDescending(m => m.CreatedAt)
+
+                .Take(10)
+
+                .Select(m => new
+
+                {
+
+                    m.Id,
+
+                    m.BotName,
+
+                    Bet = m.BetAmount,
+
+                    m.UserWon,
+
+                    m.CoinsWon,
+
+                    m.CoinsLost,
+
+                    m.CreatedAt
+
+                })
+
+                .ToListAsync();
+
+
+
+            int totalMatches = await _context.BotMatchRecords.CountAsync(m => m.UserId == cheUser.Id || m.Username.Equals(cheUser.Username, StringComparison.OrdinalIgnoreCase));
+
+            int userWins = await _context.BotMatchRecords.CountAsync(m => (m.UserId == cheUser.Id || m.Username.Equals(cheUser.Username, StringComparison.OrdinalIgnoreCase)) && m.UserWon);
+
+            int botWins = totalMatches - userWins;
+
+
+
+            return Ok(new
+
+            {
+
+                id = cheUser.Id,
+
+                username = cheUser.Username,
+
+                email = cheUser.Email,
+
+                coins = cheUser.Coins,
+
+                level = cheUser.Level,
+
+                botDifficulty = cheUser.BotDifficulty ?? "general",
+
+                totalMatches,
+
+                userWins,
+
+                botWins,
+
+                userWinRate = totalMatches > 0 ? Math.Round((double)userWins / totalMatches * 100, 1) : 0,
+
+                recentMatches
+
+            });
+
+        }
+
+
+
+        [HttpPost("special-user/che/mode")]
+
+        public async Task<IActionResult> SetCheMode([FromBody] SetCheDifficultyRequest req)
+
+        {
+
+            var cheUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == 202 || u.Username.Equals("Che", StringComparison.OrdinalIgnoreCase) || u.Username == "Che");
+
+            if (cheUser == null)
+
+            {
+
+                return NotFound(new { message = "Usuario Che no encontrado en la base de datos." });
+
+            }
+
+
+
+            return await SetUserBotDifficulty(cheUser.Id, new SetUserBotDifficultyRequest { Difficulty = req?.Mode ?? "favor_jugador" });
+
         }
 
         public class BanDeviceClonesRequest

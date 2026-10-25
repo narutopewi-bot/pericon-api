@@ -3503,11 +3503,11 @@ namespace PericonAPI.Hubs
                         Console.WriteLine($"[1vs1BotMatchmaking] Error leyendo historial: {ex.Message}");
                     }
 
-                    // Determinar dificultad activa (Individual de usuario tiene prioridad sobre la dinámica y global):
-                    string effectiveDiff;
-                    if (!string.IsNullOrEmpty(userCustomDiff) && (userCustomDiff == "facil" || userCustomDiff == "medio" || userCustomDiff == "dificil"))
-                    {
-                        effectiveDiff = userCustomDiff;
+                    // Determinar dificultad activa (Individual de usuario tiene prioridad sobre la dinámica y global):
+                    string effectiveDiff;
+                    if (!string.IsNullOrEmpty(userCustomDiff) && (userCustomDiff == "facil" || userCustomDiff == "medio" || userCustomDiff == "dificil" || userCustomDiff == "favor_jugador" || userCustomDiff == "favorecido" || userCustomDiff == "favor_40_60"))
+                    {
+                        effectiveDiff = userCustomDiff;
                     }
                     else
                     {
@@ -3535,6 +3535,25 @@ namespace PericonAPI.Hubs
                     bool isHighStake = item.Bet >= 500;
                     bool isHouseDefending = isTargeted || effectiveDiff == "dificil" || isProfitCapped || isHighStake || userTodayNetProfit > 0 || userNetProfitAgainstBot > 0;
 
+                    // 0. MODO ESPECIAL 60/40 A FAVOR DEL JUGADOR (CONFIGURACIÓN MANUAL ADMIN):
+                    if (effectiveDiff is "favor_jugador" or "favorecido" or "favor_40_60")
+                    {
+                        newGame.BotDifficulty = "favor_jugador";
+                        newGame.UserBalanceMode = UserBotBalanceMode.Normal;
+                        newGame.IsTargetedForStabilization = false;
+                        newGame.MustFavorBotToBreakStreak = false;
+
+                        // 60% de probabilidad de favorecerlo o si el bot ganó la anterior
+                        if (consecutiveBotWins >= 1 || Random.Shared.NextDouble() < 0.60)
+                        {
+                            newGame.MustFavorUserToBreakStreak = true;
+                        }
+                        else
+                        {
+                            newGame.MustFavorUserToBreakStreak = false;
+                        }
+                        Console.WriteLine($"[1vs1BotBalance] MODO 60/40 A FAVOR DEL JUGADOR ACTIVO para {name1}. Bot cediendo ventaja.");
+                    }
                     // 1. APUESTAS ALTAS (>= 500, ej: 500 o 1500) O USUARIO CON TECHO ALCANZADO:
                     // CICLO MATEMÁTICO DE CONTROL 3 A 1 (LA CASA GANA 3 Y EL JUGADOR GANA 1 -> SALDO NETO POSITIVO)
                     if (isHighStake || isProfitCapped)
@@ -5026,20 +5045,38 @@ namespace PericonAPI.Hubs
                             userCustomDiff = userRecord.BotDifficulty.Trim().ToLowerInvariant();
                         }
 
-                        string adminGlobalDiff = (GamePlayOneVsOne.BotDifficultyMode ?? "medio").Trim().ToLowerInvariant();
-                        string effectiveDiff = (!string.IsNullOrEmpty(userCustomDiff) && (userCustomDiff == "facil" || userCustomDiff == "medio" || userCustomDiff == "dificil"))
-                            ? userCustomDiff
-                            : adminGlobalDiff;
-
-                        bool isProfitCapped = userNetProfitAgainstBot >= 500 || userTodayNetProfit >= 500;
-                        bool isHighStake = newgame.Coins >= 500;
-                        bool isHouseDefending = isManuallyTargeted || effectiveDiff == "dificil" || isProfitCapped || isHighStake || userTodayNetProfit > 0 || userNetProfitAgainstBot > 0 || (userTodayTotal >= 3 && ((double)userTodayWins / userTodayTotal) > 0.50);
-
-                        newgame.BotDifficulty = effectiveDiff;
-
-                        // Si la apuesta es alta (>= 500) o si ya alcanzó el tope de ganancia contra bots (>= 500) o modo difícil:
-                        // MODO DEFENSIVO ESTRICTO: El bot jamás se deja ganar y defiende con tasa de 85% para la casa.
-                        if (isHighStake || isProfitCapped || effectiveDiff == "dificil")
+                        string adminGlobalDiff = (GamePlayOneVsOne.BotDifficultyMode ?? "medio").Trim().ToLowerInvariant();
+                        string effectiveDiff = (!string.IsNullOrEmpty(userCustomDiff) && (userCustomDiff == "facil" || userCustomDiff == "medio" || userCustomDiff == "dificil" || userCustomDiff == "favor_jugador" || userCustomDiff == "favorecido" || userCustomDiff == "favor_40_60"))
+                            ? userCustomDiff
+                            : adminGlobalDiff;
+
+                        bool isFavoredDiff = effectiveDiff is "favor_jugador" or "favorecido" or "favor_40_60";
+                        bool isProfitCapped = !isFavoredDiff && (userNetProfitAgainstBot >= 500 || userTodayNetProfit >= 500);
+                        bool isHighStake = !isFavoredDiff && newgame.Coins >= 500;
+                        bool isHouseDefending = !isFavoredDiff && (isManuallyTargeted || effectiveDiff == "dificil" || isProfitCapped || isHighStake || userTodayNetProfit > 0 || userNetProfitAgainstBot > 0 || (userTodayTotal >= 3 && ((double)userTodayWins / userTodayTotal) > 0.50));
+
+                        newgame.BotDifficulty = effectiveDiff;
+
+                        if (isFavoredDiff)
+                        {
+                            newgame.BotDifficulty = "favor_jugador";
+                            newgame.UserBalanceMode = UserBotBalanceMode.Normal;
+                            newgame.IsTargetedForStabilization = false;
+                            newgame.MustFavorBotToBreakStreak = false;
+
+                            if (consecutiveBotWins >= 1 || Random.Shared.NextDouble() < 0.60)
+                            {
+                                newgame.MustFavorUserToBreakStreak = true;
+                            }
+                            else
+                            {
+                                newgame.MustFavorUserToBreakStreak = false;
+                            }
+                            Console.WriteLine($"[Solitaire] MODO 60/40 A FAVOR DEL JUGADOR ACTIVO para {newgame.NamePOne}. Bot cediendo ventaja.");
+                        }
+                        // Si la apuesta es alta (>= 500) o si ya alcanzó el tope de ganancia contra bots (>= 500) o modo difícil:
+                        // MODO DEFENSIVO ESTRICTO: El bot jamás se deja ganar y defiende con tasa de 85% para la casa.
+                        else if (isHighStake || isProfitCapped || effectiveDiff == "dificil")
                         {
                             newgame.BotDifficulty = "dificil";
                             newgame.UserBalanceMode = UserBotBalanceMode.DefendHouse;

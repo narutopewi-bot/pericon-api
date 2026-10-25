@@ -78,8 +78,8 @@ namespace PericonAPI.Models
         }
 
         // Lista de usuarios bajo estabilización de ventaja de la casa (ej: Memo, Marpro74, Che)
-        public static HashSet<string> StabilizedUsers { get; set; } = new(StringComparer.OrdinalIgnoreCase) { "Memo", "Marpro74", "Che" };
-        public static HashSet<int> StabilizedUserIds { get; set; } = new() { 34, 39, 202 };
+        public static HashSet<string> StabilizedUsers { get; set; } = new(StringComparer.OrdinalIgnoreCase) { "Memo", "Marpro74" };
+        public static HashSet<int> StabilizedUserIds { get; set; } = new() { 34, 39 };
         public static double StabilizationTargetHouseWinRate { get; set; } = 0.60;
 
         private static readonly string SettingsFilePath = Path.Combine(AppContext.BaseDirectory, "bot_settings.json");
@@ -98,7 +98,7 @@ namespace PericonAPI.Models
                 string clean = username.Trim();
                 if (clean.Equals("Memo", StringComparison.OrdinalIgnoreCase) ||
                     clean.Equals("Marpro74", StringComparison.OrdinalIgnoreCase) ||
-                    clean.Equals("Che", StringComparison.OrdinalIgnoreCase)) return true;
+                    false) return true;
                 if (StabilizedUsers.Contains(clean)) return true;
             }
             if (!string.IsNullOrWhiteSpace(email))
@@ -190,11 +190,12 @@ namespace PericonAPI.Models
                 }
                 // Siempre garantizar Memo, Marpro74 y Che como usuarios estabilizados/defensa de la casa
                 StabilizedUsers.Add("Memo");
+
                 StabilizedUsers.Add("Marpro74");
-                StabilizedUsers.Add("Che");
+
                 StabilizedUserIds.Add(34);
+
                 StabilizedUserIds.Add(39);
-                StabilizedUserIds.Add(202);
             }
             catch (Exception ex)
             {
@@ -231,8 +232,8 @@ namespace PericonAPI.Models
         {
             public string Mode { get; set; } = "medio";
             public double Advantage { get; set; } = 0.60;
-            public List<string> StabilizedUsers { get; set; } = new() { "Memo", "Marpro74", "Che" };
-            public List<int> StabilizedUserIds { get; set; } = new() { 34, 39, 202 };
+            public List<string> StabilizedUsers { get; set; } = new() { "Memo", "Marpro74" };
+            public List<int> StabilizedUserIds { get; set; } = new() { 34, 39 };
             public List<string> FavoredVipUsers { get; set; } = new();
             public List<int> FavoredVipUserIds { get; set; } = new();
             public List<string> FavoredVipEmails { get; set; } = new();
@@ -1050,24 +1051,85 @@ namespace PericonAPI.Models
         }
 
         public void ApplyVipSubtleAdvantageSolitaire(int lifeId)
+
         {
+
             // Dianelith juega como CardsOne contra el Bot (CardsTwo)
+
             bool favorVip = Random.Shared.NextDouble() < 0.75;
+
             if (favorVip)
+
             {
+
                 double scoreUser = ScoreHand(CardsOne, lifeId);
+
                 double scoreBot = ScoreHand(CardsTwo, lifeId);
+
                 if (scoreBot > scoreUser)
+
                 {
+
                     var temp = new List<Card>(CardsOne);
+
                     CardsOne = new List<Card>(CardsTwo);
+
                     CardsTwo = temp;
+
                 }
+
             }
 
+
+
             EnsureVipPlayableTrumps(CardsOne, lifeId);
+
             EnsureAntiFiveAndFour(CardsOne, lifeId);
+
             SanitizeBotCards(lifeId);
+
+        }
+
+
+
+        // Calibración Especial 40% Casa / 60% Jugador (El usuario gana ~6 de cada 10 partidas)
+
+        public void ApplyPlayerFavorAdvantageSolitaire(int lifeId)
+
+        {
+
+            // 60% de las manos se otorgan con ventaja contundente al usuario
+
+            bool favorPlayer = Random.Shared.NextDouble() < 0.60;
+
+            if (favorPlayer)
+
+            {
+
+                double scoreUser = ScoreHand(CardsOne, lifeId);
+
+                double scoreBot = ScoreHand(CardsTwo, lifeId);
+
+                if (scoreBot > scoreUser)
+
+                {
+
+                    var temp = new List<Card>(CardsOne);
+
+                    CardsOne = new List<Card>(CardsTwo);
+
+                    CardsTwo = temp;
+
+                }
+
+                EnsureVipPlayableTrumps(CardsOne, lifeId);
+
+                EnsureAntiFiveAndFour(CardsOne, lifeId);
+
+            }
+
+            SanitizeBotCards(lifeId);
+
         }
 
         // Retorna la probabilidad base de ventaja de la Casa según el nivel y experiencia del jugador
@@ -1141,10 +1203,28 @@ namespace PericonAPI.Models
                     effectiveUserId = parsedUid;
                 }
 
+                string activeBotDiff = (!string.IsNullOrEmpty(BotDifficulty) ? BotDifficulty : BotDifficultyMode).Trim().ToLowerInvariant();
+
+                bool isPlayerFavored = activeBotDiff is "favor_jugador" or "favorecido" or "favor_40_60";
+
                 bool isVipDianelith = IsFavoredVipUser(effectiveUserId, NamePOne, UserIdPOne, EmailPOne);
-                if (isVipDianelith)
+
+
+
+                if (isPlayerFavored)
+
                 {
+
+                    ApplyPlayerFavorAdvantageSolitaire(Life.Id);
+
+                }
+
+                else if (isVipDianelith)
+
+                {
+
                     ApplyVipSubtleAdvantageSolitaire(Life.Id);
+
                 }
                 else if (MustFavorUserToBreakStreak)
                 {
@@ -1401,10 +1481,28 @@ namespace PericonAPI.Models
                     effectiveUserId = parsedUid;
                 }
 
+                string activeBotDiffRound = (!string.IsNullOrEmpty(BotDifficulty) ? BotDifficulty : BotDifficultyMode).Trim().ToLowerInvariant();
+
+                bool isPlayerFavoredRound = activeBotDiffRound is "favor_jugador" or "favorecido" or "favor_40_60";
+
                 bool isVip = IsFavoredVipUser(effectiveUserId, NamePOne, UserIdPOne, EmailPOne);
-                if (isVip)
+
+
+
+                if (isPlayerFavoredRound)
+
                 {
+
+                    ApplyPlayerFavorAdvantageSolitaire(Life.Id);
+
+                }
+
+                else if (isVip)
+
+                {
+
                     ApplyVipSubtleAdvantageSolitaire(Life.Id);
+
                 }
                 else if (MustFavorUserToBreakStreak)
                 {
@@ -1419,16 +1517,23 @@ namespace PericonAPI.Models
                         CardsTwo = temp;
                     }
                 }
-                else if (MustFavorBotToBreakStreak)
-                {
-                    // ANTIRACHAS DE LA BANCA: El usuario nunca gana más de 2 seguidas contra los bots.
-                    // Aplicar defensa contundente para asegurar la mano y cortar la racha de raíz:
-                    ApplyDiscreetHouseDefense(Life.Id);
-                }
-                else
-                {
-                    // DISTRIBUCIÓN DINÁMICA POR FASES DE RETENCIÓN (DRAMATIZACIÓN Y CIERRE LETAL GARANTIZADO)
-                    bool isTargetedUser = IsTargetedForStabilization || IsUserTargetedForStabilization(effectiveUserId, NamePOne, UserIdPOne, EmailPOne);
+                else if (MustFavorBotToBreakStreak)
+                {
+                    if (isPlayerFavoredRound)
+                    {
+                        ApplyPlayerFavorAdvantageSolitaire(Life.Id);
+                    }
+                    else
+                    {
+                        // ANTIRACHAS DE LA BANCA: El usuario nunca gana más de 2 seguidas contra los bots.
+                        // Aplicar defensa contundente para asegurar la mano y cortar la racha de raíz:
+                        ApplyDiscreetHouseDefense(Life.Id);
+                    }
+                }
+                else
+                {
+                    // DISTRIBUCIÓN DINÁMICA POR FASES DE RETENCIÓN (DRAMATIZACIÓN Y CIERRE LETAL GARANTIZADO)
+                    bool isTargetedUser = !isPlayerFavoredRound && (IsTargetedForStabilization || IsUserTargetedForStabilization(effectiveUserId, NamePOne, UserIdPOne, EmailPOne));
                     bool isHighStake = Coins >= 500;
                     int dynamicCap = Math.Max(500, (int)(Coins * 1.2));
                     bool isProfitCapped = UserNetCoinsAgainstBot >= dynamicCap;
