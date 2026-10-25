@@ -1566,7 +1566,7 @@ namespace PericonAPI.Controllers
 
         {
 
-            var cheUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == 202 || u.Username.Equals("Che", StringComparison.OrdinalIgnoreCase) || u.Username == "Che");
+            var cheUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == 202 || u.Username == "Che" || u.Username.ToLower() == "che");
 
             if (cheUser == null)
 
@@ -1580,7 +1580,7 @@ namespace PericonAPI.Controllers
 
             var recentMatches = await _context.BotMatchRecords
 
-                .Where(m => m.UserId == cheUser.Id || m.Username.Equals(cheUser.Username, StringComparison.OrdinalIgnoreCase))
+                .Where(m => m.UserId == cheUser.Id || m.Username == cheUser.Username || m.Username.ToLower() == cheUser.Username.ToLower())
 
                 .OrderByDescending(m => m.CreatedAt)
 
@@ -1610,9 +1610,9 @@ namespace PericonAPI.Controllers
 
 
 
-            int totalMatches = await _context.BotMatchRecords.CountAsync(m => m.UserId == cheUser.Id || m.Username.Equals(cheUser.Username, StringComparison.OrdinalIgnoreCase));
+            int totalMatches = await _context.BotMatchRecords.CountAsync(m => m.UserId == cheUser.Id || m.Username == cheUser.Username || m.Username.ToLower() == cheUser.Username.ToLower());
 
-            int userWins = await _context.BotMatchRecords.CountAsync(m => (m.UserId == cheUser.Id || m.Username.Equals(cheUser.Username, StringComparison.OrdinalIgnoreCase)) && m.UserWon);
+            int userWins = await _context.BotMatchRecords.CountAsync(m => (m.UserId == cheUser.Id || m.Username == cheUser.Username || m.Username.ToLower() == cheUser.Username.ToLower()) && m.UserWon);
 
             int botWins = totalMatches - userWins;
 
@@ -1656,7 +1656,7 @@ namespace PericonAPI.Controllers
 
         {
 
-            var cheUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == 202 || u.Username.Equals("Che", StringComparison.OrdinalIgnoreCase) || u.Username == "Che");
+            var cheUser = await _context.Users.FirstOrDefaultAsync(u => u.Id == 202 || u.Username == "Che" || u.Username.ToLower() == "che");
 
             if (cheUser == null)
 
