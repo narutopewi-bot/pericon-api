@@ -3534,27 +3534,61 @@ namespace PericonAPI.Hubs
                         }
                         Console.WriteLine($"[1vs1BotBalance] MODO 60/40 A FAVOR DEL JUGADOR ACTIVO para {name1}. Bot cediendo ventaja.");
                     }
-                    // 1. MODO FÁCIL (50-50 SOBERANO - JUEGO LIMPIO):
+                    // 1. MODO FACIL (50-50 SOBERANO CON TOPE DE RACHA MAXIMO 2 VICTORIAS):
                     else if (effectiveDiff == "facil")
                     {
                         newGame.BotDifficulty = "facil";
                         newGame.UserBalanceMode = UserBotBalanceMode.Normal;
                         newGame.IsTargetedForStabilization = false;
-                        newGame.MustFavorUserToBreakStreak = false;
-                        newGame.MustFavorBotToBreakStreak = false; // Sin bloqueos artificiales: el que ganó, ganó
-                        Console.WriteLine($"[1vs1BotBalance] MODO FÁCIL (50-50 SOBERANO) ACTIVO para {name1} (Apuesta={item.Bet}).");
+
+                        if (consecutiveUserWins >= 2)
+                        {
+                            newGame.MustFavorUserToBreakStreak = false;
+                            newGame.MustFavorBotToBreakStreak = true;
+                            Console.WriteLine($"[1vs1BotBalance] ANTIRACHAS ACTIVADO para {name1}: Usuario gano {consecutiveUserWins} seguidas en Facil. Cortando racha (Maximo 2 victorias consecutivas).");
+                        }
+                        else if (consecutiveBotWins >= 3)
+                        {
+                            newGame.MustFavorUserToBreakStreak = true;
+                            newGame.MustFavorBotToBreakStreak = false;
+                            Console.WriteLine($"[1vs1BotBalance] ALIVIO DE RACHA BOT para {name1}: Bot gano {consecutiveBotWins} seguidas en Facil. Cediedo victoria.");
+                        }
+                        else
+                        {
+                            newGame.MustFavorUserToBreakStreak = false;
+                            newGame.MustFavorBotToBreakStreak = false;
+                        }
+
+                        Console.WriteLine($"[1vs1BotBalance] MODO FACIL (50-50) ACTIVO para {name1} (Apuesta={item.Bet}, RachaUser={consecutiveUserWins}, RachaBot={consecutiveBotWins}).");
                     }
-                    // 2. MODO MEDIO (70-30 SOBERANO - RECUPERACIÓN EQUILIBRADA):
+                    // 2. MODO MEDIO (70-30 SOBERANO CON TOPE DE RACHA MAXIMO 2 VICTORIAS):
                     else if (effectiveDiff == "medio")
                     {
                         newGame.BotDifficulty = "medio";
                         newGame.UserBalanceMode = UserBotBalanceMode.BalancedGradualEdge;
                         newGame.IsTargetedForStabilization = false;
-                        newGame.MustFavorUserToBreakStreak = false;
-                        newGame.MustFavorBotToBreakStreak = false;
-                        Console.WriteLine($"[1vs1BotBalance] MODO MEDIO (70-30 SOBERANO) ACTIVO para {name1} (Apuesta={item.Bet}).");
+
+                        if (consecutiveUserWins >= 2)
+                        {
+                            newGame.MustFavorUserToBreakStreak = false;
+                            newGame.MustFavorBotToBreakStreak = true;
+                            Console.WriteLine($"[1vs1BotBalance] ANTIRACHAS ACTIVADO para {name1}: Usuario gano {consecutiveUserWins} seguidas en Medio. Cortando racha (Maximo 2 victorias consecutivas).");
+                        }
+                        else if (consecutiveBotWins >= 3)
+                        {
+                            newGame.MustFavorUserToBreakStreak = true;
+                            newGame.MustFavorBotToBreakStreak = false;
+                            Console.WriteLine($"[1vs1BotBalance] ALIVIO DE RACHA BOT para {name1}: Bot gano {consecutiveBotWins} seguidas en Medio. Cediedo victoria.");
+                        }
+                        else
+                        {
+                            newGame.MustFavorUserToBreakStreak = false;
+                            newGame.MustFavorBotToBreakStreak = false;
+                        }
+
+                        Console.WriteLine($"[1vs1BotBalance] MODO MEDIO (70-30) ACTIVO para {name1} (Apuesta={item.Bet}, RachaUser={consecutiveUserWins}, RachaBot={consecutiveBotWins}).");
                     }
-                    // 3. MODO DIFÍCIL (85-15 MURO DE BANCA):
+                    // 3. MODO DIFICIL (85-15 MURO DE BANCA):
                     else
                     {
                         newGame.BotDifficulty = "dificil";
@@ -3564,23 +3598,23 @@ namespace PericonAPI.Hubs
                         int dynamicProfitCap = Math.Max(500, (int)(item.Bet * 1.2));
                         bool isProfitCapped = (userNetProfitAgainstBot >= dynamicProfitCap) || (userTodayNetProfit >= dynamicProfitCap);
 
-                        if (isProfitCapped)
+                        if (consecutiveUserWins >= 2 || isProfitCapped)
                         {
                             newGame.MustFavorUserToBreakStreak = false;
                             newGame.MustFavorBotToBreakStreak = true;
-                            Console.WriteLine($"[1vs1BotBalance] TECHO ALCANZADO para {name1} (Ganancia={userNetProfitAgainstBot} >= {dynamicProfitCap}). Bloqueo estricto activado.");
+                            Console.WriteLine($"[1vs1BotBalance] ANTIRACHAS / TECHO para {name1} (Ganancia={userNetProfitAgainstBot}, RachaUser={consecutiveUserWins}). Bloqueo estricto activado.");
                         }
                         else if (consecutiveBotWins >= 3)
                         {
                             newGame.MustFavorUserToBreakStreak = true;
                             newGame.MustFavorBotToBreakStreak = false;
-                            Console.WriteLine($"[1vs1BotBalance] Ciclo 3 a 1 para {name1}: Bot ganó {consecutiveBotWins} seguidas en sala de {item.Bet}. Cediendo 1 victoria.");
+                            Console.WriteLine($"[1vs1BotBalance] Ciclo 3 a 1 para {name1}: Bot gano {consecutiveBotWins} seguidas en sala de {item.Bet}. Cediedo 1 victoria.");
                         }
                         else
                         {
                             newGame.MustFavorUserToBreakStreak = false;
                             newGame.MustFavorBotToBreakStreak = true;
-                            Console.WriteLine($"[1vs1BotBalance] MODO DIFÍCIL (85-15) ACTIVO para {name1}.");
+                            Console.WriteLine($"[1vs1BotBalance] MODO DIFICIL (85-15) ACTIVO para {name1}.");
                         }
                     }
 
@@ -5008,32 +5042,83 @@ namespace PericonAPI.Hubs
                             }
                             Console.WriteLine($"[Solitaire] MODO 60/40 A FAVOR DEL JUGADOR ACTIVO para {newgame.NamePOne}. Bot cediendo ventaja.");
                         }
-                        // 1. MODO FÁCIL (50-50 SOBERANO EN SOLITARIO - JUEGO LIMPIO):
+                        // 1. MODO FACIL (50-50 SOBERANO EN SOLITARIO CON TOPE DE RACHA MAXIMO 2 VICTORIAS):
                         else if (effectiveDiff == "facil")
                         {
                             newgame.UserBalanceMode = UserBotBalanceMode.Normal;
                             newgame.IsTargetedForStabilization = false;
-                            newgame.MustFavorUserToBreakStreak = false;
-                            newgame.MustFavorBotToBreakStreak = false; // Sin bloqueos artificiales
-                            Console.WriteLine($"[Solitaire] MODO FÁCIL (50-50 SOBERANO) ACTIVO para {newgame.NamePOne} (Apuesta={newgame.Coins}).");
+
+                            if (consecutiveUserWins >= 2)
+                            {
+                                newgame.MustFavorUserToBreakStreak = false;
+                                newgame.MustFavorBotToBreakStreak = true;
+                                Console.WriteLine($"[Solitaire] ANTIRACHAS ACTIVADO para {newgame.NamePOne}: Usuario gano {consecutiveUserWins} seguidas en Facil. Cortando racha (Maximo 2 victorias consecutivas).");
+                            }
+                            else if (consecutiveBotWins >= 3)
+                            {
+                                newgame.MustFavorUserToBreakStreak = true;
+                                newgame.MustFavorBotToBreakStreak = false;
+                                Console.WriteLine($"[Solitaire] ALIVIO DE RACHA BOT para {newgame.NamePOne}: Bot gano {consecutiveBotWins} seguidas en Facil. Cediedo victoria.");
+                            }
+                            else
+                            {
+                                newgame.MustFavorUserToBreakStreak = false;
+                                newgame.MustFavorBotToBreakStreak = false;
+                            }
+
+                            Console.WriteLine($"[Solitaire] MODO FACIL (50-50) ACTIVO para {newgame.NamePOne} (Apuesta={newgame.Coins}, RachaUser={consecutiveUserWins}, RachaBot={consecutiveBotWins}).");
                         }
-                        // 2. MODO MEDIO (70-30 SOBERANO EN SOLITARIO - RECUPERACIÓN EQUILIBRADA):
+                        // 2. MODO MEDIO (70-30 SOBERANO EN SOLITARIO CON TOPE DE RACHA MAXIMO 2 VICTORIAS):
                         else if (effectiveDiff == "medio")
                         {
                             newgame.UserBalanceMode = UserBotBalanceMode.BalancedGradualEdge;
                             newgame.IsTargetedForStabilization = false;
-                            newgame.MustFavorUserToBreakStreak = false;
-                            newgame.MustFavorBotToBreakStreak = false;
-                            Console.WriteLine($"[Solitaire] MODO MEDIO (70-30 SOBERANO) ACTIVO para {newgame.NamePOne} (Apuesta={newgame.Coins}).");
+
+                            if (consecutiveUserWins >= 2)
+                            {
+                                newgame.MustFavorUserToBreakStreak = false;
+                                newgame.MustFavorBotToBreakStreak = true;
+                                Console.WriteLine($"[Solitaire] ANTIRACHAS ACTIVADO para {newgame.NamePOne}: Usuario gano {consecutiveUserWins} seguidas en Medio. Cortando racha (Maximo 2 victorias consecutivas).");
+                            }
+                            else if (consecutiveBotWins >= 3)
+                            {
+                                newgame.MustFavorUserToBreakStreak = true;
+                                newgame.MustFavorBotToBreakStreak = false;
+                                Console.WriteLine($"[Solitaire] ALIVIO DE RACHA BOT para {newgame.NamePOne}: Bot gano {consecutiveBotWins} seguidas en Medio. Cediedo victoria.");
+                            }
+                            else
+                            {
+                                newgame.MustFavorUserToBreakStreak = false;
+                                newgame.MustFavorBotToBreakStreak = false;
+                            }
+
+                            Console.WriteLine($"[Solitaire] MODO MEDIO (70-30) ACTIVO para {newgame.NamePOne} (Apuesta={newgame.Coins}, RachaUser={consecutiveUserWins}, RachaBot={consecutiveBotWins}).");
                         }
-                        // 3. MODO DIFÍCIL (85-15 MURO DE BANCA EN SOLITARIO):
+                        // 3. MODO DIFICIL (85-15 MURO DE BANCA EN SOLITARIO):
                         else
                         {
                             newgame.BotDifficulty = "dificil";
                             newgame.UserBalanceMode = UserBotBalanceMode.DefendHouse;
                             newgame.IsTargetedForStabilization = true;
-                            newgame.MustFavorUserToBreakStreak = false;
-                            newgame.MustFavorBotToBreakStreak = true;
+
+                            if (consecutiveUserWins >= 2)
+                            {
+                                newgame.MustFavorUserToBreakStreak = false;
+                                newgame.MustFavorBotToBreakStreak = true;
+                                Console.WriteLine($"[Solitaire] ANTIRACHAS DIFICIL para {newgame.NamePOne}: Racha de {consecutiveUserWins} cortada.");
+                            }
+                            else if (consecutiveBotWins >= 3)
+                            {
+                                newgame.MustFavorUserToBreakStreak = true;
+                                newgame.MustFavorBotToBreakStreak = false;
+                                Console.WriteLine($"[Solitaire] ALIVIO DIFICIL para {newgame.NamePOne}: Bot gano {consecutiveBotWins} seguidas. Cediedo victoria.");
+                            }
+                            else
+                            {
+                                newgame.MustFavorUserToBreakStreak = false;
+                                newgame.MustFavorBotToBreakStreak = true;
+                            }
+
                             Console.WriteLine($"[Solitaire] BLOQUEO DEFENSIVO ACTIVO para {newgame.NamePOne}: Apuesta={newgame.Coins}, Bot al 85% Casa.");
                         }
                     }
