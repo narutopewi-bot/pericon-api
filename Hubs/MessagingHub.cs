@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.SignalR;
+﻿using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using PericonAPI.Classes;
@@ -3454,7 +3454,8 @@ namespace PericonAPI.Hubs
                         using var scope = _staticScopeFactory.CreateScope();
                         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-                        var userRecord = await db.Users.FirstOrDefaultAsync(u => u.Id == uId || (!string.IsNullOrEmpty(name1) && u.Username == name1));
+                        string cleanName = (name1 ?? "").Trim().ToLowerInvariant();
+                        var userRecord = await db.Users.FirstOrDefaultAsync(u => (uId > 0 && u.Id == uId) || (!string.IsNullOrEmpty(cleanName) && u.Username.ToLower() == cleanName));
                         if (userRecord != null)
                         {
                             if (!string.IsNullOrWhiteSpace(userRecord.BotDifficulty))
@@ -3467,7 +3468,7 @@ namespace PericonAPI.Hubs
                         }
 
                         var userBotMatches = await db.BotMatchRecords
-                            .Where(m => m.UserId == uId || (!string.IsNullOrEmpty(name1) && m.Username == name1))
+                            .Where(m => (uId > 0 && m.UserId == uId) || (m.Username != null && m.Username.ToLower() == cleanName))
                             .OrderByDescending(m => m.CreatedAt)
                             .Take(50)
                             .ToListAsync();
@@ -3526,25 +3527,33 @@ namespace PericonAPI.Hubs
                                            || (userTodayNetProfit + currentBet > allowedCoinMargin);
                     bool isStreakLimitReached = (consecutiveUserWins >= 2);
 
-                    // 0. MODO ESPECIAL 60/40 A FAVOR DEL JUGADOR (CONFIGURACIÓN MANUAL ADMIN):
-                    if (effectiveDiff is "favor_jugador" or "favorecido" or "favor_40_60")
-                    {
-                        newGame.BotDifficulty = "favor_jugador";
-                        newGame.UserBalanceMode = UserBotBalanceMode.Normal;
-                        newGame.IsTargetedForStabilization = false;
-                        newGame.MustFavorBotToBreakStreak = false;
-
-                        // 60% de probabilidad de favorecerlo o si el bot ganó la anterior
-                        if (consecutiveBotWins >= 1 || Random.Shared.NextDouble() < 0.60)
-                        {
-                            newGame.MustFavorUserToBreakStreak = true;
-                        }
-                        else
-                        {
-                            newGame.MustFavorUserToBreakStreak = false;
-                        }
-                        Console.WriteLine($"[1vs1BotBalance] MODO 60/40 A FAVOR DEL JUGADOR ACTIVO para {name1}. Bot cediendo ventaja.");
-                    }
+                    // 0. MODO ESPECIAL 60/40 A FAVOR DEL JUGADOR (CONFIGURACION MANUAL ADMIN):
+                    if (effectiveDiff is "favor_jugador" or "favorecido" or "favor_40_60")
+                    {
+                        newGame.BotDifficulty = "favor_jugador";
+                        newGame.UserBalanceMode = UserBotBalanceMode.Normal;
+                        newGame.IsTargetedForStabilization = false;
+
+                        if (isStreakLimitReached || isHouseMoneyAtRisk)
+                        {
+                            newGame.MustFavorUserToBreakStreak = false;
+                            newGame.MustFavorBotToBreakStreak = true;
+                            Console.WriteLine($"[1vs1BotBalance] ANTIRACHAS SOBERANO (Favor Jugador) para {name1}: Racha={consecutiveUserWins}, SaldoHoy={userTodayNetProfit}. Bot defendiendo banca.");
+                        }
+                        else
+                        {
+                            newGame.MustFavorBotToBreakStreak = false;
+                            if (consecutiveBotWins >= 1 || Random.Shared.NextDouble() < 0.60)
+                            {
+                                newGame.MustFavorUserToBreakStreak = true;
+                            }
+                            else
+                            {
+                                newGame.MustFavorUserToBreakStreak = false;
+                            }
+                        }
+                        Console.WriteLine($"[1vs1BotBalance] MODO 60/40 A FAVOR DEL JUGADOR ACTIVO para {name1}.");
+                    }
                     // 1. MODO FACIL (50-50 EN DINERO - BLINDAJE DE BANCA Y MAXIMO 2 VICTORIAS):
                     else if (effectiveDiff == "facil")
                     {
@@ -5034,24 +5043,33 @@ namespace PericonAPI.Hubs
                         bool isStreakLimitReached = (consecutiveUserWins >= 2);
                         newgame.BotDifficulty = effectiveDiff;
 
-                        // 0. MODO ESPECIAL 60/40 A FAVOR DEL JUGADOR (CONFIGURACIÓN MANUAL ADMIN):
-                        if (isFavoredDiff)
-                        {
-                            newgame.BotDifficulty = "favor_jugador";
-                            newgame.UserBalanceMode = UserBotBalanceMode.Normal;
-                            newgame.IsTargetedForStabilization = false;
-                            newgame.MustFavorBotToBreakStreak = false;
-
-                            if (consecutiveBotWins >= 1 || Random.Shared.NextDouble() < 0.60)
-                            {
-                                newgame.MustFavorUserToBreakStreak = true;
-                            }
-                            else
-                            {
-                                newgame.MustFavorUserToBreakStreak = false;
-                            }
-                            Console.WriteLine($"[Solitaire] MODO 60/40 A FAVOR DEL JUGADOR ACTIVO para {newgame.NamePOne}. Bot cediendo ventaja.");
-                        }
+                        // 0. MODO ESPECIAL 60/40 A FAVOR DEL JUGADOR (CONFIGURACION MANUAL ADMIN):
+                        if (isFavoredDiff)
+                        {
+                            newgame.BotDifficulty = "favor_jugador";
+                            newgame.UserBalanceMode = UserBotBalanceMode.Normal;
+                            newgame.IsTargetedForStabilization = false;
+
+                            if (isStreakLimitReached || isHouseMoneyAtRisk)
+                            {
+                                newgame.MustFavorUserToBreakStreak = false;
+                                newgame.MustFavorBotToBreakStreak = true;
+                                Console.WriteLine($"[Solitaire] ANTIRACHAS SOBERANO (Favor Jugador) para {newgame.NamePOne}. Bot defendiendo banca.");
+                            }
+                            else
+                            {
+                                newgame.MustFavorBotToBreakStreak = false;
+                                if (consecutiveBotWins >= 1 || Random.Shared.NextDouble() < 0.60)
+                                {
+                                    newgame.MustFavorUserToBreakStreak = true;
+                                }
+                                else
+                                {
+                                    newgame.MustFavorUserToBreakStreak = false;
+                                }
+                            }
+                            Console.WriteLine($"[Solitaire] MODO 60/40 A FAVOR DEL JUGADOR ACTIVO para {newgame.NamePOne}. Bot cediendo ventaja.");
+                        }
                         // 1. MODO FACIL (50-50 MONETARIO EN SOLITARIO CON TOPE DE RACHA MAXIMO 2 VICTORIAS):
                         else if (effectiveDiff == "facil")
                         {

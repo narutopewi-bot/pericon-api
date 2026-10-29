@@ -1,4 +1,4 @@
-using PericonAPI.Hubs;
+﻿using PericonAPI.Hubs;
 
 
 namespace PericonAPI.Models
@@ -1207,46 +1207,44 @@ namespace PericonAPI.Models
 
                 bool isPlayerFavored = activeBotDiff is "favor_jugador" or "favorecido" or "favor_40_60";
 
-                bool isVipDianelith = IsFavoredVipUser(effectiveUserId, NamePOne, UserIdPOne, EmailPOne);
-
-
-
-                if (isPlayerFavored)
-
-                {
-
-                    ApplyPlayerFavorAdvantageSolitaire(Life.Id);
-
-                }
-
-                else if (isVipDianelith)
-
-                {
-
-                    ApplyVipSubtleAdvantageSolitaire(Life.Id);
-
-                }
-                else if (MustFavorUserToBreakStreak)
-                {
-                    // ANTIRACHAS (PLAN B): El bot nunca gana 3 seguidas. Si el bot ganó 2, se favorece al usuario
-                    double scoreUser = ScoreHand(CardsOne, Life.Id);
-                    double scoreBot = ScoreHand(CardsTwo, Life.Id);
-                    if (scoreBot > scoreUser)
-                    {
-                        var temp = new List<Card>(CardsOne);
-                        CardsOne = new List<Card>(CardsTwo);
-                        CardsTwo = temp;
-                    }
-                }
-                else if (MustFavorBotToBreakStreak)
-                {
-                    // ANTIRACHAS DE LA BANCA: El usuario nunca gana más de 2 seguidas contra los bots.
-                    // Aplicar defensa contundente para asegurar la mano y cortar la racha de raíz:
-                    ApplyDiscreetHouseDefense(Life.Id);
-                }
-                else
-                {
-// DISTRIBUCIÓN REALISTA TRI-MODAL CON DEFENSA ACTIVA
+                bool isVipDianelith = IsFavoredVipUser(effectiveUserId, NamePOne, UserIdPOne, EmailPOne);
+
+                // BLINDAJE PRIORITARIO DE BANCA: Corte estricto de racha (max 2) y defensa de caja
+                if (MustFavorBotToBreakStreak)
+                {
+                    // ANTIRACHAS DE LA BANCA: El usuario nunca gana mas de 2 seguidas contra los bots.
+                    double scoreUser = ScoreHand(CardsOne, Life.Id);
+                    double scoreBot = ScoreHand(CardsTwo, Life.Id);
+                    if (scoreUser > scoreBot)
+                    {
+                        var temp = new List<Card>(CardsOne);
+                        CardsOne = new List<Card>(CardsTwo);
+                        CardsTwo = temp;
+                    }
+                    ApplyDiscreetHouseDefense(Life.Id);
+                }
+                else if (isPlayerFavored)
+                {
+                    ApplyPlayerFavorAdvantageSolitaire(Life.Id);
+                }
+                else if (isVipDianelith)
+                {
+                    ApplyVipSubtleAdvantageSolitaire(Life.Id);
+                }
+                else if (MustFavorUserToBreakStreak)
+                {
+                    // ANTIRACHAS (PLAN B): El bot nunca gana 3 seguidas. Si el bot gano 2, se favorece al usuario
+                    double scoreUser = ScoreHand(CardsOne, Life.Id);
+                    double scoreBot = ScoreHand(CardsTwo, Life.Id);
+                    if (scoreBot > scoreUser)
+                    {
+                        var temp = new List<Card>(CardsOne);
+                        CardsOne = new List<Card>(CardsTwo);
+                        CardsTwo = temp;
+                    }
+                }
+                else
+                {// DISTRIBUCIÓN REALISTA TRI-MODAL CON DEFENSA ACTIVA
                     string diffMode = (!string.IsNullOrEmpty(BotDifficulty) ? BotDifficulty : BotDifficultyMode).Trim().ToLowerInvariant();
                     bool isTargetedUser = (diffMode != "facil") && (IsTargetedForStabilization || UserBalanceMode == UserBotBalanceMode.DefendHouse || IsUserTargetedForStabilization(effectiveUserId, NamePOne, UserIdPOne, EmailPOne));
                     if (isTargetedUser)
@@ -1483,69 +1481,45 @@ namespace PericonAPI.Models
 
                 bool isPlayerFavoredRound = activeBotDiffRound is "favor_jugador" or "favorecido" or "favor_40_60";
 
-                bool isVip = IsFavoredVipUser(effectiveUserId, NamePOne, UserIdPOne, EmailPOne);
-
-
-
-                if (isPlayerFavoredRound)
-
-                {
-
-                    ApplyPlayerFavorAdvantageSolitaire(Life.Id);
-
-                }
-
-                else if (isVip)
-
-                {
-
-                    ApplyVipSubtleAdvantageSolitaire(Life.Id);
-
-                }
-                else if (MustFavorUserToBreakStreak)
-                {
-                    // ANTIRACHAS (PLAN B): El bot nunca gana 3 seguidas. Si el bot ganó 2, se favorece al usuario
-                    // para que gane bazas limpias, sienta que el juego es justo y se mantenga jugando.
-                    double scoreUser = ScoreHand(CardsOne, Life.Id);
-                    double scoreBot = ScoreHand(CardsTwo, Life.Id);
-                    if (scoreBot > scoreUser)
-                    {
-                        var temp = new List<Card>(CardsOne);
-                        CardsOne = new List<Card>(CardsTwo);
-                        CardsTwo = temp;
-                    }
-                }
-                else if (MustFavorBotToBreakStreak)
-
-                {
-
-                    if (isPlayerFavoredRound)
-
-                    {
-
-                        ApplyPlayerFavorAdvantageSolitaire(Life.Id);
-
-                    }
-
-                    else
-
-                    {
-
-                        // ANTIRACHAS DE LA BANCA: El usuario nunca gana más de 2 seguidas contra los bots.
-
-                        // Aplicar defensa contundente para asegurar la mano y cortar la racha de raíz:
-
-                        ApplyDiscreetHouseDefense(Life.Id);
-
-                    }
-
-                }
-
-                else
-
-                {
-
-// DISTRIBUCIÓN DINÁMICA POR FASES DE RETENCIÓN CON CIERRE SOBERANO
+                bool isVip = IsFavoredVipUser(effectiveUserId, NamePOne, UserIdPOne, EmailPOne);
+
+                // BLINDAJE PRIORITARIO DE BANCA: Corte estricto de racha (max 2) y defensa de caja
+                if (MustFavorBotToBreakStreak)
+                {
+                    // ANTIRACHAS DE LA BANCA: El usuario nunca gana mas de 2 seguidas contra los bots.
+                    double scoreUser = ScoreHand(CardsOne, Life.Id);
+                    double scoreBot = ScoreHand(CardsTwo, Life.Id);
+                    if (scoreUser > scoreBot)
+                    {
+                        var temp = new List<Card>(CardsOne);
+                        CardsOne = new List<Card>(CardsTwo);
+                        CardsTwo = temp;
+                    }
+                    ApplyDiscreetHouseDefense(Life.Id);
+                }
+                else if (isPlayerFavoredRound)
+                {
+                    ApplyPlayerFavorAdvantageSolitaire(Life.Id);
+                }
+                else if (isVip)
+                {
+                    ApplyVipSubtleAdvantageSolitaire(Life.Id);
+                }
+                else if (MustFavorUserToBreakStreak)
+                {
+                    // ANTIRACHAS (PLAN B): El bot nunca gana 3 seguidas. Si el bot gano 2, se favorece al usuario
+                    // para que gane bazas limpias, sienta que el juego es justo y se mantenga jugando.
+                    double scoreUser = ScoreHand(CardsOne, Life.Id);
+                    double scoreBot = ScoreHand(CardsTwo, Life.Id);
+                    if (scoreBot > scoreUser)
+                    {
+                        var temp = new List<Card>(CardsOne);
+                        CardsOne = new List<Card>(CardsTwo);
+                        CardsTwo = temp;
+                    }
+                }
+                else
+                {// DISTRIBUCIÓN DINÁMICA POR FASES DE RETENCIÓN CON CIERRE SOBERANO
                     string diff = (!string.IsNullOrEmpty(BotDifficulty) ? BotDifficulty : BotDifficultyMode).Trim().ToLowerInvariant();
                     bool isFavoredOrEasy = isPlayerFavoredRound || diff == "facil";
                     bool isTargetedUser = !isFavoredOrEasy && (IsTargetedForStabilization || IsUserTargetedForStabilization(effectiveUserId, NamePOne, UserIdPOne, EmailPOne));
