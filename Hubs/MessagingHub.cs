@@ -6728,6 +6728,85 @@ namespace PericonAPI.Hubs
 
 
 
+        /// <summary>
+        /// Motor estocástico de alternancia orgánica de rachas (1-1, 2-1, 1-2, 2-2).
+        /// Garantiza de forma estricta:
+        /// 1. El usuario NUNCA gana más de 2 partidas consecutivas (Tope de seguridad de banca).
+        /// 2. El usuario NUNCA pierde más de 2 partidas consecutivas (Anti-frustración y retención).
+        /// 3. Elimina la monotonía rígida alternando de forma aleatoria tras 1 victoria o 1 derrota.
+        /// </summary>
+        private static (bool MustFavorUser, bool MustFavorBot) CalculateOrganicStreakDecision(
+            string mode,
+            int consecutiveUserWins,
+            int consecutiveBotWins,
+            bool isHouseMoneyAtRisk)
+        {
+            // 1. LÍMITES INFRANQUEABLES (Máximo 2 consecutivas)
+            if (consecutiveBotWins >= 2)
+            {
+                // El bot ya ganó 2 seguidas -> OBLIGATORIAMENTE se corta la mala racha a favor del usuario.
+                return (true, false);
+            }
+
+            if (consecutiveUserWins >= 2 || isHouseMoneyAtRisk)
+            {
+                // El usuario ganó 2 seguidas O arriesga fondos de la banca -> OBLIGATORIAMENTE defiende el bot.
+                return (false, true);
+            }
+
+            // 2. ALTERNANCIA ORGÁNICA TRAS 1 VICTORIA DEL USUARIO:
+            // Permite patrones de 1-1 (corte inmediato) o 2-1 / 2-2 (deja disputar la 2da).
+            if (consecutiveUserWins == 1)
+            {
+                double botCutProbability = mode switch
+                {
+                    "favor_jugador" or "favorecido" or "favor_40_60" => 0.40,
+                    "facil" => 0.50,
+                    "medio" => 0.60,
+                    _ => 0.70
+                };
+
+                if (Random.Shared.NextDouble() < botCutProbability)
+                {
+                    return (false, true); // Corta en 1 victoria -> patrón 1-1
+                }
+
+                return (false, false); // Juego orgánico (permite competir por la 2da)
+            }
+
+            // 3. ALTERNANCIA ORGÁNICA TRAS 1 DERROTA DEL USUARIO (1 victoria del bot):
+            // Permite patrones de 1-1 (alivio inmediato) o 1-2 (permite al bot buscar la 2da).
+            if (consecutiveBotWins == 1)
+            {
+                double userReliefProbability = mode switch
+                {
+                    "favor_jugador" or "favorecido" or "favor_40_60" => 0.60,
+                    "facil" => 0.50,
+                    "medio" => 0.40,
+                    _ => 0.30
+                };
+
+                if (Random.Shared.NextDouble() < userReliefProbability)
+                {
+                    return (true, false); // Alivio inmediato tras 1 derrota -> patrón 1-1
+                }
+
+                return (false, false); // Permite disputar de forma natural (el bot puede buscar la 2da)
+            }
+
+            // 4. ESTADO NEUTRAL (0 y 0)
+            if (mode is "favor_jugador" or "favorecido" or "favor_40_60")
+            {
+                if (Random.Shared.NextDouble() < 0.60) return (true, false);
+            }
+            else if (mode == "dificil")
+            {
+                if (Random.Shared.NextDouble() < 0.60) return (false, true);
+            }
+
+            return (false, false);
+        }
+
         private static async void ProcessMatchmakingQueueWithBots(object? state)
 
         {
@@ -7051,202 +7130,47 @@ namespace PericonAPI.Hubs
 
                                            || (userTodayNetProfit + currentBet > allowedCoinMargin);
 
-                    bool isStreakLimitReached = (consecutiveUserWins >= 2);
-                    bool isLossStreakLimitReached = (consecutiveBotWins >= 2);
+                    // ALTERNANCIA ORGÁNICA DINÁMICA DE RACHAS (1-1, 2-1, 1-2, 2-2) Y BLINDAJE DE BANCA
+                    string diffModeForStreak = (effectiveDiff is "favor_jugador" or "favorecido" or "favor_40_60")
+                        ? "favor_jugador"
+                        : (effectiveDiff == "facil" ? "facil" : (effectiveDiff == "medio" ? "medio" : "dificil"));
 
+                    var (mustFavorUser, mustFavorBot) = CalculateOrganicStreakDecision(
+                        diffModeForStreak,
+                        consecutiveUserWins,
+                        consecutiveBotWins,
+                        isHouseMoneyAtRisk);
 
+                    newGame.MustFavorUserToBreakStreak = mustFavorUser;
+                    newGame.MustFavorBotToBreakStreak = mustFavorBot;
 
-                    // 0. MODO ESPECIAL 60/40 A FAVOR DEL JUGADOR (CONFIGURACION MANUAL ADMIN):
-                    if (effectiveDiff is "favor_jugador" or "favorecido" or "favor_40_60")
+                    if (diffModeForStreak == "favor_jugador")
                     {
                         newGame.BotDifficulty = "favor_jugador";
                         newGame.UserBalanceMode = UserBotBalanceMode.Normal;
                         newGame.IsTargetedForStabilization = false;
-
-                        if (isLossStreakLimitReached)
-                        {
-                            newGame.MustFavorUserToBreakStreak = true;
-                            newGame.MustFavorBotToBreakStreak = false;
-                            Console.WriteLine($"[1vs1BotBalance] ANTIRRACHA INVERSO (Favor Jugador) para {name1}: Bot gano {consecutiveBotWins} seguidas. Rompiendo racha.");
-                        }
-                        else if (isStreakLimitReached || isHouseMoneyAtRisk)
-                        {
-                            newGame.MustFavorUserToBreakStreak = false;
-                            newGame.MustFavorBotToBreakStreak = true;
-                            Console.WriteLine($"[1vs1BotBalance] ANTIRACHAS SOBERANO (Favor Jugador) para {name1}: Racha={consecutiveUserWins}, SaldoHoy={userTodayNetProfit}. Bot defendiendo banca.");
-                        }
-                        else
-                        {
-                            newGame.MustFavorBotToBreakStreak = false;
-                            if (consecutiveBotWins >= 1 || Random.Shared.NextDouble() < 0.60)
-                            {
-                                newGame.MustFavorUserToBreakStreak = true;
-                            }
-                            else
-                            {
-                                newGame.MustFavorUserToBreakStreak = false;
-                            }
-                        }
-                        Console.WriteLine($"[1vs1BotBalance] MODO 60/40 A FAVOR DEL JUGADOR ACTIVO para {name1}.");
+                        Console.WriteLine($"[1vs1BotBalance] MODO 60/40 para {name1}: FavorUser={mustFavorUser}, FavorBot={mustFavorBot}, RachaUser={consecutiveUserWins}, RachaBot={consecutiveBotWins}.");
                     }
-                    // 1. MODO FACIL (50-50 EN DINERO - BLINDAJE DE BANCA Y MAXIMO 2 VICTORIAS):
-
-                    else if (effectiveDiff == "facil")
-
+                    else if (diffModeForStreak == "facil")
                     {
-
                         newGame.BotDifficulty = "facil";
-
                         newGame.UserBalanceMode = UserBotBalanceMode.Normal;
-
                         newGame.IsTargetedForStabilization = false;
-
-
-
-                        if (isLossStreakLimitReached)
-
-                        {
-
-                            newGame.MustFavorUserToBreakStreak = true;
-
-                            newGame.MustFavorBotToBreakStreak = false;
-
-                            Console.WriteLine($"[1vs1BotBalance] ANTIRRACHA INVERSO FACIL para {name1}: Bot gano {consecutiveBotWins} seguidas en Facil. Cediedo victoria.");
-
-                        }
-
-                        else if (isStreakLimitReached || isHouseMoneyAtRisk)
-
-                        {
-
-                            newGame.MustFavorUserToBreakStreak = false;
-
-                            newGame.MustFavorBotToBreakStreak = true;
-
-                            Console.WriteLine($"[1vs1BotBalance] BLINDAJE FINANCIERO FACIL para {name1}: Apuesta={currentBet}, SaldoUser={userNetProfitAgainstBot}, SaldoHoy={userTodayNetProfit}, Racha={consecutiveUserWins}. Bot defendiendo banca.");
-
-                        }
-
-                        else
-
-                        {
-
-                            newGame.MustFavorUserToBreakStreak = false;
-
-                            newGame.MustFavorBotToBreakStreak = false;
-
-                        }
-
-
-
-                        Console.WriteLine($"[1vs1BotBalance] MODO FACIL (50-50 MONETARIO) ACTIVO para {name1} (Apuesta={currentBet}, RachaUser={consecutiveUserWins}, RachaBot={consecutiveBotWins}, NetCoins={userNetProfitAgainstBot}).");
-
+                        Console.WriteLine($"[1vs1BotBalance] MODO FACIL (50-50) para {name1}: FavorUser={mustFavorUser}, FavorBot={mustFavorBot}, RachaUser={consecutiveUserWins}, RachaBot={consecutiveBotWins}, NetCoins={userNetProfitAgainstBot}.");
                     }
-
-                    // 2. MODO MEDIO (70-30 EN DINERO - RECUPERACION PROGRESIVA Y MAXIMO 2 VICTORIAS):
-
-                    else if (effectiveDiff == "medio")
-
+                    else if (diffModeForStreak == "medio")
                     {
-
                         newGame.BotDifficulty = "medio";
-
                         newGame.UserBalanceMode = UserBotBalanceMode.BalancedGradualEdge;
-
                         newGame.IsTargetedForStabilization = false;
-
-
-
-                        if (isLossStreakLimitReached)
-
-                        {
-
-                            newGame.MustFavorUserToBreakStreak = true;
-
-                            newGame.MustFavorBotToBreakStreak = false;
-
-                            Console.WriteLine($"[1vs1BotBalance] ANTIRRACHA INVERSO MEDIO para {name1}: Bot gano {consecutiveBotWins} seguidas en Medio. Cediedo victoria.");
-
-                        }
-
-                        else if (isStreakLimitReached || isHouseMoneyAtRisk)
-
-                        {
-
-                            newGame.MustFavorUserToBreakStreak = false;
-
-                            newGame.MustFavorBotToBreakStreak = true;
-
-                            Console.WriteLine($"[1vs1BotBalance] BLINDAJE FINANCIERO MEDIO para {name1}: Apuesta={currentBet}, SaldoUser={userNetProfitAgainstBot}, SaldoHoy={userTodayNetProfit}, Racha={consecutiveUserWins}. Bot defendiendo banca.");
-
-                        }
-
-                        else
-
-                        {
-
-                            newGame.MustFavorUserToBreakStreak = false;
-
-                            newGame.MustFavorBotToBreakStreak = false;
-
-                        }
-
-
-
-                        Console.WriteLine($"[1vs1BotBalance] MODO MEDIO (70-30 MONETARIO) ACTIVO para {name1} (Apuesta={currentBet}, RachaUser={consecutiveUserWins}, RachaBot={consecutiveBotWins}, NetCoins={userNetProfitAgainstBot}).");
-
+                        Console.WriteLine($"[1vs1BotBalance] MODO MEDIO (70-30) para {name1}: FavorUser={mustFavorUser}, FavorBot={mustFavorBot}, RachaUser={consecutiveUserWins}, RachaBot={consecutiveBotWins}, NetCoins={userNetProfitAgainstBot}.");
                     }
-
-                    // 3. MODO DIFICIL (85-15 MURO DE BANCA):
-
                     else
-
                     {
-
                         newGame.BotDifficulty = "dificil";
-
                         newGame.UserBalanceMode = UserBotBalanceMode.DefendHouse;
-
                         newGame.IsTargetedForStabilization = true;
-
-
-
-                        if (isLossStreakLimitReached)
-
-                        {
-
-                            newGame.MustFavorUserToBreakStreak = true;
-
-                            newGame.MustFavorBotToBreakStreak = false;
-
-                            Console.WriteLine($"[1vs1BotBalance] ANTIRRACHA INVERSO DIFICIL para {name1}: Bot gano {consecutiveBotWins} seguidas. Rompiendo mala racha a favor de usuario.");
-
-                        }
-
-                        else if (isStreakLimitReached || isHouseMoneyAtRisk)
-
-                        {
-
-                            newGame.MustFavorUserToBreakStreak = false;
-
-                            newGame.MustFavorBotToBreakStreak = true;
-
-                            Console.WriteLine($"[1vs1BotBalance] BLINDAJE DIFICIL para {name1}: Apuesta={currentBet}, SaldoUser={userNetProfitAgainstBot}, RachaUser={consecutiveUserWins}. Bloqueo estricto activado.");
-
-                        }
-
-                        else
-
-                        {
-
-                            newGame.MustFavorUserToBreakStreak = false;
-
-                            newGame.MustFavorBotToBreakStreak = false;
-
-                            Console.WriteLine($"[1vs1BotBalance] MODO DIFICIL (85-15) NATURAL para {name1}.");
-
-                        }
-
+                        Console.WriteLine($"[1vs1BotBalance] MODO DIFICIL (85-15) para {name1}: FavorUser={mustFavorUser}, FavorBot={mustFavorBot}, RachaUser={consecutiveUserWins}, RachaBot={consecutiveBotWins}.");
                     }
 
                     newGame.NamePOne = name1;
@@ -10061,204 +9985,46 @@ namespace PericonAPI.Hubs
 
                                                || (userTodayNetProfit + currentBet > allowedCoinMargin);
 
-                        bool isStreakLimitReached = (consecutiveUserWins >= 2);
-                        bool isLossStreakLimitReached = (consecutiveBotWins >= 2);
+                        // ALTERNANCIA ORGÁNICA DINÁMICA DE RACHAS (1-1, 2-1, 1-2, 2-2) Y BLINDAJE DE BANCA EN SOLITARIO
+                        string diffModeForStreak = isFavoredDiff
+                            ? "favor_jugador"
+                            : (effectiveDiff == "facil" ? "facil" : (effectiveDiff == "medio" ? "medio" : "dificil"));
 
-                        newgame.BotDifficulty = effectiveDiff;
+                        var (solMustFavorUser, solMustFavorBot) = CalculateOrganicStreakDecision(
+                            diffModeForStreak,
+                            consecutiveUserWins,
+                            consecutiveBotWins,
+                            isHouseMoneyAtRisk);
 
+                        newgame.MustFavorUserToBreakStreak = solMustFavorUser;
+                        newgame.MustFavorBotToBreakStreak = solMustFavorBot;
 
-
-                        // 0. MODO ESPECIAL 60/40 A FAVOR DEL JUGADOR (CONFIGURACION MANUAL ADMIN):
-                        if (isFavoredDiff)
+                        if (diffModeForStreak == "favor_jugador")
                         {
                             newgame.BotDifficulty = "favor_jugador";
                             newgame.UserBalanceMode = UserBotBalanceMode.Normal;
                             newgame.IsTargetedForStabilization = false;
-
-                            if (isLossStreakLimitReached)
-                            {
-                                newgame.MustFavorUserToBreakStreak = true;
-                                newgame.MustFavorBotToBreakStreak = false;
-                                Console.WriteLine($"[Solitaire] ANTIRRACHA INVERSO (Favor Jugador) para {newgame.NamePOne}.");
-                            }
-                            else if (isStreakLimitReached || isHouseMoneyAtRisk)
-                            {
-                                newgame.MustFavorUserToBreakStreak = false;
-                                newgame.MustFavorBotToBreakStreak = true;
-                                Console.WriteLine($"[Solitaire] ANTIRACHAS SOBERANO (Favor Jugador) para {newgame.NamePOne}. Bot defendiendo banca.");
-                            }
-                            else
-                            {
-                                newgame.MustFavorBotToBreakStreak = false;
-                                if (consecutiveBotWins >= 1 || Random.Shared.NextDouble() < 0.60)
-                                {
-                                    newgame.MustFavorUserToBreakStreak = true;
-                                }
-                                else
-                                {
-                                    newgame.MustFavorUserToBreakStreak = false;
-                                }
-                            }
-                            Console.WriteLine($"[Solitaire] MODO 60/40 A FAVOR DEL JUGADOR ACTIVO para {newgame.NamePOne}. Bot cediendo ventaja.");
+                            Console.WriteLine($"[Solitaire] MODO 60/40 para {newgame.NamePOne}: FavorUser={solMustFavorUser}, FavorBot={solMustFavorBot}, RachaUser={consecutiveUserWins}, RachaBot={consecutiveBotWins}.");
                         }
-                        // 1. MODO FACIL (50-50 MONETARIO EN SOLITARIO CON TOPE DE RACHA MAXIMO 2 VICTORIAS):
-
-                        else if (effectiveDiff == "facil")
-
+                        else if (diffModeForStreak == "facil")
                         {
-
                             newgame.UserBalanceMode = UserBotBalanceMode.Normal;
-
                             newgame.IsTargetedForStabilization = false;
-
-
-
-                            if (isLossStreakLimitReached)
-
-                            {
-
-                                newgame.MustFavorUserToBreakStreak = true;
-
-                                newgame.MustFavorBotToBreakStreak = false;
-
-                                Console.WriteLine($"[Solitaire] ANTIRRACHA INVERSO FACIL para {newgame.NamePOne}: Bot gano {consecutiveBotWins} seguidas. Rompiendo mala racha.");
-
-                            }
-
-                            else if (isStreakLimitReached || isHouseMoneyAtRisk)
-
-                            {
-
-                                newgame.MustFavorUserToBreakStreak = false;
-
-                                newgame.MustFavorBotToBreakStreak = true;
-
-                                Console.WriteLine($"[Solitaire] BLINDAJE FINANCIERO FACIL para {newgame.NamePOne}: Apuesta={currentBet}, SaldoUser={userNetProfitAgainstBot}, SaldoHoy={userTodayNetProfit}, Racha={consecutiveUserWins}. Bot defendiendo banca.");
-
-                            }
-
-                            else
-
-                            {
-
-                                newgame.MustFavorUserToBreakStreak = false;
-
-                                newgame.MustFavorBotToBreakStreak = false;
-
-                            }
-
-
-
-                            Console.WriteLine($"[Solitaire] MODO FACIL (50-50 MONETARIO) ACTIVO para {newgame.NamePOne} (Apuesta={currentBet}, RachaUser={consecutiveUserWins}, RachaBot={consecutiveBotWins}).");
-
+                            Console.WriteLine($"[Solitaire] MODO FACIL (50-50) para {newgame.NamePOne}: FavorUser={solMustFavorUser}, FavorBot={solMustFavorBot}, RachaUser={consecutiveUserWins}, RachaBot={consecutiveBotWins}.");
                         }
-
-                        // 2. MODO MEDIO (70-30 MONETARIO EN SOLITARIO CON TOPE DE RACHA MAXIMO 2 VICTORIAS):
-
-                        else if (effectiveDiff == "medio")
-
+                        else if (diffModeForStreak == "medio")
                         {
-
                             newgame.UserBalanceMode = UserBotBalanceMode.BalancedGradualEdge;
-
                             newgame.IsTargetedForStabilization = false;
-
-
-
-                            if (isLossStreakLimitReached)
-
-                            {
-
-                                newgame.MustFavorUserToBreakStreak = true;
-
-                                newgame.MustFavorBotToBreakStreak = false;
-
-                                Console.WriteLine($"[Solitaire] ANTIRRACHA INVERSO MEDIO para {newgame.NamePOne}: Bot gano {consecutiveBotWins} seguidas. Rompiendo mala racha.");
-
-                            }
-
-                            else if (isStreakLimitReached || isHouseMoneyAtRisk)
-
-                            {
-
-                                newgame.MustFavorUserToBreakStreak = false;
-
-                                newgame.MustFavorBotToBreakStreak = true;
-
-                                Console.WriteLine($"[Solitaire] BLINDAJE FINANCIERO MEDIO para {newgame.NamePOne}: Apuesta={currentBet}, SaldoUser={userNetProfitAgainstBot}, SaldoHoy={userTodayNetProfit}, Racha={consecutiveUserWins}. Bot defendiendo banca.");
-
-                            }
-
-                            else
-
-                            {
-
-                                newgame.MustFavorUserToBreakStreak = false;
-
-                                newgame.MustFavorBotToBreakStreak = false;
-
-                            }
-
-
-
-                            Console.WriteLine($"[Solitaire] MODO MEDIO (70-30 MONETARIO) ACTIVO para {newgame.NamePOne} (Apuesta={currentBet}, RachaUser={consecutiveUserWins}, RachaBot={consecutiveBotWins}).");
-
+                            Console.WriteLine($"[Solitaire] MODO MEDIO (70-30) para {newgame.NamePOne}: FavorUser={solMustFavorUser}, FavorBot={solMustFavorBot}, RachaUser={consecutiveUserWins}, RachaBot={consecutiveBotWins}.");
                         }
-
-                        // 3. MODO DIFICIL (85-15 MURO DE BANCA EN SOLITARIO):
-
                         else
-
                         {
-
                             newgame.BotDifficulty = "dificil";
-
                             newgame.UserBalanceMode = UserBotBalanceMode.DefendHouse;
-
                             newgame.IsTargetedForStabilization = true;
-
-
-
-                            if (isLossStreakLimitReached)
-
-                            {
-
-                                newgame.MustFavorUserToBreakStreak = true;
-
-                                newgame.MustFavorBotToBreakStreak = false;
-
-                                Console.WriteLine($"[Solitaire] ANTIRRACHA INVERSO DIFICIL para {newgame.NamePOne}: Bot gano {consecutiveBotWins} seguidas. Rompiendo mala racha.");
-
-                            }
-
-                            else if (isStreakLimitReached || isHouseMoneyAtRisk)
-
-                            {
-
-                                newgame.MustFavorUserToBreakStreak = false;
-
-                                newgame.MustFavorBotToBreakStreak = true;
-
-                                Console.WriteLine($"[Solitaire] BLINDAJE FINANCIERO DIFICIL para {newgame.NamePOne}: Apuesta={currentBet}, Racha={consecutiveUserWins}, SaldoUser={userNetProfitAgainstBot}.");
-
-                            }
-
-                            else
-
-                            {
-
-                                newgame.MustFavorUserToBreakStreak = false;
-
-                                newgame.MustFavorBotToBreakStreak = false;
-
-                            }
-
-
-
-                            Console.WriteLine($"[Solitaire] BLOQUEO DEFENSIVO ACTIVO para {newgame.NamePOne}: Apuesta={currentBet}, Bot al 85% Casa.");
-
+                            Console.WriteLine($"[Solitaire] MODO DIFICIL (85-15) para {newgame.NamePOne}: FavorUser={solMustFavorUser}, FavorBot={solMustFavorBot}, RachaUser={consecutiveUserWins}, RachaBot={consecutiveBotWins}.");
                         }
-
                     }
 
                 }

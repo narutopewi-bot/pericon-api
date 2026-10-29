@@ -459,7 +459,7 @@ namespace PericonAPI.Controllers
         }
 
         public const int MIN_WITHDRAWAL_COINS = 1500;
-        public const int MAX_DAILY_WITHDRAWAL_COINS = 5000;
+        public const int MAX_DAILY_WITHDRAWAL_COINS = 10000;
 
         [HttpPost("withdraw")]
         public async Task<IActionResult> RequestWithdrawal([FromBody] PaymentWithdrawDto dto)
