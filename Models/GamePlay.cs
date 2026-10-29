@@ -1,4 +1,4 @@
-﻿using PericonAPI.Hubs;
+using PericonAPI.Hubs;
 
 
 namespace PericonAPI.Models
@@ -404,6 +404,72 @@ namespace PericonAPI.Models
         ///    - Rara vez (~12%) saca un Perico (5 de oro) o Perica (4 de bastos) individual, jamás ambos.
         /// 3. Principio de Ventaja Justa: Si el rival no tiene nada (blanca), el bot gana con cartas modestas sin presumir cartas grandes.
         /// </summary>
+        /// <summary>
+        /// Corte Sutil de Racha de la Banca (Dramatizado 2 bazas a 1):
+        /// 1. El usuario humano (CardsOne) conserva 1 buen triunfo y 1 carta blanca competitiva (As, 7).
+        /// 2. El bot (CardsTwo) recibe 2 triunfos competitivos para ganar 2 de las 3 bazas de forma limpia.
+        /// 3. Garantiza que el bot gane sin dejar al usuario con una mano 'muerta' de cartas basura,
+        ///    provocando la sensación psicológica de 'casi gano' y manteniendo la emoción del juego.
+        /// </summary>
+        private void ApplySubtleHouseStreakBreak(int lifeId)
+        {
+            if (Deck?.Package == null || Deck.Package.Count < 5 || Life == null || Life.Id < 0)
+                return;
+
+            if (CardsOne.Count != 3 || CardsTwo.Count != 3)
+                return;
+
+            // 1. Si el usuario tiene 2 o más triunfos, se sustituye el exceso para que conserve exactamente 1 triunfo
+            // y una carta blanca alta (As, 7), haciendo que pueda pelear y ganar 1 baza limpiamente.
+            int userTrumpsCount = CardsOne.Count(c => EvaluateCard(c.Id, lifeId) >= 15);
+            while (userTrumpsCount >= 2)
+            {
+                int trumpIdx = CardsOne.FindLastIndex(c => EvaluateCard(c.Id, lifeId) >= 15);
+                if (trumpIdx < 0) break;
+
+                var highWhites = Deck.Package
+                    .Where(c => EvaluateCard(c.Id, lifeId) == 0 && (SpanishCards.GetFaceValue(c.Id) == 1 || SpanishCards.GetFaceValue(c.Id) >= 7))
+                    .ToList();
+
+                if (highWhites.Count > 0)
+                {
+                    Card pick = highWhites[Random.Shared.Next(highWhites.Count)];
+                    Card oldUserTrump = CardsOne[trumpIdx];
+                    Deck.Package.Remove(pick);
+                    Deck.Package.Add(oldUserTrump);
+                    CardsOne[trumpIdx] = pick;
+                    userTrumpsCount--;
+                }
+                else break;
+            }
+
+            // 2. Si el usuario no tiene ningún triunfo (mano blanca pura), se le asegura al menos una carta blanca alta
+            if (userTrumpsCount == 0 && !CardsOne.Any(c => SpanishCards.GetFaceValue(c.Id) >= 7))
+            {
+                var decentWhites = Deck.Package
+                    .Where(c => EvaluateCard(c.Id, lifeId) == 0 && SpanishCards.GetFaceValue(c.Id) >= 6)
+                    .ToList();
+                if (decentWhites.Count > 0)
+                {
+                    Card pick = decentWhites[Random.Shared.Next(decentWhites.Count)];
+                    int lowIdx = CardsOne.FindIndex(c => SpanishCards.GetFaceValue(c.Id) < 5);
+                    if (lowIdx >= 0)
+                    {
+                        Card old = CardsOne[lowIdx];
+                        Deck.Package.Remove(pick);
+                        Deck.Package.Add(old);
+                        CardsOne[lowIdx] = pick;
+                    }
+                }
+            }
+
+            // 3. El bot recibe 2 triunfos competitivos mediante la defensa discreta calibrada
+            ApplyDiscreetHouseDefense(lifeId);
+
+            // 4. Sanitización final para evitar combinaciones obvias (ej: Perico y Perica juntos)
+            SanitizeBotCards(lifeId);
+        }
+
         private void ApplyDiscreetHouseDefense(int lifeId)
         {
             if (Deck?.Package == null || Deck.Package.Count < 5 || Life == null || Life.Id < 0)
@@ -1209,19 +1275,10 @@ namespace PericonAPI.Models
 
                 bool isVipDianelith = IsFavoredVipUser(effectiveUserId, NamePOne, UserIdPOne, EmailPOne);
 
-                // BLINDAJE PRIORITARIO DE BANCA: Corte estricto de racha (max 2) y defensa de caja
+                // BLINDAJE PRIORITARIO DE BANCA: Corte estricto de racha (max 2) con maxima sutileza (2 bazas a 1)
                 if (MustFavorBotToBreakStreak)
                 {
-                    // ANTIRACHAS DE LA BANCA: El usuario nunca gana mas de 2 seguidas contra los bots.
-                    double scoreUser = ScoreHand(CardsOne, Life.Id);
-                    double scoreBot = ScoreHand(CardsTwo, Life.Id);
-                    if (scoreUser > scoreBot)
-                    {
-                        var temp = new List<Card>(CardsOne);
-                        CardsOne = new List<Card>(CardsTwo);
-                        CardsTwo = temp;
-                    }
-                    ApplyDiscreetHouseDefense(Life.Id);
+                    ApplySubtleHouseStreakBreak(Life.Id);
                 }
                 else if (isPlayerFavored)
                 {
@@ -1483,19 +1540,10 @@ namespace PericonAPI.Models
 
                 bool isVip = IsFavoredVipUser(effectiveUserId, NamePOne, UserIdPOne, EmailPOne);
 
-                // BLINDAJE PRIORITARIO DE BANCA: Corte estricto de racha (max 2) y defensa de caja
+                // BLINDAJE PRIORITARIO DE BANCA: Corte estricto de racha (max 2) con maxima sutileza (2 bazas a 1)
                 if (MustFavorBotToBreakStreak)
                 {
-                    // ANTIRACHAS DE LA BANCA: El usuario nunca gana mas de 2 seguidas contra los bots.
-                    double scoreUser = ScoreHand(CardsOne, Life.Id);
-                    double scoreBot = ScoreHand(CardsTwo, Life.Id);
-                    if (scoreUser > scoreBot)
-                    {
-                        var temp = new List<Card>(CardsOne);
-                        CardsOne = new List<Card>(CardsTwo);
-                        CardsTwo = temp;
-                    }
-                    ApplyDiscreetHouseDefense(Life.Id);
+                    ApplySubtleHouseStreakBreak(Life.Id);
                 }
                 else if (isPlayerFavoredRound)
                 {
