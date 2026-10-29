@@ -7052,6 +7052,7 @@ namespace PericonAPI.Hubs
                                            || (userTodayNetProfit + currentBet > allowedCoinMargin);
 
                     bool isStreakLimitReached = (consecutiveUserWins >= 2);
+                    bool isLossStreakLimitReached = (consecutiveBotWins >= 2);
 
 
 
@@ -7108,7 +7109,7 @@ namespace PericonAPI.Hubs
 
                         }
 
-                        else if (consecutiveBotWins >= 3)
+                        else if (isLossStreakLimitReached)
 
                         {
 
@@ -7162,7 +7163,7 @@ namespace PericonAPI.Hubs
 
                         }
 
-                        else if (consecutiveBotWins >= 3)
+                        else if (isLossStreakLimitReached)
 
                         {
 
@@ -7216,7 +7217,7 @@ namespace PericonAPI.Hubs
 
                         }
 
-                        else if (consecutiveBotWins >= 3)
+                        else if (isLossStreakLimitReached)
 
                         {
 
@@ -10055,6 +10056,7 @@ namespace PericonAPI.Hubs
                                                || (userTodayNetProfit + currentBet > allowedCoinMargin);
 
                         bool isStreakLimitReached = (consecutiveUserWins >= 2);
+                        bool isLossStreakLimitReached = (consecutiveBotWins >= 2);
 
                         newgame.BotDifficulty = effectiveDiff;
 
@@ -10111,7 +10113,7 @@ namespace PericonAPI.Hubs
 
                             }
 
-                            else if (consecutiveBotWins >= 3)
+                            else if (isLossStreakLimitReached)
 
                             {
 
@@ -10163,7 +10165,7 @@ namespace PericonAPI.Hubs
 
                             }
 
-                            else if (consecutiveBotWins >= 3)
+                            else if (isLossStreakLimitReached)
 
                             {
 
@@ -10217,7 +10219,7 @@ namespace PericonAPI.Hubs
 
                             }
 
-                            else if (consecutiveBotWins >= 3)
+                            else if (isLossStreakLimitReached)
 
                             {
 

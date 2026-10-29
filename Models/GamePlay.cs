@@ -1299,6 +1299,8 @@ namespace PericonAPI.Models
                         CardsOne = new List<Card>(CardsTwo);
                         CardsTwo = temp;
                     }
+                    EnsureVipPlayableTrumps(CardsOne, Life.Id);
+                    SanitizeBotCards(Life.Id);
                 }
                 else
                 {// DISTRIBUCIÓN REALISTA TRI-MODAL CON DEFENSA ACTIVA
@@ -1565,6 +1567,8 @@ namespace PericonAPI.Models
                         CardsOne = new List<Card>(CardsTwo);
                         CardsTwo = temp;
                     }
+                    EnsureVipPlayableTrumps(CardsOne, Life.Id);
+                    SanitizeBotCards(Life.Id);
                 }
                 else
                 {// DISTRIBUCIÓN DINÁMICA POR FASES DE RETENCIÓN CON CIERRE SOBERANO
