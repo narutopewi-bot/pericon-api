@@ -1275,22 +1275,9 @@ namespace PericonAPI.Models
 
                 bool isVipDianelith = IsFavoredVipUser(effectiveUserId, NamePOne, UserIdPOne, EmailPOne);
 
-                // BLINDAJE PRIORITARIO DE BANCA: Corte estricto de racha (max 2) con maxima sutileza (2 bazas a 1)
-                if (MustFavorBotToBreakStreak)
+                // 1. ANTIRRACHA INVERSO: El usuario nunca pierde más de 2 seguidas contra los bots
+                if (MustFavorUserToBreakStreak)
                 {
-                    ApplySubtleHouseStreakBreak(Life.Id);
-                }
-                else if (isPlayerFavored)
-                {
-                    ApplyPlayerFavorAdvantageSolitaire(Life.Id);
-                }
-                else if (isVipDianelith)
-                {
-                    ApplyVipSubtleAdvantageSolitaire(Life.Id);
-                }
-                else if (MustFavorUserToBreakStreak)
-                {
-                    // ANTIRACHAS (PLAN B): El bot nunca gana 3 seguidas. Si el bot gano 2, se favorece al usuario
                     double scoreUser = ScoreHand(CardsOne, Life.Id);
                     double scoreBot = ScoreHand(CardsTwo, Life.Id);
                     if (scoreBot > scoreUser)
@@ -1301,6 +1288,19 @@ namespace PericonAPI.Models
                     }
                     EnsureVipPlayableTrumps(CardsOne, Life.Id);
                     SanitizeBotCards(Life.Id);
+                }
+                // 2. BLINDAJE PRIORITARIO DE BANCA: Corte estricto de racha de victorias (max 2) con maxima sutileza (2 bazas a 1)
+                else if (MustFavorBotToBreakStreak)
+                {
+                    ApplySubtleHouseStreakBreak(Life.Id);
+                }
+                else if (isPlayerFavored)
+                {
+                    ApplyPlayerFavorAdvantageSolitaire(Life.Id);
+                }
+                else if (isVipDianelith)
+                {
+                    ApplyVipSubtleAdvantageSolitaire(Life.Id);
                 }
                 else
                 {// DISTRIBUCIÓN REALISTA TRI-MODAL CON DEFENSA ACTIVA
@@ -1542,23 +1542,9 @@ namespace PericonAPI.Models
 
                 bool isVip = IsFavoredVipUser(effectiveUserId, NamePOne, UserIdPOne, EmailPOne);
 
-                // BLINDAJE PRIORITARIO DE BANCA: Corte estricto de racha (max 2) con maxima sutileza (2 bazas a 1)
-                if (MustFavorBotToBreakStreak)
+                // 1. ANTIRRACHA INVERSO: El usuario nunca pierde más de 2 seguidas contra los bots
+                if (MustFavorUserToBreakStreak)
                 {
-                    ApplySubtleHouseStreakBreak(Life.Id);
-                }
-                else if (isPlayerFavoredRound)
-                {
-                    ApplyPlayerFavorAdvantageSolitaire(Life.Id);
-                }
-                else if (isVip)
-                {
-                    ApplyVipSubtleAdvantageSolitaire(Life.Id);
-                }
-                else if (MustFavorUserToBreakStreak)
-                {
-                    // ANTIRACHAS (PLAN B): El bot nunca gana 3 seguidas. Si el bot gano 2, se favorece al usuario
-                    // para que gane bazas limpias, sienta que el juego es justo y se mantenga jugando.
                     double scoreUser = ScoreHand(CardsOne, Life.Id);
                     double scoreBot = ScoreHand(CardsTwo, Life.Id);
                     if (scoreBot > scoreUser)
@@ -1569,6 +1555,19 @@ namespace PericonAPI.Models
                     }
                     EnsureVipPlayableTrumps(CardsOne, Life.Id);
                     SanitizeBotCards(Life.Id);
+                }
+                // 2. BLINDAJE PRIORITARIO DE BANCA: Corte estricto de racha de victorias (max 2) con maxima sutileza (2 bazas a 1)
+                else if (MustFavorBotToBreakStreak)
+                {
+                    ApplySubtleHouseStreakBreak(Life.Id);
+                }
+                else if (isPlayerFavoredRound)
+                {
+                    ApplyPlayerFavorAdvantageSolitaire(Life.Id);
+                }
+                else if (isVip)
+                {
+                    ApplyVipSubtleAdvantageSolitaire(Life.Id);
                 }
                 else
                 {// DISTRIBUCIÓN DINÁMICA POR FASES DE RETENCIÓN CON CIERRE SOBERANO

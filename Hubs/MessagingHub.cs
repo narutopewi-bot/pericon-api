@@ -7063,7 +7063,13 @@ namespace PericonAPI.Hubs
                         newGame.UserBalanceMode = UserBotBalanceMode.Normal;
                         newGame.IsTargetedForStabilization = false;
 
-                        if (isStreakLimitReached || isHouseMoneyAtRisk)
+                        if (isLossStreakLimitReached)
+                        {
+                            newGame.MustFavorUserToBreakStreak = true;
+                            newGame.MustFavorBotToBreakStreak = false;
+                            Console.WriteLine($"[1vs1BotBalance] ANTIRRACHA INVERSO (Favor Jugador) para {name1}: Bot gano {consecutiveBotWins} seguidas. Rompiendo racha.");
+                        }
+                        else if (isStreakLimitReached || isHouseMoneyAtRisk)
                         {
                             newGame.MustFavorUserToBreakStreak = false;
                             newGame.MustFavorBotToBreakStreak = true;
@@ -7097,7 +7103,19 @@ namespace PericonAPI.Hubs
 
 
 
-                        if (isStreakLimitReached || isHouseMoneyAtRisk)
+                        if (isLossStreakLimitReached)
+
+                        {
+
+                            newGame.MustFavorUserToBreakStreak = true;
+
+                            newGame.MustFavorBotToBreakStreak = false;
+
+                            Console.WriteLine($"[1vs1BotBalance] ANTIRRACHA INVERSO FACIL para {name1}: Bot gano {consecutiveBotWins} seguidas en Facil. Cediedo victoria.");
+
+                        }
+
+                        else if (isStreakLimitReached || isHouseMoneyAtRisk)
 
                         {
 
@@ -7106,18 +7124,6 @@ namespace PericonAPI.Hubs
                             newGame.MustFavorBotToBreakStreak = true;
 
                             Console.WriteLine($"[1vs1BotBalance] BLINDAJE FINANCIERO FACIL para {name1}: Apuesta={currentBet}, SaldoUser={userNetProfitAgainstBot}, SaldoHoy={userTodayNetProfit}, Racha={consecutiveUserWins}. Bot defendiendo banca.");
-
-                        }
-
-                        else if (isLossStreakLimitReached)
-
-                        {
-
-                            newGame.MustFavorUserToBreakStreak = true;
-
-                            newGame.MustFavorBotToBreakStreak = false;
-
-                            Console.WriteLine($"[1vs1BotBalance] ALIVIO DE RACHA BOT para {name1}: Bot gano {consecutiveBotWins} seguidas en Facil. Cediedo victoria.");
 
                         }
 
@@ -7151,7 +7157,19 @@ namespace PericonAPI.Hubs
 
 
 
-                        if (isStreakLimitReached || isHouseMoneyAtRisk)
+                        if (isLossStreakLimitReached)
+
+                        {
+
+                            newGame.MustFavorUserToBreakStreak = true;
+
+                            newGame.MustFavorBotToBreakStreak = false;
+
+                            Console.WriteLine($"[1vs1BotBalance] ANTIRRACHA INVERSO MEDIO para {name1}: Bot gano {consecutiveBotWins} seguidas en Medio. Cediedo victoria.");
+
+                        }
+
+                        else if (isStreakLimitReached || isHouseMoneyAtRisk)
 
                         {
 
@@ -7160,18 +7178,6 @@ namespace PericonAPI.Hubs
                             newGame.MustFavorBotToBreakStreak = true;
 
                             Console.WriteLine($"[1vs1BotBalance] BLINDAJE FINANCIERO MEDIO para {name1}: Apuesta={currentBet}, SaldoUser={userNetProfitAgainstBot}, SaldoHoy={userTodayNetProfit}, Racha={consecutiveUserWins}. Bot defendiendo banca.");
-
-                        }
-
-                        else if (isLossStreakLimitReached)
-
-                        {
-
-                            newGame.MustFavorUserToBreakStreak = true;
-
-                            newGame.MustFavorBotToBreakStreak = false;
-
-                            Console.WriteLine($"[1vs1BotBalance] ALIVIO DE RACHA BOT para {name1}: Bot gano {consecutiveBotWins} seguidas en Medio. Cediedo victoria.");
 
                         }
 
@@ -7205,7 +7211,19 @@ namespace PericonAPI.Hubs
 
 
 
-                        if (isStreakLimitReached || isHouseMoneyAtRisk)
+                        if (isLossStreakLimitReached)
+
+                        {
+
+                            newGame.MustFavorUserToBreakStreak = true;
+
+                            newGame.MustFavorBotToBreakStreak = false;
+
+                            Console.WriteLine($"[1vs1BotBalance] ANTIRRACHA INVERSO DIFICIL para {name1}: Bot gano {consecutiveBotWins} seguidas. Rompiendo mala racha a favor de usuario.");
+
+                        }
+
+                        else if (isStreakLimitReached || isHouseMoneyAtRisk)
 
                         {
 
@@ -7214,18 +7232,6 @@ namespace PericonAPI.Hubs
                             newGame.MustFavorBotToBreakStreak = true;
 
                             Console.WriteLine($"[1vs1BotBalance] BLINDAJE DIFICIL para {name1}: Apuesta={currentBet}, SaldoUser={userNetProfitAgainstBot}, RachaUser={consecutiveUserWins}. Bloqueo estricto activado.");
-
-                        }
-
-                        else if (isLossStreakLimitReached)
-
-                        {
-
-                            newGame.MustFavorUserToBreakStreak = true;
-
-                            newGame.MustFavorBotToBreakStreak = false;
-
-                            Console.WriteLine($"[1vs1BotBalance] Ciclo 3 a 1 para {name1}: Bot gano {consecutiveBotWins} seguidas en sala de {currentBet}. Cediedo 1 victoria.");
 
                         }
 
@@ -10069,7 +10075,13 @@ namespace PericonAPI.Hubs
                             newgame.UserBalanceMode = UserBotBalanceMode.Normal;
                             newgame.IsTargetedForStabilization = false;
 
-                            if (isStreakLimitReached || isHouseMoneyAtRisk)
+                            if (isLossStreakLimitReached)
+                            {
+                                newgame.MustFavorUserToBreakStreak = true;
+                                newgame.MustFavorBotToBreakStreak = false;
+                                Console.WriteLine($"[Solitaire] ANTIRRACHA INVERSO (Favor Jugador) para {newgame.NamePOne}.");
+                            }
+                            else if (isStreakLimitReached || isHouseMoneyAtRisk)
                             {
                                 newgame.MustFavorUserToBreakStreak = false;
                                 newgame.MustFavorBotToBreakStreak = true;
@@ -10101,7 +10113,19 @@ namespace PericonAPI.Hubs
 
 
 
-                            if (isStreakLimitReached || isHouseMoneyAtRisk)
+                            if (isLossStreakLimitReached)
+
+                            {
+
+                                newgame.MustFavorUserToBreakStreak = true;
+
+                                newgame.MustFavorBotToBreakStreak = false;
+
+                                Console.WriteLine($"[Solitaire] ANTIRRACHA INVERSO FACIL para {newgame.NamePOne}: Bot gano {consecutiveBotWins} seguidas. Rompiendo mala racha.");
+
+                            }
+
+                            else if (isStreakLimitReached || isHouseMoneyAtRisk)
 
                             {
 
@@ -10110,18 +10134,6 @@ namespace PericonAPI.Hubs
                                 newgame.MustFavorBotToBreakStreak = true;
 
                                 Console.WriteLine($"[Solitaire] BLINDAJE FINANCIERO FACIL para {newgame.NamePOne}: Apuesta={currentBet}, SaldoUser={userNetProfitAgainstBot}, SaldoHoy={userTodayNetProfit}, Racha={consecutiveUserWins}. Bot defendiendo banca.");
-
-                            }
-
-                            else if (isLossStreakLimitReached)
-
-                            {
-
-                                newgame.MustFavorUserToBreakStreak = true;
-
-                                newgame.MustFavorBotToBreakStreak = false;
-
-                                Console.WriteLine($"[Solitaire] ALIVIO DE RACHA BOT para {newgame.NamePOne}: Bot gano {consecutiveBotWins} seguidas en Facil. Cediedo victoria.");
 
                             }
 
@@ -10153,7 +10165,19 @@ namespace PericonAPI.Hubs
 
 
 
-                            if (isStreakLimitReached || isHouseMoneyAtRisk)
+                            if (isLossStreakLimitReached)
+
+                            {
+
+                                newgame.MustFavorUserToBreakStreak = true;
+
+                                newgame.MustFavorBotToBreakStreak = false;
+
+                                Console.WriteLine($"[Solitaire] ANTIRRACHA INVERSO MEDIO para {newgame.NamePOne}: Bot gano {consecutiveBotWins} seguidas. Rompiendo mala racha.");
+
+                            }
+
+                            else if (isStreakLimitReached || isHouseMoneyAtRisk)
 
                             {
 
@@ -10162,18 +10186,6 @@ namespace PericonAPI.Hubs
                                 newgame.MustFavorBotToBreakStreak = true;
 
                                 Console.WriteLine($"[Solitaire] BLINDAJE FINANCIERO MEDIO para {newgame.NamePOne}: Apuesta={currentBet}, SaldoUser={userNetProfitAgainstBot}, SaldoHoy={userTodayNetProfit}, Racha={consecutiveUserWins}. Bot defendiendo banca.");
-
-                            }
-
-                            else if (isLossStreakLimitReached)
-
-                            {
-
-                                newgame.MustFavorUserToBreakStreak = true;
-
-                                newgame.MustFavorBotToBreakStreak = false;
-
-                                Console.WriteLine($"[Solitaire] ALIVIO DE RACHA BOT para {newgame.NamePOne}: Bot gano {consecutiveBotWins} seguidas en Medio. Cediedo victoria.");
 
                             }
 
@@ -10207,7 +10219,19 @@ namespace PericonAPI.Hubs
 
 
 
-                            if (isStreakLimitReached || isHouseMoneyAtRisk)
+                            if (isLossStreakLimitReached)
+
+                            {
+
+                                newgame.MustFavorUserToBreakStreak = true;
+
+                                newgame.MustFavorBotToBreakStreak = false;
+
+                                Console.WriteLine($"[Solitaire] ANTIRRACHA INVERSO DIFICIL para {newgame.NamePOne}: Bot gano {consecutiveBotWins} seguidas. Rompiendo mala racha.");
+
+                            }
+
+                            else if (isStreakLimitReached || isHouseMoneyAtRisk)
 
                             {
 
@@ -10216,18 +10240,6 @@ namespace PericonAPI.Hubs
                                 newgame.MustFavorBotToBreakStreak = true;
 
                                 Console.WriteLine($"[Solitaire] BLINDAJE FINANCIERO DIFICIL para {newgame.NamePOne}: Apuesta={currentBet}, Racha={consecutiveUserWins}, SaldoUser={userNetProfitAgainstBot}.");
-
-                            }
-
-                            else if (isLossStreakLimitReached)
-
-                            {
-
-                                newgame.MustFavorUserToBreakStreak = true;
-
-                                newgame.MustFavorBotToBreakStreak = false;
-
-                                Console.WriteLine($"[Solitaire] ALIVIO DIFICIL para {newgame.NamePOne}: Bot gano {consecutiveBotWins} seguidas. Cediedo victoria.");
 
                             }
 
