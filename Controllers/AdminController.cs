@@ -1204,11 +1204,11 @@ namespace PericonAPI.Controllers
             // CANDADO FINANCIERO: Alerta si supera el límite de 5.000 Bs o si no hay depósito aprobado
             if (withdrawal.User != null && !withdrawal.User.IsAdmin && withdrawal.User.Username.ToLower() != "guardian")
             {
-                if (withdrawal.CoinsAmount > 5000 && !dto.ForceApprove)
+                if (withdrawal.CoinsAmount > PaymentController.MAX_DAILY_WITHDRAWAL_COINS && !dto.ForceApprove)
                 {
                     return BadRequest(new
                     {
-                        message = $"⚠️ ALERTA DE SEGURIDAD DE BANCA: Este retiro ({withdrawal.CoinsAmount:N0} Bs.) SUPERA el límite diario de 5.000 Bs. Si estás absolutamente seguro de aprobarlo por excepción, debes activar ForceApprove.",
+                        message = $"⚠️ ALERTA DE SEGURIDAD DE BANCA: Este retiro ({withdrawal.CoinsAmount:N0} Bs.) SUPERA el límite diario de 10.000 Bs. Si estás absolutamente seguro de aprobarlo por excepción, debes activar ForceApprove.",
                         isHighAmount = true,
                         amount = withdrawal.CoinsAmount
                     });
