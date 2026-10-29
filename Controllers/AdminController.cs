@@ -1256,9 +1256,13 @@ namespace PericonAPI.Controllers
                 return NotFound(new { message = "Solicitud de retiro no encontrada." });
             }
 
-            if (withdrawal.Status == "PAGADO")
+            if (withdrawal.Status == "PAGADO" && !(dto?.ForceCancelPaid ?? false))
             {
-                return BadRequest(new { message = "No se puede rechazar un retiro que ya fue marcado como pagado." });
+                return BadRequest(new { message = "No se puede rechazar un retiro que ya fue marcado como pagado. Usa ForceCancelPaid si fue error o pago rebotado." });
+            }
+            if (withdrawal.Status == "PAGADO" && (dto?.ForceCancelPaid ?? false))
+            {
+                withdrawal.AdminReference = "ANULADO_POR_FRAUDE";
             }
 
             if (withdrawal.Status == "RECHAZADO")
@@ -2505,6 +2509,7 @@ namespace PericonAPI.Controllers
     {
         public string? Reason { get; set; }
         public bool Confiscate { get; set; } = false;
+        public bool ForceCancelPaid { get; set; } = false;
     }
 
     public class AdjustCoinsDto

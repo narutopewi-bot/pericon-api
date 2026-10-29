@@ -580,6 +580,42 @@ namespace PericonAPI.Controllers
                 });
             }
 
+            // REGLA FINANCIERA 6: Candado de Coherencia Deportiva y Auditoría Matemática
+            if (!user.IsAdmin && user.Username.ToLower() != "guardian")
+            {
+                var totalApprovedDeposits = await _context.PaymentRecharges
+                    .Where(r => r.UserId == dto.UserId && r.Status == "APROBADO")
+                    .SumAsync(r => (int?)r.CoinsAmount) ?? 0;
+
+                var totalPaidWithdrawals = await _context.PaymentWithdrawals
+                    .Where(w => w.UserId == dto.UserId && w.Status == "PAGADO")
+                    .SumAsync(w => (int?)w.CoinsAmount) ?? 0;
+
+                var cleanUsernameLower = user.Username.ToLowerInvariant();
+                var pvpWon = await _context.MatchBetRecords
+                    .Where(m => !m.IsBotMatch && m.WinnerUsername.ToLower() == cleanUsernameLower)
+                    .SumAsync(m => (int?)(m.WinnerPrize - m.BetPerPlayer)) ?? 0;
+
+                var pvpLost = await _context.MatchBetRecords
+                    .Where(m => !m.IsBotMatch && m.LoserUsername.ToLower() == cleanUsernameLower)
+                    .SumAsync(m => (int?)m.BetPerPlayer) ?? 0;
+
+                var botNet = await _context.BotMatchRecords
+                    .Where(b => b.UserId == dto.UserId)
+                    .SumAsync(b => (int?)(b.CoinsWon - b.CoinsLost)) ?? 0;
+
+                int netGameWinnings = (pvpWon - pvpLost) + botNet;
+                int maxAuditedRetirable = totalApprovedDeposits + Math.Max(0, netGameWinnings) - totalPaidWithdrawals;
+
+                if (dto.CoinsAmount > maxAuditedRetirable)
+                {
+                    return BadRequest(new
+                    {
+                        message = $"⚠️ ALERTA DE COHERENCIA DEPORTIVA: El monto solicitado ({dto.CoinsAmount:N0} Bs.) supera tus fondos justificados por partidas y depósitos ({Math.Max(0, maxAuditedRetirable):N0} Bs.). No se permite retirar saldo que no provenga de victorias verificadas o depósitos aprobados."
+                    });
+                }
+            }
+
             // Descontar monedas de inmediato para evitar doble gasto
             user.Coins -= dto.CoinsAmount;
 
@@ -688,7 +724,32 @@ namespace PericonAPI.Controllers
 
             bool isExempt = user.IsAdmin || user.Username.ToLower() == "guardian";
 
-            bool canWithdraw = isExempt || (todayWithdrawal == null && pendingWithdrawal == null && hasApprovedDeposit && user.GetRetirableCoins() >= MIN_WITHDRAWAL_COINS);
+            var totalApprovedDeposits = await _context.PaymentRecharges
+                .Where(r => r.UserId == userId && r.Status == "APROBADO")
+                .SumAsync(r => (int?)r.CoinsAmount) ?? 0;
+
+            var totalPaidWithdrawals = await _context.PaymentWithdrawals
+                .Where(w => w.UserId == userId && w.Status == "PAGADO")
+                .SumAsync(w => (int?)w.CoinsAmount) ?? 0;
+
+            var cleanUsernameLower = user.Username.ToLowerInvariant();
+            var pvpWon = await _context.MatchBetRecords
+                .Where(m => !m.IsBotMatch && m.WinnerUsername.ToLower() == cleanUsernameLower)
+                .SumAsync(m => (int?)(m.WinnerPrize - m.BetPerPlayer)) ?? 0;
+
+            var pvpLost = await _context.MatchBetRecords
+                .Where(m => !m.IsBotMatch && m.LoserUsername.ToLower() == cleanUsernameLower)
+                .SumAsync(m => (int?)m.BetPerPlayer) ?? 0;
+
+            var botNet = await _context.BotMatchRecords
+                .Where(b => b.UserId == userId)
+                .SumAsync(b => (int?)(b.CoinsWon - b.CoinsLost)) ?? 0;
+
+            int netGameWinnings = (pvpWon - pvpLost) + botNet;
+            int maxAuditedRetirable = totalApprovedDeposits + Math.Max(0, netGameWinnings) - totalPaidWithdrawals;
+            int effectiveRetirable = isExempt ? user.GetRetirableCoins() : Math.Min(user.GetRetirableCoins(), Math.Max(0, maxAuditedRetirable));
+
+            bool canWithdraw = isExempt || (todayWithdrawal == null && pendingWithdrawal == null && hasApprovedDeposit && effectiveRetirable >= MIN_WITHDRAWAL_COINS);
 
             return Ok(new
             {
@@ -715,7 +776,8 @@ namespace PericonAPI.Controllers
                     pendingWithdrawal.CreatedAt
                 },
                 operatingHoursOpen = VenezuelaTime.IsWithinOperatingHours(),
-                retirableCoins = user.GetRetirableCoins(),
+                retirableCoins = effectiveRetirable,
+                maxAuditedRetirable = isExempt ? user.GetRetirableCoins() : Math.Max(0, maxAuditedRetirable),
                 coins = user.Coins,
                 bonusCoins = user.BonusCoins
             });
