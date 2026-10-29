@@ -23,7 +23,7 @@ namespace PericonAPI.Controllers
             _tesoroPagosService = tesoroPagosService;
         }
 
-        public const decimal MIN_RECHARGE_BS = 800m;
+        public const decimal MIN_RECHARGE_BS = 1m;
 
         [HttpPost("report")]
         [Consumes("multipart/form-data")]
@@ -36,7 +36,7 @@ namespace PericonAPI.Controllers
 
             if (dto.AmountBs < MIN_RECHARGE_BS)
             {
-                return BadRequest(new { message = $"El monto mínimo de recarga es de {MIN_RECHARGE_BS:N0} Bs. ({MIN_RECHARGE_BS:N0} monedas)." });
+                return BadRequest(new { message = $"El monto mínimo de recarga es de {MIN_RECHARGE_BS:N0} Bs. ({MIN_RECHARGE_BS:N0} moneda)." });
             }
 
             var cleanRef = (dto.Reference ?? "").Trim();
@@ -210,7 +210,7 @@ namespace PericonAPI.Controllers
 
             if (dto.AmountBs < MIN_RECHARGE_BS)
             {
-                return BadRequest(new { message = $"El monto mínimo de recarga es de {MIN_RECHARGE_BS:N0} Bs. ({MIN_RECHARGE_BS:N0} monedas)." });
+                return BadRequest(new { message = $"El monto mínimo de recarga es de {MIN_RECHARGE_BS:N0} Bs. ({MIN_RECHARGE_BS:N0} moneda)." });
             }
 
             var cleanRef = (dto.Reference ?? "").Trim();
