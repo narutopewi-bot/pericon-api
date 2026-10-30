@@ -1378,6 +1378,62 @@ namespace PericonAPI.Controllers
             });
         }
 
+        [HttpPost("withdrawal/manual")]
+        public async Task<IActionResult> CreateManualWithdrawal([FromBody] CreateManualWithdrawalDto dto)
+        {
+            var user = await _context.Users.FindAsync(dto.UserId);
+            if (user == null)
+            {
+                return NotFound(new { message = "Usuario no encontrado." });
+            }
+
+            if (dto.AmountCoins <= 0)
+            {
+                return BadRequest(new { message = "El monto de monedas debe ser mayor a 0." });
+            }
+
+            // Deducir monedas del balance del usuario si se solicita (por defecto true)
+            if (dto.DeductCoins)
+            {
+                user.Coins = Math.Max(0, user.Coins - dto.AmountCoins);
+                if (user.BonusCoins > user.Coins)
+                {
+                    user.BonusCoins = user.Coins;
+                }
+            }
+
+            var withdrawal = new PaymentWithdrawal
+            {
+                UserId = user.Id,
+                AmountBs = dto.AmountBs > 0 ? dto.AmountBs : (decimal)dto.AmountCoins,
+                CoinsAmount = dto.AmountCoins,
+                BankName = !string.IsNullOrWhiteSpace(dto.BankName) ? dto.BankName : (!string.IsNullOrWhiteSpace(user.BankName) ? user.BankName : "PAGO_MANUAL"),
+                PhoneNumber = !string.IsNullOrWhiteSpace(dto.PhoneNumber) ? dto.PhoneNumber : (!string.IsNullOrWhiteSpace(user.PhoneNumber) ? user.PhoneNumber : "PAGO_MANUAL"),
+                IdCard = !string.IsNullOrWhiteSpace(dto.IdCard) ? dto.IdCard : (!string.IsNullOrWhiteSpace(user.Cedula) ? user.Cedula : "PAGO_MANUAL"),
+                Status = "PAGADO",
+                AdminReference = !string.IsNullOrWhiteSpace(dto.Reference) ? dto.Reference : "PAGO_MANUAL_PEWI",
+                CreatedAt = VenezuelaTime.Now,
+                ProcessedAt = VenezuelaTime.Now
+            };
+
+            _context.PaymentWithdrawals.Add(withdrawal);
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                success = true,
+                withdrawalId = withdrawal.Id,
+                userId = user.Id,
+                username = user.Username,
+                amountCoins = withdrawal.CoinsAmount,
+                amountBs = withdrawal.AmountBs,
+                userRemainingCoins = user.Coins,
+                status = withdrawal.Status,
+                adminReference = withdrawal.AdminReference,
+                message = $"Retiro manual de {withdrawal.AmountBs:N0} Bs. ({withdrawal.CoinsAmount:N0} monedas) registrado como PAGADO para {user.Username}."
+            });
+        }
+
         [HttpPost("login")]
         public async Task<IActionResult> AdminLogin([FromBody] AdminLoginDto dto)
         {
@@ -2539,5 +2595,17 @@ namespace PericonAPI.Controllers
     public class ResetPendingDto
     {
         public bool RevertCoins { get; set; } = false;
+    }
+
+    public class CreateManualWithdrawalDto
+    {
+        public int UserId { get; set; }
+        public int AmountCoins { get; set; }
+        public decimal AmountBs { get; set; }
+        public string? BankName { get; set; }
+        public string? PhoneNumber { get; set; }
+        public string? IdCard { get; set; }
+        public string? Reference { get; set; }
+        public bool DeductCoins { get; set; } = true;
     }
 }
