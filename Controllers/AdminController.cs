@@ -1924,6 +1924,24 @@ namespace PericonAPI.Controllers
 
             var userCoinsInCirculation = await _context.Users.SumAsync(u => u.Coins);
 
+            var expenses = await _context.PlatformExpenses.OrderByDescending(e => e.CreatedAt).ToListAsync();
+            var totalBsExpenses = expenses.Where(e => e.Currency == "BS").Sum(e => e.Amount);
+            var totalUsdtExpenses = expenses.Where(e => e.Currency == "USDT").Sum(e => e.Amount);
+            var totalUsdtPurchased = expenses.Where(e => e.UsdtReceived != null && e.UsdtReceived > 0).Sum(e => e.UsdtReceived ?? 0);
+            var cajaNetaBs = totalBsRecharges - totalBsWithdrawals - totalBsExpenses;
+            var cajaNetaUsdt = totalUsdtPurchased - totalUsdtExpenses;
+
+            var expensesByCategory = expenses
+                .GroupBy(e => new { e.Category, e.Currency })
+                .Select(g => new
+                {
+                    category = g.Key.Category,
+                    currency = g.Key.Currency,
+                    total = g.Sum(x => x.Amount),
+                    count = g.Count()
+                })
+                .ToList();
+
             return Ok(new
             {
                 users = new { total = totalUsers, active = activeUsers, banned = bannedUsers },
@@ -1943,6 +1961,12 @@ namespace PericonAPI.Controllers
                     pendingBsPaid = pendingBsWithdrawals,
                     pendingWithdrawalsCount,
                     netBsBalance = totalBsRecharges - totalBsWithdrawals,
+                    cajaNetaBs,
+                    cajaNetaUsdt,
+                    totalBsExpenses,
+                    totalUsdtExpenses,
+                    totalUsdtPurchased,
+                    expensesByCategory,
                     netBsBalanceWithPending = (totalBsRecharges + pendingBsRecharges) - (totalBsWithdrawals + pendingBsWithdrawals),
                     totalCoinsCirculating = userCoinsInCirculation,
                     totalCommissionsCollected = totalCommissions,
@@ -2533,8 +2557,112 @@ namespace PericonAPI.Controllers
                 message = $"Se acreditaron con éxito +{amount} monedas de reactivación a @{user.Username}."
             });
         }
+
+        [HttpGet("expenses")]
+        public async Task<IActionResult> GetExpenses()
+        {
+            var expenses = await _context.PlatformExpenses
+                .OrderByDescending(e => e.CreatedAt)
+                .ToListAsync();
+
+            var totalBsExpenses = expenses.Where(e => e.Currency == "BS").Sum(e => e.Amount);
+            var totalUsdtExpenses = expenses.Where(e => e.Currency == "USDT").Sum(e => e.Amount);
+            var totalUsdtPurchased = expenses.Where(e => e.UsdtReceived != null && e.UsdtReceived > 0).Sum(e => e.UsdtReceived ?? 0);
+
+            return Ok(new
+            {
+                expenses,
+                totalBsExpenses,
+                totalUsdtExpenses,
+                totalUsdtPurchased,
+                cajaNetaUsdt = totalUsdtPurchased - totalUsdtExpenses
+            });
+        }
+
+        [HttpPost("expenses")]
+        public async Task<IActionResult> CreateExpense([FromBody] CreatePlatformExpenseDto dto)
+        {
+            if (string.IsNullOrWhiteSpace(dto.Description))
+            {
+                return BadRequest(new { message = "La descripción del gasto es obligatoria." });
+            }
+
+            if (dto.Amount <= 0)
+            {
+                return BadRequest(new { message = "El monto debe ser mayor a cero." });
+            }
+
+            var currency = (dto.Currency ?? "BS").Trim().ToUpper();
+            if (currency != "BS" && currency != "USDT")
+            {
+                currency = "BS";
+            }
+
+            decimal? usdtReceived = dto.UsdtReceived;
+            decimal? exchangeRate = dto.ExchangeRate;
+
+            if (dto.Category != null && (dto.Category.Contains("Compra USDT") || dto.Category.Contains("Compra de USDT")))
+            {
+                currency = "BS";
+                if (usdtReceived == null || usdtReceived <= 0)
+                {
+                    return BadRequest(new { message = "Para Compra de USDT debe indicar la cantidad de USDT recibidos." });
+                }
+                if (exchangeRate == null || exchangeRate <= 0)
+                {
+                    exchangeRate = Math.Round(dto.Amount / usdtReceived.Value, 4);
+                }
+            }
+
+            var expense = new PlatformExpense
+            {
+                Description = dto.Description.Trim(),
+                Category = string.IsNullOrWhiteSpace(dto.Category) ? "Varios" : dto.Category.Trim(),
+                Currency = currency,
+                Amount = dto.Amount,
+                UsdtReceived = usdtReceived,
+                ExchangeRate = exchangeRate,
+                CreatedAt = VenezuelaTime.Now,
+                CreatedBy = "Guardian",
+                Notes = dto.Notes?.Trim()
+            };
+
+            _context.PlatformExpenses.Add(expense);
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                message = "Gasto registrado exitosamente en la caja.",
+                expense
+            });
+        }
+
+        [HttpDelete("expenses/{id}")]
+        public async Task<IActionResult> DeleteExpense(int id)
+        {
+            var expense = await _context.PlatformExpenses.FindAsync(id);
+            if (expense == null)
+            {
+                return NotFound(new { message = "Gasto no encontrado." });
+            }
+
+            _context.PlatformExpenses.Remove(expense);
+            await _context.SaveChangesAsync();
+
+            return Ok(new { message = "Gasto eliminado y balance de caja recalculado." });
+        }
     }
 
+    public class CreatePlatformExpenseDto
+    {
+        public string Description { get; set; } = string.Empty;
+        public string Category { get; set; } = "Varios";
+        public string Currency { get; set; } = "BS";
+        public decimal Amount { get; set; }
+        public decimal? UsdtReceived { get; set; }
+        public decimal? ExchangeRate { get; set; }
+        public string? Notes { get; set; }
+    }
 
     public class CreditReactivationDto
     {

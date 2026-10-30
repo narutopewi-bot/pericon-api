@@ -691,6 +691,18 @@ using (var scope = app.Services.CreateScope())
                     CreatedAt TEXT NOT NULL,
                     QualifiedAt TEXT NULL
                 );
+                CREATE TABLE IF NOT EXISTS PlatformExpenses (
+                    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    Description TEXT NOT NULL,
+                    Category TEXT NOT NULL,
+                    Currency TEXT NOT NULL,
+                    Amount DECIMAL(18,2) NOT NULL,
+                    UsdtReceived DECIMAL(18,2) NULL,
+                    ExchangeRate DECIMAL(18,4) NULL,
+                    CreatedAt TEXT NOT NULL,
+                    CreatedBy TEXT NULL,
+                    Notes TEXT NULL
+                );
             ");
         }
         else
@@ -760,6 +772,18 @@ using (var scope = app.Services.CreateScope())
                     ""Status"" VARCHAR(30) NOT NULL DEFAULT 'Pendiente',
                     ""CreatedAt"" TIMESTAMP NOT NULL DEFAULT NOW(),
                     ""QualifiedAt"" TIMESTAMP NULL
+                );
+                CREATE TABLE IF NOT EXISTS ""PlatformExpenses"" (
+                    ""Id"" SERIAL PRIMARY KEY,
+                    ""Description"" VARCHAR(255) NOT NULL,
+                    ""Category"" VARCHAR(80) NOT NULL,
+                    ""Currency"" VARCHAR(10) NOT NULL,
+                    ""Amount"" DECIMAL(18,2) NOT NULL,
+                    ""UsdtReceived"" DECIMAL(18,2) NULL,
+                    ""ExchangeRate"" DECIMAL(18,4) NULL,
+                    ""CreatedAt"" TIMESTAMP NOT NULL DEFAULT NOW(),
+                    ""CreatedBy"" VARCHAR(100) NULL,
+                    ""Notes"" VARCHAR(500) NULL
                 );
             ");
         }
