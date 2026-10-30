@@ -1044,6 +1044,38 @@ namespace PericonAPI.Controllers
             });
         }
 
+        [HttpPost("recharge/{id}/reassign-user")]
+        public async Task<IActionResult> ReassignRechargeUser(int id, [FromBody] ReassignRechargeDto dto)
+        {
+            var recharge = await _context.PaymentRecharges.FindAsync(id);
+            if (recharge == null)
+            {
+                return NotFound(new { message = "Recarga no encontrada." });
+            }
+
+            var targetUser = await _context.Users.FindAsync(dto.NewUserId);
+            if (targetUser == null)
+            {
+                return NotFound(new { message = "Usuario de destino no encontrado." });
+            }
+
+            int oldUserId = recharge.UserId;
+            recharge.UserId = dto.NewUserId;
+            recharge.AdminNotes = $"Reasignada de usuario #{oldUserId} a #{dto.NewUserId} ({targetUser.Username}) por corrección de titular de pago.";
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                success = true,
+                rechargeId = id,
+                oldUserId,
+                newUserId = dto.NewUserId,
+                newUsername = targetUser.Username,
+                message = $"Recarga #{id} reasignada con éxito a {targetUser.Username} (ID #{dto.NewUserId})."
+            });
+        }
+
         [HttpGet("users")]
         public async Task<IActionResult> GetAllUsers()
         {
@@ -2461,5 +2493,10 @@ namespace PericonAPI.Controllers
     {
         public string Reference { get; set; } = string.Empty;
         public bool ForceApprove { get; set; } = false;
+    }
+
+    public class ReassignRechargeDto
+    {
+        public int NewUserId { get; set; }
     }
 }

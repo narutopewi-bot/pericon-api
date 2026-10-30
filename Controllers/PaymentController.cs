@@ -66,6 +66,12 @@ namespace PericonAPI.Controllers
                 return NotFound(new { message = "Usuario no encontrado." });
             }
 
+            if (!string.IsNullOrWhiteSpace(dto.Username) && 
+                !string.Equals(user.Username, dto.Username.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                return BadRequest(new { message = $"Conflicto de sesión: Tu dispositivo intentó enviar el ID de '{user.Username}', pero tu usuario activo es '{dto.Username}'. Por favor refresca la página e inicia sesión nuevamente." });
+            }
+
             if (!user.IsActive)
             {
                 return BadRequest(new { message = "Esta cuenta de usuario se encuentra suspendida o inactiva." });
@@ -238,6 +244,12 @@ namespace PericonAPI.Controllers
             if (user == null)
             {
                 return NotFound(new { message = "Usuario no encontrado." });
+            }
+
+            if (!string.IsNullOrWhiteSpace(dto.Username) && 
+                !string.Equals(user.Username, dto.Username.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                return BadRequest(new { message = $"Conflicto de sesión: Tu dispositivo intentó enviar el ID de '{user.Username}', pero tu usuario activo es '{dto.Username}'. Por favor refresca la página e inicia sesión nuevamente." });
             }
 
             if (!user.IsActive)
@@ -484,6 +496,12 @@ namespace PericonAPI.Controllers
             if (user == null)
             {
                 return NotFound(new { message = "Usuario no encontrado." });
+            }
+
+            if (!string.IsNullOrWhiteSpace(dto.Username) && 
+                !string.Equals(user.Username, dto.Username.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                return BadRequest(new { message = $"Conflicto de sesión: Tu dispositivo intentó enviar el ID de '{user.Username}', pero tu usuario activo es '{dto.Username}'. Por favor refresca la página e inicia sesión nuevamente." });
             }
 
             // REGLA FINANCIERA 0: Límite Máximo Absoluto Diario de Retiro (5.000 Bs por usuario al día)
@@ -807,6 +825,7 @@ namespace PericonAPI.Controllers
     public class PaymentReportFormDto
     {
         public int UserId { get; set; }
+        public string? Username { get; set; }
         public decimal AmountBs { get; set; }
         public string Reference { get; set; } = string.Empty;
         public IFormFile? ReceiptImage { get; set; }
@@ -817,6 +836,7 @@ namespace PericonAPI.Controllers
     public class PaymentReportJsonDto
     {
         public int UserId { get; set; }
+        public string? Username { get; set; }
         public decimal AmountBs { get; set; }
         public string Reference { get; set; } = string.Empty;
         public string? Base64Image { get; set; }
@@ -827,6 +847,7 @@ namespace PericonAPI.Controllers
     public class PaymentWithdrawDto
     {
         public int UserId { get; set; }
+        public string? Username { get; set; }
         public int CoinsAmount { get; set; }
         public string BankName { get; set; } = string.Empty;
         public string PhoneNumber { get; set; } = string.Empty;
