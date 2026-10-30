@@ -2239,6 +2239,20 @@ namespace PericonAPI.Controllers
 
             foreach (var u in users)
             {
+                // Candado Antifraude: Los usuarios baneados o inactivos NUNCA reciben monedas
+                if (!u.IsActive)
+                {
+                    u.Coins = 0;
+                    u.BonusCoins = 0;
+                    continue;
+                }
+
+                // El administrador Guardian conserva su configuración y no se reinicia
+                if (u.IsAdmin || u.Username.Equals("Guardian", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
                 u.Coins = targetCoins;
                 u.BonusCoins = targetCoins;
                 u.Wins = 0;

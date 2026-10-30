@@ -1121,6 +1121,18 @@ using (var scope = app.Services.CreateScope())
             var usersToReset = db.Users.ToList();
             foreach (var u in usersToReset)
             {
+                if (!u.IsActive)
+                {
+                    u.Coins = 0;
+                    u.BonusCoins = 0;
+                    continue;
+                }
+
+                if (u.IsAdmin || u.Username.Equals("Guardian", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
                 u.Coins = 300;
                 u.BonusCoins = 300;
                 u.Wins = 0;
