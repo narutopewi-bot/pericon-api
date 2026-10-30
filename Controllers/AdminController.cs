@@ -2231,87 +2231,12 @@ namespace PericonAPI.Controllers
         }
 
         [HttpPost("reset-season-stats")]
-        public async Task<IActionResult> ResetSeasonStats([FromBody] ResetSeasonDto? dto)
+        public IActionResult ResetSeasonStats([FromBody] ResetSeasonDto? dto)
         {
-            var targetCoins = dto != null && dto.Coins > 0 ? dto.Coins : 200;
-            var users = await _context.Users.ToListAsync();
-            int resetCount = 0;
-
-            foreach (var u in users)
-            {
-                // Candado Antifraude: Los usuarios baneados o inactivos NUNCA reciben monedas
-                if (!u.IsActive)
-                {
-                    u.Coins = 0;
-                    u.BonusCoins = 0;
-                    continue;
-                }
-
-                // El administrador Guardian conserva su configuración y no se reinicia
-                if (u.IsAdmin || u.Username.Equals("Guardian", StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                u.Coins = targetCoins;
-                u.BonusCoins = targetCoins;
-                u.Wins = 0;
-                u.Losses = 0;
-                u.Experience = 0;
-                u.Level = "Peón de Casona";
-                resetCount++;
-            }
-
-            if (dto?.ClearMatchHistory == true)
-            {
-                _context.MatchBetRecords.RemoveRange(_context.MatchBetRecords);
-                _context.BotMatchRecords.RemoveRange(_context.BotMatchRecords);
-            }
-
-            // Desactivar anuncios anteriores
-            var activeAnnouncements = await _context.SystemAnnouncements.Where(a => a.IsActive).ToListAsync();
-            foreach (var a in activeAnnouncements)
-            {
-                a.IsActive = false;
-            }
-
-            var announcement = new SystemAnnouncement
-            {
-                Title = "🚨 ¡COMIENZA LA ERA DE DINERO REAL! • 300 MONEDAS DE CORTESÍA Y RANKING EN CERO 🚨",
-                Message = "¡Atención a todos los jugadores de El Pericón! A partir de hoy iniciamos oficialmente las partidas con DINERO REAL. Con motivo del lanzamiento, todos los jugadores han recibido 300 MONEDAS DE CORTESÍA para disputar 3 partidas de prueba y el ranking de victorias se ha reiniciado a cero para una competencia 100% limpia y justa. ¡Recarga desde 800 Bs. por Pago Móvil, compite en mesas 1v1 y 2v2 y retira tus ganancias directo a tu cuenta bancaria! Entra a www.pericon.lat",
-                Type = "alerta",
-                IsActive = true,
-                CreatedAt = DateTime.UtcNow,
-                CreatedBy = "Guardian"
-            };
-            _context.SystemAnnouncements.Add(announcement);
-
-            await _context.SaveChangesAsync();
-
-            // Emitir en vivo por SignalR a todos los jugadores conectados
-            await _hubContext.Clients.All.SendAsync("GlobalAnnouncement", new
-            {
-                id = announcement.Id,
-                title = announcement.Title,
-                message = announcement.Message,
-                type = announcement.Type,
-                createdAt = announcement.CreatedAt.ToString("yyyy-MM-dd HH:mm"),
-                timestamp = DateTime.UtcNow.ToString("HH:mm")
-            });
-
-            return Ok(new
-            {
-                success = true,
-                usersReset = resetCount,
-                coinsSet = targetCoins,
-                message = $"Se reiniciaron con éxito {resetCount} usuarios a {targetCoins} monedas de cortesía, 0 victorias, ranking en cero y comunicado activo publicado.",
-                announcement = new
-                {
-                    id = announcement.Id,
-                    title = announcement.Title,
-                    message = announcement.Message,
-                    type = announcement.Type
-                }
+            return BadRequest(new 
+            { 
+                success = false, 
+                message = "La función de reseteo masivo de temporada y monedas ha sido eliminada permanentemente del sistema por seguridad de los fondos de los jugadores." 
             });
         }
 
