@@ -1076,6 +1076,42 @@ namespace PericonAPI.Controllers
             });
         }
 
+        [HttpPost("recharge/{id}/reset-pending")]
+        public async Task<IActionResult> ResetRechargePending(int id, [FromBody] ResetPendingDto? dto)
+        {
+            var recharge = await _context.PaymentRecharges
+                .Include(r => r.User)
+                .FirstOrDefaultAsync(r => r.Id == id);
+
+            if (recharge == null)
+            {
+                return NotFound(new { message = "Recarga no encontrada." });
+            }
+
+            if (recharge.Status == "APROBADO" && recharge.User != null && dto?.RevertCoins == true)
+            {
+                if (recharge.User.Coins >= recharge.CoinsAmount)
+                {
+                    recharge.User.Coins -= recharge.CoinsAmount;
+                }
+            }
+
+            recharge.Status = "PENDIENTE";
+            recharge.ProcessedAt = null;
+            recharge.AdminNotes = "Restablecida a estado PENDIENTE para revisión manual exclusiva del administrador.";
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                success = true,
+                id = recharge.Id,
+                status = recharge.Status,
+                userCoins = recharge.User != null ? recharge.User.Coins : 0,
+                message = $"Recarga #{id} restablecida a estado PENDIENTE con éxito."
+            });
+        }
+
         [HttpGet("users")]
         public async Task<IActionResult> GetAllUsers()
         {
@@ -2498,5 +2534,10 @@ namespace PericonAPI.Controllers
     public class ReassignRechargeDto
     {
         public int NewUserId { get; set; }
+    }
+
+    public class ResetPendingDto
+    {
+        public bool RevertCoins { get; set; } = false;
     }
 }

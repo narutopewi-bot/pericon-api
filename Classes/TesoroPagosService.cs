@@ -243,23 +243,26 @@ namespace PericonAPI.Classes
 
                 _logger.LogInformation("[TesoroPagos] Respuesta HTTP de validación: {Status}, longitud {Length}", valResp.StatusCode, valHtml.Length);
 
-                // 3. Analizar respuesta del banco
-                if (valHtml.Contains("Pago Movil No encontrado", StringComparison.OrdinalIgnoreCase) ||
-                    valHtml.Contains("no encontrado", StringComparison.OrdinalIgnoreCase))
-                {
-                    _logger.LogInformation("[TesoroPagos] Resultado: Pago NO encontrado en el banco");
-                    return (true, false, "Pago no encontrado en Banco del Tesoro. Verifica el monto, banco emisor y referencia.");
-                }
+                // 3. Analizar respuesta del banco con REGLA DE ORO DE SEGURIDAD:
+                // Solo se puede aprobar si:
+                // 1) La referencia EXACTA (cleanRef) aparece explícitamente en el HTML devuelto
+                // 2) NO existen mensajes de error, rechazo ni "no encontrado"
+                // 3) Contiene confirmación inequívoca vinculada al pago consultado
+                bool containsRef = !string.IsNullOrWhiteSpace(cleanRef) && cleanRef != "000000" && valHtml.Contains(cleanRef);
+                bool hasNotFoundError = valHtml.Contains("Pago Movil No encontrado", StringComparison.OrdinalIgnoreCase) ||
+                                        valHtml.Contains("no encontrado", StringComparison.OrdinalIgnoreCase) ||
+                                        valHtml.Contains("no se encontr", StringComparison.OrdinalIgnoreCase) ||
+                                        valHtml.Contains("sin resultados", StringComparison.OrdinalIgnoreCase) ||
+                                        valHtml.Contains("no existe", StringComparison.OrdinalIgnoreCase) ||
+                                        valHtml.Contains("rechazad", StringComparison.OrdinalIgnoreCase) ||
+                                        valHtml.Contains("error", StringComparison.OrdinalIgnoreCase) ||
+                                        valHtml.Contains("inválid", StringComparison.OrdinalIgnoreCase) ||
+                                        valHtml.Contains("invalido", StringComparison.OrdinalIgnoreCase);
 
-                // Si contiene indicadores de éxito o aprobación
-                if (valHtml.Contains("Confirmado", StringComparison.OrdinalIgnoreCase) ||
-                    valHtml.Contains("Aprobado", StringComparison.OrdinalIgnoreCase) ||
-                    valHtml.Contains("Exitoso", StringComparison.OrdinalIgnoreCase) ||
-                    valHtml.Contains("Pago Movil Confirmado", StringComparison.OrdinalIgnoreCase) ||
-                    (valHtml.Contains("border-green") && !valHtml.Contains("border-red")))
+                if (hasNotFoundError)
                 {
-                    _logger.LogInformation("[TesoroPagos] Resultado: ¡PAGO CONFIRMADO EXITOSAMENTE!");
-                    return (true, true, "Pago móvil confirmado y verificado con éxito en Banco del Tesoro");
+                    _logger.LogInformation("[TesoroPagos] Resultado: Pago NO encontrado o con error en el banco. Ref: {Ref}", cleanRef);
+                    return (true, false, "Pago no encontrado en Banco del Tesoro. Verifica el monto, banco emisor y referencia.");
                 }
 
                 // Si la sesión expiró justo en este momento
@@ -271,7 +274,24 @@ namespace PericonAPI.Classes
                     return (false, false, "Sesión bancaria renovándose. Por favor intenta de nuevo en unos segundos.");
                 }
 
-                _logger.LogWarning("[TesoroPagos] Respuesta indeterminada de Tesoro Pagos. Guardado para revisión");
+                // CANDADO CRÍTICO DE SEGURIDAD:
+                // NUNCA aprobar si la referencia consultada NO está presente en el cuerpo de confirmación
+                if (!containsRef)
+                {
+                    _logger.LogWarning("[TesoroPagos] Ref {Ref} no aparece en la respuesta del banco. NO se aprueba automáticamente.", cleanRef);
+                    return (false, false, "La referencia consultada no fue devuelta en la respuesta de confirmación del banco.");
+                }
+
+                // Si la referencia está presente Y contiene indicadores de éxito específicos sin errores
+                if ((valHtml.Contains("Confirmado", StringComparison.OrdinalIgnoreCase) ||
+                     valHtml.Contains("Pago Movil Confirmado", StringComparison.OrdinalIgnoreCase)) &&
+                    !valHtml.Contains("border-red", StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogInformation("[TesoroPagos] Resultado: ¡PAGO CONFIRMADO EXITOSAMENTE PARA REF {Ref}!", cleanRef);
+                    return (true, true, "Pago móvil confirmado y verificado con éxito en Banco del Tesoro");
+                }
+
+                _logger.LogWarning("[TesoroPagos] Respuesta indeterminada de Tesoro Pagos para Ref {Ref}. Guardado para revisión manual.", cleanRef);
                 return (false, false, "El banco no devolvió un estado concluyente inmediato.");
             }
             catch (Exception ex)
