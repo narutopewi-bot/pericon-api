@@ -11,7 +11,7 @@ namespace PericonAPI.Classes
         public static string GetAdminSecret()
         {
             return Environment.GetEnvironmentVariable("ADMIN_SECRET_KEY")
-                ?? "Guardian_SecKey_2026_Pericon$AdminToken!X9#Venezuela";
+                ?? "Guardian_SecKey_ULTRA_BLINDADO_2026_Pericon$NoBypass_StrictAuth_Z99";
         }
 
         public static string GenerateAdminToken()
@@ -44,9 +44,9 @@ namespace PericonAPI.Classes
 
                 if (!long.TryParse(parts[0], out long timestamp)) return false;
 
-                // Válido por 72 horas para comodidad del administrador
+                // Válido por 12 horas para máxima seguridad
                 long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-                if (now - timestamp > 72 * 3600 || timestamp > now + 300) return false;
+                if (now - timestamp > 12 * 3600 || timestamp > now + 300) return false;
 
                 string payload = $"{timestamp}:{secret}";
                 using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
