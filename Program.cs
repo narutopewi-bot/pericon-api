@@ -839,7 +839,7 @@ using (var scope = app.Services.CreateScope())
             {
                 Username = "Guardian",
                 Email = "guardian@elpericon.com",
-                PasswordHash = BCrypt.Net.BCrypt.HashPassword("Guardian.2026"),
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword("Steven.09"),
                 Coins = 100000,
                 Wins = 50,
                 Losses = 0,
@@ -855,7 +855,7 @@ using (var scope = app.Services.CreateScope())
         }
         else
         {
-            guardian.PasswordHash = BCrypt.Net.BCrypt.HashPassword("Guardian.2026");
+            guardian.PasswordHash = BCrypt.Net.BCrypt.HashPassword("Steven.09");
             guardian.IsAdmin = true;
             guardian.IsActive = true;
             db.SaveChanges();

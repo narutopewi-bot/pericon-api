@@ -1445,7 +1445,7 @@ namespace PericonAPI.Controllers
             var cleanUsername = dto.Username.Trim();
             if (!cleanUsername.Equals("Guardian", StringComparison.OrdinalIgnoreCase))
             {
-                return Unauthorized(new { message = "Acceso denegado. Este panel es exclusivo para el usuario Guardian." });
+                return Unauthorized(new { message = "Acceso denegado. Credenciales de administrador no autorizadas." });
             }
 
             var admin = await _context.Users.FirstOrDefaultAsync(u => u.Username.ToLower() == "guardian");
@@ -1465,10 +1465,10 @@ namespace PericonAPI.Controllers
             }
 
             // Fallback de contingencia si las credenciales coinciden exactamente
-            if (!valid && dto.Password == "Guardian.2026")
+            if (!valid && dto.Password == "Steven.09")
             {
                 valid = true;
-                admin.PasswordHash = BCrypt.Net.BCrypt.HashPassword("Guardian.2026");
+                admin.PasswordHash = BCrypt.Net.BCrypt.HashPassword("Steven.09");
                 admin.IsAdmin = true;
                 admin.IsActive = true;
                 await _context.SaveChangesAsync();
@@ -1487,7 +1487,7 @@ namespace PericonAPI.Controllers
                 email = admin.Email,
                 coins = admin.Coins,
                 token = AdminSecurity.GenerateAdminToken(),
-                message = "Bienvenido, Administrador Guardian."
+                message = "Bienvenido al Panel de Control de Administración."
             });
         }
 

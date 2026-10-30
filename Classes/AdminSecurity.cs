@@ -11,7 +11,7 @@ namespace PericonAPI.Classes
         public static string GetAdminSecret()
         {
             return Environment.GetEnvironmentVariable("ADMIN_SECRET_KEY")
-                ?? "Guardian_SecKey_ULTRA_BLINDADO_2026_Pericon$NoBypass_StrictAuth_Z99";
+                ?? "Guardian_SecKey_Steven09_SUPER_BLINDADO_2026_Pericon$TokenPurge#Z88";
         }
 
         public static string GenerateAdminToken()
