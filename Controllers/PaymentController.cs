@@ -859,6 +859,19 @@ namespace PericonAPI.Controllers
                     : VenezuelaTime.OperatingHoursMessage
             });
         }
+
+        [HttpGet("sentinel-counts")]
+        public async Task<IActionResult> GetSentinelCounts()
+        {
+            var pendingRecharges = await _context.PaymentRecharges.CountAsync(r => r.Status == "PENDIENTE");
+            var pendingWithdrawals = await _context.PaymentWithdrawals.CountAsync(w => w.Status == "PENDIENTE");
+            return Ok(new
+            {
+                pendingRecharges,
+                pendingWithdrawals,
+                timestamp = DateTime.UtcNow
+            });
+        }
     }
 
     public class PaymentReportFormDto
