@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using PericonAPI.Hubs;
 using PericonAPI.Classes;
 using PericonAPI.Data;
 using PericonAPI.Models;
@@ -14,13 +16,15 @@ namespace PericonAPI.Controllers
         private readonly IWebHostEnvironment _env;
         private readonly INotificationService _notificationService;
         private readonly ITesoroPagosService _tesoroPagosService;
+        private readonly IHubContext<MessagingHub> _hubContext;
 
-        public PaymentController(AppDbContext context, IWebHostEnvironment env, INotificationService notificationService, ITesoroPagosService tesoroPagosService)
+        public PaymentController(AppDbContext context, IWebHostEnvironment env, INotificationService notificationService, ITesoroPagosService tesoroPagosService, IHubContext<MessagingHub> hubContext)
         {
             _context = context;
             _env = env;
             _notificationService = notificationService;
             _tesoroPagosService = tesoroPagosService;
+            _hubContext = hubContext;
         }
 
         public const decimal MIN_RECHARGE_BS = 1m;
@@ -174,6 +178,18 @@ namespace PericonAPI.Controllers
                 isAutoApproved,
                 bankMsg
             );
+
+            _ = _hubContext.Clients.All.SendAsync("ReceiveAdminAlert", new
+            {
+                type = "RECHARGE",
+                username = user.Username,
+                amountBs = recharge.AmountBs,
+                coins = recharge.CoinsAmount,
+                reference = recharge.Reference,
+                status = recharge.Status,
+                isAutoApproved = isAutoApproved,
+                timestamp = DateTime.UtcNow.ToString("o")
+            });
 
             if (isAutoApproved)
             {
@@ -351,6 +367,18 @@ namespace PericonAPI.Controllers
                 isAutoApproved,
                 bankMsg
             );
+
+            _ = _hubContext.Clients.All.SendAsync("ReceiveAdminAlert", new
+            {
+                type = "RECHARGE",
+                username = user.Username,
+                amountBs = recharge.AmountBs,
+                coins = recharge.CoinsAmount,
+                reference = recharge.Reference,
+                status = recharge.Status,
+                isAutoApproved = isAutoApproved,
+                timestamp = DateTime.UtcNow.ToString("o")
+            });
 
             if (isAutoApproved)
             {
@@ -674,6 +702,17 @@ namespace PericonAPI.Controllers
                 withdrawal.PhoneNumber,
                 withdrawal.IdCard
             );
+
+            _ = _hubContext.Clients.All.SendAsync("ReceiveAdminAlert", new
+            {
+                type = "WITHDRAWAL",
+                username = user.Username,
+                amountBs = withdrawal.AmountBs,
+                coins = withdrawal.CoinsAmount,
+                bankName = withdrawal.BankName,
+                phoneNumber = withdrawal.PhoneNumber,
+                timestamp = DateTime.UtcNow.ToString("o")
+            });
 
             return Ok(new
             {

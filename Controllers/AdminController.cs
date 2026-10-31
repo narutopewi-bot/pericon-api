@@ -2651,6 +2651,24 @@ namespace PericonAPI.Controllers
 
             return Ok(new { message = "Gasto eliminado y balance de caja recalculado." });
         }
+
+        [HttpPost("force-refresh-clients")]
+        public async Task<IActionResult> ForceRefreshClients([FromBody] ForceRefreshDto? dto)
+        {
+            var timestamp = DateTime.UtcNow;
+            var reason = dto?.Reason ?? "Actualización oficial del sistema aplicada por el Administrador";
+            await _hubContext.Clients.All.SendAsync("ForceClientRefresh", new
+            {
+                timestamp = timestamp.ToString("o"),
+                reason = reason
+            });
+            return Ok(new { success = true, message = "Señal de actualización remota enviada a todos los clientes y APKs conectadas." });
+        }
+    }
+
+    public class ForceRefreshDto
+    {
+        public string? Reason { get; set; }
     }
 
     public class CreatePlatformExpenseDto

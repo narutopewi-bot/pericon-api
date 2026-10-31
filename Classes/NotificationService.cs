@@ -159,7 +159,23 @@ namespace PericonAPI.Classes
                     await SendWhatsAppAsync(waPhone, waApiKey, waMessage);
                 }
 
-                // 2. Notificación Correo Electrónico
+                // 2. Notificación Bot de Telegram
+                var tgToken = section["TelegramBotToken"] ?? Environment.GetEnvironmentVariable("TELEGRAM_BOT_TOKEN");
+                var tgChatId = section["TelegramChatId"] ?? Environment.GetEnvironmentVariable("TELEGRAM_CHAT_ID");
+                if (!string.IsNullOrWhiteSpace(tgToken) && !string.IsNullOrWhiteSpace(tgChatId))
+                {
+                    string tgMessage = $"💸 *ALERTA PERICÓN: SOLICITUD DE RETIRO*\n\n" +
+                                       $"*Usuario:* {username}\n" +
+                                       $"*Monto a Pagar:* {amountBs:N2} Bs. ({coins:N0} Monedas)\n" +
+                                       $"*Banco:* {bankName}\n" +
+                                       $"*Teléfono Pago Móvil:* {phone}\n" +
+                                       $"*Cédula:* {idCard}\n" +
+                                       $"*Fecha:* {VenezuelaTime.Now:dd/MM/yyyy hh:mm tt} (Hora Vzla)\n\n" +
+                                       $"👉 *Procesa el retiro en el panel:*\nhttps://elpericon.com/admin";
+                    await SendTelegramAsync(tgToken, tgChatId, tgMessage);
+                }
+
+                // 3. Notificación Correo Electrónico
                 var adminEmail = section["AdminEmail"] ?? "narutopewi@gmail.com";
                 var smtpUser = section["SmtpUser"] ?? adminEmail;
                 var smtpPass = section["SmtpPass"];
