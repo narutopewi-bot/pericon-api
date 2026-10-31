@@ -149,7 +149,7 @@ namespace PericonAPI.Controllers
             {
                 "facil" => "Modo Fácil (40% Casa / 60% Jugador - 6 de cada 10 a favor de los jugadores)",
                 "dificil" => "Modo Difícil (65% Casa / 35% Jugador - Mayor dificultad)",
-                _ => "Modo Medio (50% Casa / 50% Jugador - Balance equitativo)"
+                _ => "Modo Medio (60% Casa / 40% Jugador - Retención Progresiva)"
             };
 
             return Ok(new
@@ -218,7 +218,7 @@ namespace PericonAPI.Controllers
             {
                 "facil" => "Modo Fácil activado (50% Casa / 50% Jugador - Modo Recreativo y Atracción)",
                 "dificil" => "Modo Difícil activado (85% Casa / 15% Jugador - Muro de Contención y Bloqueo Total)",
-                _ => "Modo Medio activado (70% Casa / 30% Jugador - Recuperación de Tesorería)"
+                _ => "Modo Medio activado (60% Casa / 40% Jugador - Retención Progresiva de Tesorería)"
             };
 
             return Ok(new
@@ -1654,7 +1654,7 @@ namespace PericonAPI.Controllers
 
                 "general" or "global" => $"GENERAL (Hereda la dificultad global: {GamePlayOneVsOne.BotDifficultyMode.ToUpperInvariant()})",
 
-                _ => "MEDIO (70% Casa / 30% Jugador - Recuperación de Tesorería)"
+                _ => "MEDIO (60% Casa / 40% Jugador - Retención Progresiva de Tesorería)"
 
             };
 

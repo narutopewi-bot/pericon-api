@@ -6741,10 +6741,20 @@ namespace PericonAPI.Hubs
             int consecutiveBotWins,
             bool isHouseMoneyAtRisk)
         {
-            // 1. LÍMITES INFRANQUEABLES (Máximo 2 consecutivas)
-            if (consecutiveBotWins >= 2)
+            // 1. LÍMITES INFRANQUEABLES:
+            // En modo "facil" (50-50): Límite estricto de máx 2 consecutivas para ambos (vaivén natural 50-50).
+            // En modo "medio" (60-40 Casa): El bot puede ganar hasta 3 consecutivas (patrones 3-1, 2-1), Che máx 2.
+            // En modo "dificil" (85-15 Muro): El bot puede ganar hasta 4 consecutivas.
+            int maxBotConsecutiveWins = mode switch
             {
-                // El bot ya ganó 2 seguidas -> OBLIGATORIAMENTE se corta la mala racha a favor del usuario.
+                "medio" => 3,
+                "dificil" => 4,
+                _ => 2 // facil y favor_jugador mantienen máx 2
+            };
+
+            if (consecutiveBotWins >= maxBotConsecutiveWins)
+            {
+                // El bot ya alcanzó su racha máxima -> OBLIGATORIAMENTE se corta la mala racha a favor del usuario.
                 return (true, false);
             }
 
@@ -6761,9 +6771,9 @@ namespace PericonAPI.Hubs
                 double botCutProbability = mode switch
                 {
                     "favor_jugador" or "favorecido" or "favor_40_60" => 0.40,
-                    "facil" => 0.50,
-                    "medio" => 0.60,
-                    _ => 0.70
+                    "facil" => 0.50, // 50-50: corta la mitad de las veces
+                    "medio" => 0.70, // 60-40 Casa: corta el 70% de las veces
+                    _ => 0.80
                 };
 
                 if (Random.Shared.NextDouble() < botCutProbability)
@@ -6775,15 +6785,15 @@ namespace PericonAPI.Hubs
             }
 
             // 3. ALTERNANCIA ORGÁNICA TRAS 1 DERROTA DEL USUARIO (1 victoria del bot):
-            // Permite patrones de 1-1 (alivio inmediato) o 1-2 (permite al bot buscar la 2da).
+            // Permite patrones de 1-1 (alivio inmediato) o 1-2 / 1-3 (permite al bot buscar la 2da o 3ra).
             if (consecutiveBotWins == 1)
             {
                 double userReliefProbability = mode switch
                 {
                     "favor_jugador" or "favorecido" or "favor_40_60" => 0.60,
-                    "facil" => 0.50,
-                    "medio" => 0.40,
-                    _ => 0.30
+                    "facil" => 0.50, // 50-50: alivio el 50% de las veces
+                    "medio" => 0.30, // 60-40 Casa: solo 30% de alivio inmediato (70% busca la 2da victoria)
+                    _ => 0.20
                 };
 
                 if (Random.Shared.NextDouble() < userReliefProbability)
@@ -6794,14 +6804,32 @@ namespace PericonAPI.Hubs
                 return (false, false); // Permite disputar de forma natural (el bot puede buscar la 2da)
             }
 
+            // 3.b ALTERNANCIA TRAS 2 DERROTAS DEL USUARIO (2 victorias del bot):
+            if (consecutiveBotWins == 2)
+            {
+                if (mode == "medio")
+                {
+                    // En 60-40 Casa: un 40% de las veces el bot busca una 3ra victoria consecutiva
+                    if (Random.Shared.NextDouble() < 0.40)
+                    {
+                        return (false, true); // Bot busca la 3ra
+                    }
+                    return (true, false); // Alivio tras 2 derrotas
+                }
+            }
+
             // 4. ESTADO NEUTRAL (0 y 0)
             if (mode is "favor_jugador" or "favorecido" or "favor_40_60")
             {
                 if (Random.Shared.NextDouble() < 0.60) return (true, false);
             }
+            else if (mode == "medio")
+            {
+                if (Random.Shared.NextDouble() < 0.60) return (false, true); // 60% Casa
+            }
             else if (mode == "dificil")
             {
-                if (Random.Shared.NextDouble() < 0.60) return (false, true);
+                if (Random.Shared.NextDouble() < 0.75) return (false, true);
             }
 
             return (false, false);
