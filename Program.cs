@@ -701,9 +701,11 @@ using (var scope = app.Services.CreateScope())
                     ExchangeRate DECIMAL(18,4) NULL,
                     CreatedAt TEXT NOT NULL,
                     CreatedBy TEXT NULL,
-                    Notes TEXT NULL
+                    Notes TEXT NULL,
+                    BsReceived DECIMAL(18,2) NULL
                 );
             ");
+            try { db.Database.ExecuteSqlRaw("ALTER TABLE PlatformExpenses ADD COLUMN BsReceived DECIMAL(18,2) NULL;"); } catch { }
         }
         else
         {
@@ -783,9 +785,11 @@ using (var scope = app.Services.CreateScope())
                     ""ExchangeRate"" DECIMAL(18,4) NULL,
                     ""CreatedAt"" TIMESTAMP NOT NULL DEFAULT NOW(),
                     ""CreatedBy"" VARCHAR(100) NULL,
-                    ""Notes"" VARCHAR(500) NULL
+                    ""Notes"" VARCHAR(500) NULL,
+                    ""BsReceived"" DECIMAL(18,2) NULL
                 );
             ");
+            try { db.Database.ExecuteSqlRaw(@"ALTER TABLE ""PlatformExpenses"" ADD COLUMN IF NOT EXISTS ""BsReceived"" DECIMAL(18,2) NULL;"); } catch { }
         }
 
         // Semillero del Torneo Piloto si no existe ninguno

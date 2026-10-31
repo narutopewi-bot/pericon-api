@@ -1926,10 +1926,12 @@ namespace PericonAPI.Controllers
 
             var expenses = await _context.PlatformExpenses.OrderByDescending(e => e.CreatedAt).ToListAsync();
             var totalBsExpenses = expenses.Where(e => e.Currency == "BS").Sum(e => e.Amount);
-            var totalUsdtExpenses = expenses.Where(e => e.Currency == "USDT").Sum(e => e.Amount);
+            var totalUsdtExpenses = expenses.Where(e => e.Currency == "USDT" && !e.Category.Contains("Venta USDT") && !e.Category.Contains("Venta de USDT")).Sum(e => e.Amount);
             var totalUsdtPurchased = expenses.Where(e => e.UsdtReceived != null && e.UsdtReceived > 0).Sum(e => e.UsdtReceived ?? 0);
-            var cajaNetaBs = totalBsRecharges - totalBsWithdrawals - totalBsExpenses;
-            var cajaNetaUsdt = totalUsdtPurchased - totalUsdtExpenses;
+            var totalUsdtSold = expenses.Where(e => (e.Category.Contains("Venta USDT") || e.Category.Contains("Venta de USDT")) && e.Currency == "USDT").Sum(e => e.Amount);
+            var totalBsFromUsdtSold = expenses.Where(e => e.Category.Contains("Venta USDT") || e.Category.Contains("Venta de USDT")).Sum(e => e.BsReceived ?? (e.ExchangeRate != null ? e.Amount * e.ExchangeRate.Value : 0m));
+            var cajaNetaBs = totalBsRecharges - totalBsWithdrawals - totalBsExpenses + totalBsFromUsdtSold;
+            var cajaNetaUsdt = totalUsdtPurchased - totalUsdtExpenses - totalUsdtSold;
 
             var expensesByCategory = expenses
                 .GroupBy(e => new { e.Category, e.Currency })
@@ -1966,6 +1968,8 @@ namespace PericonAPI.Controllers
                     totalBsExpenses,
                     totalUsdtExpenses,
                     totalUsdtPurchased,
+                    totalUsdtSold,
+                    totalBsFromUsdtSold,
                     expensesByCategory,
                     netBsBalanceWithPending = (totalBsRecharges + pendingBsRecharges) - (totalBsWithdrawals + pendingBsWithdrawals),
                     totalCoinsCirculating = userCoinsInCirculation,
@@ -2566,8 +2570,13 @@ namespace PericonAPI.Controllers
                 .ToListAsync();
 
             var totalBsExpenses = expenses.Where(e => e.Currency == "BS").Sum(e => e.Amount);
-            var totalUsdtExpenses = expenses.Where(e => e.Currency == "USDT").Sum(e => e.Amount);
+            var totalUsdtExpenses = expenses.Where(e => e.Currency == "USDT" && !e.Category.Contains("Venta USDT") && !e.Category.Contains("Venta de USDT")).Sum(e => e.Amount);
             var totalUsdtPurchased = expenses.Where(e => e.UsdtReceived != null && e.UsdtReceived > 0).Sum(e => e.UsdtReceived ?? 0);
+            var totalUsdtSold = expenses.Where(e => (e.Category.Contains("Venta USDT") || e.Category.Contains("Venta de USDT")) && e.Currency == "USDT").Sum(e => e.Amount);
+            var totalBsFromUsdtSold = expenses.Where(e => e.Category.Contains("Venta USDT") || e.Category.Contains("Venta de USDT")).Sum(e => e.BsReceived ?? (e.ExchangeRate != null ? e.Amount * e.ExchangeRate.Value : 0m));
+
+            var totalBsRecharges = await _context.PaymentRecharges.Where(r => r.Status == "APROBADO").SumAsync(r => r.AmountBs);
+            var totalBsWithdrawals = await _context.PaymentWithdrawals.Where(w => w.Status == "PAGADO").SumAsync(w => w.AmountBs);
 
             return Ok(new
             {
@@ -2575,7 +2584,10 @@ namespace PericonAPI.Controllers
                 totalBsExpenses,
                 totalUsdtExpenses,
                 totalUsdtPurchased,
-                cajaNetaUsdt = totalUsdtPurchased - totalUsdtExpenses
+                totalUsdtSold,
+                totalBsFromUsdtSold,
+                cajaNetaBs = totalBsRecharges - totalBsWithdrawals - totalBsExpenses + totalBsFromUsdtSold,
+                cajaNetaUsdt = totalUsdtPurchased - totalUsdtExpenses - totalUsdtSold
             });
         }
 
@@ -2599,6 +2611,7 @@ namespace PericonAPI.Controllers
             }
 
             decimal? usdtReceived = dto.UsdtReceived;
+            decimal? bsReceived = dto.BsReceived;
             decimal? exchangeRate = dto.ExchangeRate;
 
             if (dto.Category != null && (dto.Category.Contains("Compra USDT") || dto.Category.Contains("Compra de USDT")))
@@ -2613,6 +2626,18 @@ namespace PericonAPI.Controllers
                     exchangeRate = Math.Round(dto.Amount / usdtReceived.Value, 4);
                 }
             }
+            else if (dto.Category != null && (dto.Category.Contains("Venta USDT") || dto.Category.Contains("Venta de USDT")))
+            {
+                currency = "USDT";
+                if (bsReceived == null || bsReceived <= 0)
+                {
+                    return BadRequest(new { message = "Para Venta de USDT debe indicar la cantidad de Bolívares recibidos en cuenta." });
+                }
+                if (exchangeRate == null || exchangeRate <= 0)
+                {
+                    exchangeRate = Math.Round(bsReceived.Value / dto.Amount, 4);
+                }
+            }
 
             var expense = new PlatformExpense
             {
@@ -2621,6 +2646,7 @@ namespace PericonAPI.Controllers
                 Currency = currency,
                 Amount = dto.Amount,
                 UsdtReceived = usdtReceived,
+                BsReceived = bsReceived,
                 ExchangeRate = exchangeRate,
                 CreatedAt = VenezuelaTime.Now,
                 CreatedBy = "Guardian",
@@ -2678,6 +2704,7 @@ namespace PericonAPI.Controllers
         public string Currency { get; set; } = "BS";
         public decimal Amount { get; set; }
         public decimal? UsdtReceived { get; set; }
+        public decimal? BsReceived { get; set; }
         public decimal? ExchangeRate { get; set; }
         public string? Notes { get; set; }
     }
