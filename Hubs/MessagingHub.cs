@@ -6741,38 +6741,51 @@ namespace PericonAPI.Hubs
             int consecutiveBotWins,
             bool isHouseMoneyAtRisk)
         {
-            // 1. LÍMITES INFRANQUEABLES:
-            // En modo "facil" (50-50): Límite estricto de máx 2 consecutivas para ambos (vaivén natural 50-50).
-            // En modo "medio" (60-40 Casa): El bot puede ganar hasta 3 consecutivas (patrones 3-1, 2-1), Che máx 2.
-            // En modo "dificil" (85-15 Muro): El bot puede ganar hasta 4 consecutivas.
+            bool isPlayerFavored = mode is "favor_jugador" or "favorecido" or "favor_40_60";
+
+            // 1. LÍMITES INFRANQUEABLES DE RACHA:
+            // - Modo "favor_jugador" (60-40 Che): Che puede ganar máx 3 consecutivas (ANTI-DESFALCO). Bot máx 2.
+            // - Modo "medio" (60-40 Casa): Bot puede ganar máx 3 consecutivas. Che máx 2.
+            // - Modo "facil" (50-50): Ambos máx 2 consecutivas.
+            // - Modo "dificil" (85-15 Muro): Bot máx 4 consecutivas. Che máx 2.
             int maxBotConsecutiveWins = mode switch
             {
                 "medio" => 3,
                 "dificil" => 4,
-                _ => 2 // facil y favor_jugador mantienen máx 2
+                _ => 2 // facil y favor_jugador: bot frena en máx 2
             };
 
+            int maxUserConsecutiveWins = isPlayerFavored ? 3 : 2; // EN FAVOR DE CHE: MÁXIMO 3 (CERO DESFALCO)
+
+            // Límite de racha del BOT alcanzado:
             if (consecutiveBotWins >= maxBotConsecutiveWins)
             {
-                // El bot ya alcanzó su racha máxima -> OBLIGATORIAMENTE se corta la mala racha a favor del usuario.
+                // Obligatoriamente se corta la racha del bot -> Gana Che
                 return (true, false);
             }
 
-            if (consecutiveUserWins >= 2 || isHouseMoneyAtRisk)
+            // Límite de racha del USUARIO alcanzado:
+            if (consecutiveUserWins >= maxUserConsecutiveWins)
             {
-                // El usuario ganó 2 seguidas O arriesga fondos de la banca -> OBLIGATORIAMENTE defiende el bot.
+                // CANDADO CRÍTICO ANTI-DESFALCO:
+                // Si Che ya ganó su máximo (3 en modo favor, o 2 en modo normal), la banca CORTA OBLIGATORIAMENTE.
+                return (false, true);
+            }
+
+            // Si está en modo normal/casa y el dinero de la casa está en riesgo, la banca defiende:
+            if (!isPlayerFavored && isHouseMoneyAtRisk)
+            {
                 return (false, true);
             }
 
             // 2. ALTERNANCIA ORGÁNICA TRAS 1 VICTORIA DEL USUARIO:
-            // Permite patrones de 1-1 (corte inmediato) o 2-1 / 2-2 (deja disputar la 2da).
             if (consecutiveUserWins == 1)
             {
                 double botCutProbability = mode switch
                 {
-                    "favor_jugador" or "favorecido" or "favor_40_60" => 0.40,
-                    "facil" => 0.50, // 50-50: corta la mitad de las veces
-                    "medio" => 0.70, // 60-40 Casa: corta el 70% de las veces
+                    "favor_jugador" or "favorecido" or "favor_40_60" => 0.30, // 60-40 Che: solo 30% de corte (70% busca la 2da)
+                    "facil" => 0.50,                                          // 50-50: corte 50%
+                    "medio" => 0.70,                                          // 60-40 Casa: corte 70%
                     _ => 0.80
                 };
 
@@ -6781,18 +6794,32 @@ namespace PericonAPI.Hubs
                     return (false, true); // Corta en 1 victoria -> patrón 1-1
                 }
 
-                return (false, false); // Juego orgánico (permite competir por la 2da)
+                return (false, false); // Permite disputar por la 2da
+            }
+
+            // 2.b ALTERNANCIA TRAS 2 VICTORIAS DEL USUARIO:
+            if (consecutiveUserWins == 2)
+            {
+                if (isPlayerFavored)
+                {
+                    // En 60-40 Che: un 40% de las veces Che busca una 3ra victoria consecutiva (3 a 1 o 3 a 2)
+                    // El 60% restante la banca corta para mantener el equilibrio y no regalar de más
+                    if (Random.Shared.NextDouble() < 0.40)
+                    {
+                        return (true, false); // Che busca la 3ra
+                    }
+                    return (false, true); // Banca corta tras 2 victorias
+                }
             }
 
             // 3. ALTERNANCIA ORGÁNICA TRAS 1 DERROTA DEL USUARIO (1 victoria del bot):
-            // Permite patrones de 1-1 (alivio inmediato) o 1-2 / 1-3 (permite al bot buscar la 2da o 3ra).
             if (consecutiveBotWins == 1)
             {
                 double userReliefProbability = mode switch
                 {
-                    "favor_jugador" or "favorecido" or "favor_40_60" => 0.60,
-                    "facil" => 0.50, // 50-50: alivio el 50% de las veces
-                    "medio" => 0.30, // 60-40 Casa: solo 30% de alivio inmediato (70% busca la 2da victoria)
+                    "favor_jugador" or "favorecido" or "favor_40_60" => 0.70, // 60-40 Che: 70% de alivio inmediato a Che
+                    "facil" => 0.50,                                          // 50-50: alivio 50%
+                    "medio" => 0.30,                                          // 60-40 Casa: solo 30% de alivio
                     _ => 0.20
                 };
 
@@ -6801,7 +6828,7 @@ namespace PericonAPI.Hubs
                     return (true, false); // Alivio inmediato tras 1 derrota -> patrón 1-1
                 }
 
-                return (false, false); // Permite disputar de forma natural (el bot puede buscar la 2da)
+                return (false, false); // Permite al bot buscar la 2da
             }
 
             // 3.b ALTERNANCIA TRAS 2 DERROTAS DEL USUARIO (2 victorias del bot):
@@ -6819,9 +6846,9 @@ namespace PericonAPI.Hubs
             }
 
             // 4. ESTADO NEUTRAL (0 y 0)
-            if (mode is "favor_jugador" or "favorecido" or "favor_40_60")
+            if (isPlayerFavored)
             {
-                if (Random.Shared.NextDouble() < 0.60) return (true, false);
+                if (Random.Shared.NextDouble() < 0.60) return (true, false); // 60% Che
             }
             else if (mode == "medio")
             {

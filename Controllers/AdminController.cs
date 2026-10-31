@@ -1646,7 +1646,7 @@ namespace PericonAPI.Controllers
 
             {
 
-                "favor_jugador" => "⭐ 60/40 A FAVOR DEL JUGADOR (60% Jugador / 40% Casa - Calibración Ganadora)",
+                "favor_jugador" => "⭐ 60/40 A FAVOR DE CHE (60% Che / 40% Casa - Blindado máx 3 victorias, Anti-desfalco)",
 
                 "facil" => "FÁCIL (50% Casa / 50% Jugador - Modo Recreativo)",
 
