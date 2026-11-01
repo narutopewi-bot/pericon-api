@@ -222,27 +222,38 @@ namespace PericonAPI.Controllers
                 return BadRequest(new { message = "Este número de WhatsApp ya se encuentra registrado con otra cuenta." });
             }
 
-            // 6. BLOQUEO TOTAL DE MULTICUENTAS POR DISPOSITIVO E IP:
-            // Regla estricta: Cada jugador tiene derecho a UNA SOLA cuenta en El Pericón.
-            var cleanFingerprint = dto.DeviceFingerprint?.Trim();
-            if (string.IsNullOrWhiteSpace(cleanFingerprint))
-            {
-                var clientIp = HttpContext.Request.Headers["CF-Connecting-IP"].FirstOrDefault()
-                    ?? HttpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault()?.Split(',')[0].Trim()
-                    ?? HttpContext.Connection.RemoteIpAddress?.ToString()
-                    ?? "unknown_ip";
-                var userAgent = Request.Headers["User-Agent"].ToString();
-                cleanFingerprint = "fp_srv_" + Convert.ToHexString(
-                    System.Security.Cryptography.SHA256.HashData(
-                        System.Text.Encoding.UTF8.GetBytes($"{clientIp}|{userAgent}")
-                    )
-                ).Substring(0, 24);
-            }
+            // 6. BLOQUEO TOTAL DE MULTICUENTAS POR DISPOSITIVO, HARDWARE (ANTI-INCÓGNITO) E IP:
+            // Regla estricta: Cada jugador tiene derecho a UNA SOLA cuenta con bono en El Pericón.
+            var clientIp = HttpContext.Request.Headers["CF-Connecting-IP"].FirstOrDefault()
+                ?? HttpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault()?.Split(',')[0].Trim()
+                ?? HttpContext.Connection.RemoteIpAddress?.ToString()
+                ?? "unknown_ip";
+            var userAgent = Request.Headers["User-Agent"].ToString();
+            var serverIpUaFp = "fp_srv_" + Convert.ToHexString(
+                System.Security.Cryptography.SHA256.HashData(
+                    System.Text.Encoding.UTF8.GetBytes($"{clientIp}|{userAgent}")
+                )
+            ).Substring(0, 24);
 
+            var rawClientFp = dto.DeviceFingerprint?.Trim();
+            string hwSuffix = (!string.IsNullOrWhiteSpace(rawClientFp) && rawClientFp.StartsWith("fp_") && rawClientFp.Length >= 16)
+                ? rawClientFp.Substring(rawClientFp.Length - 8)
+                : "";
+
+            var cleanFingerprint = string.IsNullOrWhiteSpace(rawClientFp)
+                ? serverIpUaFp
+                : $"{rawClientFp}|{serverIpUaFp}";
+
+            var cutoffRecent = DateTime.UtcNow.AddDays(-7);
             var existingAccountOnDevice = await _context.Users
-                .FirstOrDefaultAsync(u => u.DeviceFingerprint == cleanFingerprint);
+                .FirstOrDefaultAsync(u => u.DeviceFingerprint != null && (
+                    u.DeviceFingerprint == rawClientFp ||
+                    u.DeviceFingerprint == cleanFingerprint ||
+                    u.DeviceFingerprint.Contains(serverIpUaFp) ||
+                    (!string.IsNullOrEmpty(hwSuffix) && u.DeviceFingerprint.Contains(hwSuffix) && u.CreatedAt > cutoffRecent)
+                ));
 
-            // Si el dispositivo ya fue utilizado por otra cuenta, permitimos crear la cuenta (cero bloqueo) pero con 0 monedas (anti-farming / multi-cuentas)
+            // Si el dispositivo o red/hardware ya fue utilizado por otra cuenta, nace con 0 monedas (anti-farming / anti-incógnito)
             bool isDeviceAlreadyUsed = existingAccountOnDevice != null;
 
             var passwordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password);
@@ -530,20 +541,46 @@ namespace PericonAPI.Controllers
                 });
             }
 
+            if (!isVerifiedByGoogle)
+            {
+                return BadRequest(new
+                {
+                    message = "Debes seleccionar y autenticar una cuenta oficial en la ventana emergente de Google."
+                });
+            }
+
             if (user == null)
             {
-                var cleanFingerprint = dto.DeviceFingerprint?.Trim();
-                bool isDeviceAlreadyUsed = false;
-                User? existingAccountOnDevice = null;
-                if (!string.IsNullOrWhiteSpace(cleanFingerprint))
-                {
-                    existingAccountOnDevice = await _context.Users
-                        .FirstOrDefaultAsync(u => u.DeviceFingerprint == cleanFingerprint);
-                    if (existingAccountOnDevice != null)
-                    {
-                        isDeviceAlreadyUsed = true;
-                    }
-                }
+                var clientIp = HttpContext.Request.Headers["CF-Connecting-IP"].FirstOrDefault()
+                    ?? HttpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault()?.Split(',')[0].Trim()
+                    ?? HttpContext.Connection.RemoteIpAddress?.ToString()
+                    ?? "unknown_ip";
+                var userAgent = Request.Headers["User-Agent"].ToString();
+                var serverIpUaFp = "fp_srv_" + Convert.ToHexString(
+                    System.Security.Cryptography.SHA256.HashData(
+                        System.Text.Encoding.UTF8.GetBytes($"{clientIp}|{userAgent}")
+                    )
+                ).Substring(0, 24);
+
+                var rawClientFp = dto.DeviceFingerprint?.Trim();
+                string hwSuffix = (!string.IsNullOrWhiteSpace(rawClientFp) && rawClientFp.StartsWith("fp_") && rawClientFp.Length >= 16)
+                    ? rawClientFp.Substring(rawClientFp.Length - 8)
+                    : "";
+
+                var cleanFingerprint = string.IsNullOrWhiteSpace(rawClientFp)
+                    ? serverIpUaFp
+                    : $"{rawClientFp}|{serverIpUaFp}";
+
+                var cutoffRecent = DateTime.UtcNow.AddDays(-7);
+                var existingAccountOnDevice = await _context.Users
+                    .FirstOrDefaultAsync(u => u.DeviceFingerprint != null && (
+                        u.DeviceFingerprint == rawClientFp ||
+                        u.DeviceFingerprint == cleanFingerprint ||
+                        u.DeviceFingerprint.Contains(serverIpUaFp) ||
+                        (!string.IsNullOrEmpty(hwSuffix) && u.DeviceFingerprint.Contains(hwSuffix) && u.CreatedAt > cutoffRecent)
+                    ));
+
+                bool isDeviceAlreadyUsed = existingAccountOnDevice != null;
 
                 int welcomeCoins = isDeviceAlreadyUsed ? 0 : 300;
                 int welcomeBonus = isDeviceAlreadyUsed ? 0 : 300;

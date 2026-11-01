@@ -434,6 +434,19 @@ namespace PericonAPI.Controllers
             {
                 return NotFound(new { message = "Usuario no encontrado." });
             }
+            if (!user.IsActive)
+            {
+                return BadRequest(new { message = "Esta cuenta se encuentra suspendida." });
+            }
+            if (!string.IsNullOrWhiteSpace(user.DeviceFingerprint))
+            {
+                bool deviceAlreadyUsedByEarlierAccount = await _context.Users
+                    .AnyAsync(u => u.Id < user.Id && u.DeviceFingerprint == user.DeviceFingerprint);
+                if (deviceAlreadyUsedByEarlierAccount)
+                {
+                    return BadRequest(new { message = "Los códigos promocionales de bienvenida solo están disponibles para la cuenta principal de cada dispositivo." });
+                }
+            }
 
             // Verificar si el usuario ya canjeó este cupón
             var alreadyRedeemed = await _context.PromoCodeRedemptions

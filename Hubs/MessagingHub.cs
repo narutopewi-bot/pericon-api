@@ -6101,11 +6101,13 @@ namespace PericonAPI.Hubs
 
                         {
 
+                            int actualLoserTaken = bet;
                             if (dbLoser != null)
 
                             {
 
-                                int loserDeduction = Math.Min(dbLoser.Coins, bet);
+                                int loserDeduction = Math.Min(Math.Max(0, dbLoser.Coins), bet);
+                                actualLoserTaken = loserDeduction;
 
                                 dbLoser.Coins -= loserDeduction;
 
@@ -6163,7 +6165,10 @@ namespace PericonAPI.Hubs
 
                                 {
 
-                                    int netWinnerGain = Math.Max(0, winnerPrize - bet);
+                                    int rawNetWinnerGain = Math.Max(0, winnerPrize - bet);
+                                    int netWinnerGain = (!game.IsBotMatch && dbLoser != null)
+                                        ? Math.Min(rawNetWinnerGain, (int)Math.Round(actualLoserTaken * 0.80))
+                                        : rawNetWinnerGain;
 
                                     dbWinner.Coins += netWinnerGain;
 
@@ -10712,6 +10717,23 @@ namespace PericonAPI.Hubs
             string callerId = Context.ConnectionId;
 
             Console.WriteLine($"JoinMatchmaking recibido. Cliente: {callerId}, Modo: {mode}, Apuesta: {bet}, User: {playerName} ({userId})");
+
+            if (bet > 0 && _staticScopeFactory != null)
+            {
+                using var scopeCheck = _staticScopeFactory.CreateScope();
+                var dbCheck = scopeCheck.ServiceProvider.GetRequiredService<AppDbContext>();
+                int parsedUid = 0;
+                int.TryParse(userId, out parsedUid);
+                var dbCaller = await dbCheck.Users.FirstOrDefaultAsync(u =>
+                    (parsedUid > 0 && u.Id == parsedUid) ||
+                    (!string.IsNullOrEmpty(playerName) && u.Username.ToLower() == playerName.ToLower()));
+                if (dbCaller != null && (!dbCaller.IsActive || dbCaller.Coins < bet))
+                {
+                    Console.WriteLine($"[SECURITY] JoinMatchmaking rechazado para {dbCaller.Username} (ID {dbCaller.Id}): Active={dbCaller.IsActive}, Coins={dbCaller.Coins}, Bet={bet}");
+                    await Clients.Caller.SendAsync("MatchmakingStatus", new { status = "error", message = !dbCaller.IsActive ? "Tu cuenta se encuentra suspendida." : $"Saldo insuficiente ({dbCaller.Coins} monedas) para una mesa de {bet} monedas." });
+                    return;
+                }
+            }
 
 
 
