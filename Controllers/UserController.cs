@@ -60,11 +60,27 @@ namespace PericonAPI.Controllers
                 await _context.SaveChangesAsync();
             }
 
+            // Blindaje de Privacidad: Nunca exponer el email a terceros no autenticados
+            bool isAdmin = PericonAPI.Classes.AdminSecurity.IsAuthorizedAdmin(Request);
+            string safeEmail = isAdmin ? user.Email : "";
+            if (!isAdmin && !string.IsNullOrEmpty(user.Email))
+            {
+                var parts = user.Email.Split('@');
+                if (parts.Length == 2 && parts[0].Length > 2)
+                {
+                    safeEmail = $"{parts[0].Substring(0, 2)}***@{parts[1]}";
+                }
+                else
+                {
+                    safeEmail = "***";
+                }
+            }
+
             return Ok(new
             {
                 id = user.Id,
                 username = user.Username,
-                email = user.Email,
+                email = safeEmail,
                 coins = user.Coins,
                 bonusCoins = user.BonusCoins,
                 retirableCoins = user.GetRetirableCoins(),
