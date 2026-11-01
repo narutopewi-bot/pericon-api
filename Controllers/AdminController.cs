@@ -2458,21 +2458,35 @@ namespace PericonAPI.Controllers
         }
 
         [HttpGet("reactivation/candidates")]
-        public async Task<IActionResult> GetReactivationCandidates()
+        public async Task<IActionResult> GetReactivationCandidates([FromQuery] int page = 1, [FromQuery] int pageSize = 10)
         {
+            if (page < 1) page = 1;
+            if (pageSize < 1 || pageSize > 50) pageSize = 10;
+
             var query = _context.Users
                 .Where(u => !u.IsVirtualBot && !u.IsAdmin && u.IsActive && !string.IsNullOrWhiteSpace(u.PhoneNumber));
 
-            var sevenDaysAgo = DateTime.UtcNow.AddDays(-7);
-            var eligibleQuery = query.Where(u => u.LastReactivatedAt == null || u.LastReactivatedAt < sevenDaysAgo);
+            // REGLA 1: Solo personas con victorias dentro del sistema (u.Wins > 0 o victorias comprobadas en partidas)
+            var eligibleQuery = query.Where(u => 
+                (u.Wins > 0 || 
+                 _context.BotMatchRecords.Any(bm => bm.UserId == u.Id && bm.UserWon) || 
+                 _context.MatchBetRecords.Any(m => m.WinnerUsername == u.Username))
+                // REGLA 2: A nadie se le repite monedas jamás (si ya se le dieron 300, queda permanentemente excluido)
+                && u.LastReactivatedAt == null 
+                && u.ReactivationCount == 0
+            );
 
             var totalEligible = await eligibleQuery.CountAsync();
+            var totalPages = (int)Math.Ceiling((double)totalEligible / pageSize);
+            if (totalPages == 0) totalPages = 1;
+            if (page > totalPages && totalPages > 0) page = 1;
 
             var candidates = await eligibleQuery
                 .OrderBy(u => u.Coins)
-                .ThenBy(u => u.LastReactivatedAt)
-                .ThenBy(u => u.CreatedAt)
-                .Take(10)
+                .ThenByDescending(u => u.Wins)
+                .ThenByDescending(u => u.CreatedAt)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
                 .Select(u => new
                 {
                     id = u.Id,
@@ -2480,7 +2494,9 @@ namespace PericonAPI.Controllers
                     phoneNumber = u.PhoneNumber,
                     coins = u.Coins,
                     bonusCoins = u.BonusCoins,
-                    wins = u.Wins,
+                    wins = u.Wins > 0 
+                        ? u.Wins 
+                        : (_context.BotMatchRecords.Count(bm => bm.UserId == u.Id && bm.UserWon) + _context.MatchBetRecords.Count(m => m.WinnerUsername == u.Username)),
                     level = u.Level,
                     createdAt = u.CreatedAt.ToString("yyyy-MM-dd"),
                     lastReactivatedAt = u.LastReactivatedAt.HasValue ? u.LastReactivatedAt.Value.ToString("yyyy-MM-dd HH:mm") : null,
@@ -2501,7 +2517,7 @@ namespace PericonAPI.Controllers
                     cleanDigits = "58" + cleanDigits;
                 }
 
-                var customMsg = $"¡Hola {c.username}! Saludos de parte de El Pericón Criollo 🌵. Vimos que tienes unos días sin jugar y te acabamos de recargar 300 MONEDAS DE CORTESÍA en tu cuenta para que compitas en el nuevo Ranking Diario con premios en Pago Móvil 🏆. ¡Entra ya a disfrutarlas!: https://pericon.lat";
+                var customMsg = $"¡Hola {c.username}! Saludos de parte de El Pericón Criollo 🌵. Felicitaciones por tus victorias en el juego 🏆. Te acabamos de recargar 300 MONEDAS DE CORTESÍA en tu cuenta para que sigas compitiendo en el Ranking Diario con premios en Pago Móvil 💸. ¡Entra ya a disfrutarlas!: https://pericon.lat";
 
                 return new
                 {
@@ -2523,6 +2539,9 @@ namespace PericonAPI.Controllers
             return Ok(new
             {
                 success = true,
+                page,
+                pageSize,
+                totalPages,
                 totalEligible,
                 batchSize = result.Count,
                 candidates = result
@@ -2538,11 +2557,21 @@ namespace PericonAPI.Controllers
                 return NotFound(new { success = false, message = "Usuario no encontrado." });
             }
 
+            // BLINDAJE ESTRICTO: Si ya se le dio el bono, jamás repetirle monedas
+            if (user.ReactivationCount > 0 || user.LastReactivatedAt != null)
+            {
+                return BadRequest(new 
+                { 
+                    success = false, 
+                    message = $"El usuario @{user.Username} ya recibió previamente su regalo de 300 monedas el {user.LastReactivatedAt:dd/MM/yyyy HH:mm} y no puede repetírsele." 
+                });
+            }
+
             int amount = request.BonusCoins > 0 ? request.BonusCoins : 300;
             user.Coins += amount;
             user.BonusCoins += amount;
             user.LastReactivatedAt = DateTime.UtcNow;
-            user.ReactivationCount += 1;
+            user.ReactivationCount = 1;
 
             await _context.SaveChangesAsync();
 
