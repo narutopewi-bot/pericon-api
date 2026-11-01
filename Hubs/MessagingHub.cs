@@ -2792,6 +2792,79 @@ namespace PericonAPI.Hubs
 
 
 
+            if (g.IsBotMatch)
+            {
+                try
+                {
+                    using var scope = _scopeFactory.CreateScope();
+                    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                    int uId = g.PlayerOne;
+                    if (uId <= 0 && !string.IsNullOrEmpty(g.UserIdPOne)) int.TryParse(g.UserIdPOne, out uId);
+                    string cleanName = (g.NamePOne ?? "").Trim().ToLowerInvariant();
+
+                    var userRecord = await db.Users.FirstOrDefaultAsync(u => (uId > 0 && u.Id == uId) || (!string.IsNullOrEmpty(cleanName) && u.Username.ToLower() == cleanName));
+                    string userCustomDiff = userRecord?.BotDifficulty?.Trim().ToLowerInvariant() ?? "";
+                    string adminGlobalDiff = (GamePlayOneVsOne.BotDifficultyMode ?? "medio").Trim().ToLowerInvariant();
+                    string effectiveDiff = (!string.IsNullOrEmpty(userCustomDiff) && (userCustomDiff == "facil" || userCustomDiff == "medio" || userCustomDiff == "dificil" || userCustomDiff == "favor_jugador" || userCustomDiff == "favorecido" || userCustomDiff == "favor_40_60"))
+                        ? userCustomDiff
+                        : adminGlobalDiff;
+
+                    var userBotMatches = await db.BotMatchRecords
+                        .Where(m => (uId > 0 && m.UserId == uId) || (m.Username != null && m.Username.ToLower() == cleanName))
+                        .OrderByDescending(m => m.CreatedAt)
+                        .Take(50)
+                        .ToListAsync();
+
+                    int consecutiveUserWins = 0;
+                    int consecutiveBotWins = 0;
+                    if (userBotMatches.Count > 0 && userBotMatches[0].UserWon)
+                    {
+                        foreach (var m in userBotMatches) { if (m.UserWon) consecutiveUserWins++; else break; }
+                    }
+                    else if (userBotMatches.Count > 0 && !userBotMatches[0].UserWon)
+                    {
+                        foreach (var m in userBotMatches) { if (!m.UserWon) consecutiveBotWins++; else break; }
+                    }
+
+                    int userNetProfitAgainstBot = userBotMatches.Sum(m => m.CoinsWon) - userBotMatches.Sum(m => m.CoinsLost);
+                    g.UserNetCoinsAgainstBot = userNetProfitAgainstBot;
+
+                    var vzlaNow = Classes.VenezuelaTime.Now;
+                    var todayVzlaStartUtc = vzlaNow.Date.AddHours(4);
+                    var todayVzlaEndUtc = todayVzlaStartUtc.AddDays(1);
+                    var todayMatches = userBotMatches.Where(m => m.CreatedAt >= todayVzlaStartUtc && m.CreatedAt < todayVzlaEndUtc).ToList();
+                    int userTodayNetProfit = todayMatches.Sum(m => m.CoinsWon) - todayMatches.Sum(m => m.CoinsLost);
+
+                    int currentBet = g.Coins;
+                    int allowedCoinMargin = (currentBet <= 200) ? currentBet : 0;
+                    bool isHouseMoneyAtRisk = (userNetProfitAgainstBot >= allowedCoinMargin)
+                                           || (userTodayNetProfit >= allowedCoinMargin)
+                                           || (userNetProfitAgainstBot + currentBet > allowedCoinMargin)
+                                           || (userTodayNetProfit + currentBet > allowedCoinMargin);
+
+                    string diffModeForStreak = (effectiveDiff is "favor_jugador" or "favorecido" or "favor_40_60")
+                        ? "favor_jugador"
+                        : (effectiveDiff == "facil" ? "facil" : (effectiveDiff == "medio" ? "medio" : "dificil"));
+
+                    var (mustFavorUser, mustFavorBot) = CalculateOrganicStreakDecision(
+                        diffModeForStreak,
+                        consecutiveUserWins,
+                        consecutiveBotWins,
+                        isHouseMoneyAtRisk);
+
+                    g.MustFavorUserToBreakStreak = mustFavorUser;
+                    g.MustFavorBotToBreakStreak = mustFavorBot;
+                    g.BotDifficulty = diffModeForStreak;
+                    g.UserBalanceMode = diffModeForStreak == "medio" ? UserBotBalanceMode.BalancedGradualEdge : (diffModeForStreak == "dificil" ? UserBotBalanceMode.DefendHouse : UserBotBalanceMode.Normal);
+                    g.IsTargetedForStabilization = (diffModeForStreak == "dificil");
+                    Console.WriteLine($"[Revancha1vs1Bot] Recalibrado en vivo para {g.NamePOne}: Modo={diffModeForStreak}, FavorUser={mustFavorUser}, FavorBot={mustFavorBot}, RachaUser={consecutiveUserWins}, RachaBot={consecutiveBotWins}");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[Revancha1vs1Bot] Error al recalibrar en revancha: {ex.Message}");
+                }
+            }
+
             g.Deck = new SpanishCards();
 
             g.Deck.RandomCards();
@@ -6735,6 +6808,63 @@ namespace PericonAPI.Hubs
         /// 2. El usuario NUNCA pierde más de 2 partidas consecutivas (Anti-frustración y retención).
         /// 3. Elimina la monotonía rígida alternando de forma aleatoria tras 1 victoria o 1 derrota.
         /// </summary>
+        public static void ApplyUserBotDifficultyLive(int userId, string? username, string? rawDifficulty)
+        {
+            try
+            {
+                string cleanName = (username ?? "").Trim().ToLowerInvariant();
+                string diff = string.IsNullOrWhiteSpace(rawDifficulty) || rawDifficulty == "general" || rawDifficulty == "global"
+                    ? (GamePlayOneVsOne.BotDifficultyMode ?? "medio").Trim().ToLowerInvariant()
+                    : rawDifficulty.Trim().ToLowerInvariant();
+
+                if (diff is "favor_40_60" or "favorecido") diff = "favor_jugador";
+
+                for (int i = 0; i < games.Count; i++)
+                {
+                    var g = games[i];
+                    if (g == null || (!g.IsBotMatch && !g.IsSolitaire)) continue;
+
+                    bool matchUser = (userId > 0 && g.PlayerOne == userId)
+                                  || (!string.IsNullOrEmpty(cleanName) && (g.NamePOne ?? "").Trim().ToLowerInvariant() == cleanName);
+
+                    if (matchUser)
+                    {
+                        g.BotDifficulty = diff;
+                        if (diff == "favor_jugador")
+                        {
+                            g.MustFavorBotToBreakStreak = false;
+                            g.UserBalanceMode = UserBotBalanceMode.Normal;
+                            g.IsTargetedForStabilization = false;
+                        }
+                        else if (diff == "medio")
+                        {
+                            g.MustFavorUserToBreakStreak = false;
+                            g.UserBalanceMode = UserBotBalanceMode.BalancedGradualEdge;
+                            g.IsTargetedForStabilization = false;
+                        }
+                        else if (diff == "dificil")
+                        {
+                            g.MustFavorUserToBreakStreak = false;
+                            g.MustFavorBotToBreakStreak = true;
+                            g.UserBalanceMode = UserBotBalanceMode.DefendHouse;
+                            g.IsTargetedForStabilization = true;
+                        }
+                        else // facil
+                        {
+                            g.MustFavorBotToBreakStreak = false;
+                            g.UserBalanceMode = UserBotBalanceMode.Normal;
+                            g.IsTargetedForStabilization = false;
+                        }
+                        Console.WriteLine($"[LiveBotCalibration] Partida activa #{g.Id} de {g.NamePOne} actualizada en caliente a modo '{diff}'.");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[LiveBotCalibration] Error al actualizar partida en vivo: {ex.Message}");
+            }
+        }
+
         private static (bool MustFavorUser, bool MustFavorBot) CalculateOrganicStreakDecision(
             string mode,
             int consecutiveUserWins,
@@ -6832,6 +6962,11 @@ namespace PericonAPI.Hubs
                 if (Random.Shared.NextDouble() < userReliefProbability)
                 {
                     return (true, false); // Alivio inmediato tras 1 derrota -> patron 1-1
+                }
+
+                if (mode == "medio" || mode == "dificil")
+                {
+                    return (false, true); // En 40/60 Casa y Muro 15/85: la casa asegura activamente su 2da victoria consecutiva
                 }
 
                 return (false, false); // Permite al bot buscar la 2da
@@ -10069,15 +10204,17 @@ namespace PericonAPI.Hubs
                         }
                         else if (diffModeForStreak == "facil")
                         {
+                            newgame.BotDifficulty = "facil";
                             newgame.UserBalanceMode = UserBotBalanceMode.Normal;
                             newgame.IsTargetedForStabilization = false;
                             Console.WriteLine($"[Solitaire] MODO FACIL (50-50) para {newgame.NamePOne}: FavorUser={solMustFavorUser}, FavorBot={solMustFavorBot}, RachaUser={consecutiveUserWins}, RachaBot={consecutiveBotWins}.");
                         }
                         else if (diffModeForStreak == "medio")
                         {
+                            newgame.BotDifficulty = "medio";
                             newgame.UserBalanceMode = UserBotBalanceMode.BalancedGradualEdge;
                             newgame.IsTargetedForStabilization = false;
-                            Console.WriteLine($"[Solitaire] MODO MEDIO (70-30) para {newgame.NamePOne}: FavorUser={solMustFavorUser}, FavorBot={solMustFavorBot}, RachaUser={consecutiveUserWins}, RachaBot={consecutiveBotWins}.");
+                            Console.WriteLine($"[Solitaire] MODO MEDIO (40/60 Casa) para {newgame.NamePOne}: FavorUser={solMustFavorUser}, FavorBot={solMustFavorBot}, RachaUser={consecutiveUserWins}, RachaBot={consecutiveBotWins}.");
                         }
                         else
                         {

@@ -1634,6 +1634,8 @@ namespace PericonAPI.Controllers
 
             await _context.SaveChangesAsync();
 
+            PericonAPI.Hubs.MessagingHub.ApplyUserBotDifficultyLive(user.Id, user.Username, user.BotDifficulty);
+
 
 
             string desc = clean switch
@@ -1644,11 +1646,11 @@ namespace PericonAPI.Controllers
 
                 "facil" => "FÁCIL (50% Casa / 50% Jugador - Modo Recreativo)",
 
-                "dificil" => "DIFÍCIL (85% Casa / 15% Jugador - Muro Total de Contención)",
+                "dificil" => "MURO 15/85 (15% Jugador / 85% Casa - Muro Total de Contención)",
 
                 "general" or "global" => $"GENERAL (Hereda la dificultad global: {GamePlayOneVsOne.BotDifficultyMode.ToUpperInvariant()})",
 
-                _ => "MEDIO (60% Casa / 40% Jugador - Retención Progresiva de Tesorería)"
+                _ => "MEDIO 40/60 CASA (40% Jugador / 60% Casa - Retención Progresiva de Tesorería)"
 
             };
 

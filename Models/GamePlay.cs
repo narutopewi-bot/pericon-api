@@ -2522,9 +2522,10 @@ namespace PericonAPI.Models
 
                     {
 
-                        // Para usuarios marcados o en recuperación de banca (ej: defensa de casa)
+                        // Para usuarios marcados o en recuperación de banca (40/60 Casa o Muro 15/85)
+                        double defProb = diffMode == "dificil" ? 0.85 : 0.70;
 
-                        if (Random.Shared.NextDouble() < 0.70)
+                        if (Random.Shared.NextDouble() < defProb)
 
                         {
 
@@ -2536,7 +2537,7 @@ namespace PericonAPI.Models
 
                         {
 
-                            ApplyRealisticBotDistribution("facil");
+                            ApplyRealisticBotDistribution(diffMode);
 
                         }
 
@@ -3037,8 +3038,8 @@ namespace PericonAPI.Models
                     if (isHighStake || isProfitCapped || isTargetedUser)
 
                     {
-
-                        if (Random.Shared.NextDouble() < 0.85)
+                        double houseEdgeProb = (diff == "dificil") ? 0.85 : 0.70;
+                        if (Random.Shared.NextDouble() < houseEdgeProb)
 
                         {
 
@@ -3050,7 +3051,7 @@ namespace PericonAPI.Models
 
                         {
 
-                            ApplyRealisticBotDistribution("dificil");
+                            ApplyRealisticBotDistribution(diff == "dificil" ? "dificil" : "medio");
 
                         }
 
@@ -3072,9 +3073,18 @@ namespace PericonAPI.Models
 
                             case MatchDramatizationPhase.BaitAndHope:
 
-                                // FASE 1 (0 a 3 pts): Dejar que el usuario sume para darle confianza
-
-                                if (Random.Shared.NextDouble() < 0.30)
+                                // FASE 1 (0 a 3 pts): En modo medio (40/60 Casa) o dificil (15/85 Casa), mantener ventaja de la Casa desde el inicio
+                                if (diff == "dificil")
+                                {
+                                    if (Random.Shared.NextDouble() < 0.85) ApplyDiscreetHouseDefense(Life.Id);
+                                    else ApplyRealisticBotDistribution("dificil");
+                                }
+                                else if (diff == "medio")
+                                {
+                                    if (Random.Shared.NextDouble() < 0.65) ApplyDiscreetHouseDefense(Life.Id);
+                                    else ApplyRealisticBotDistribution("medio");
+                                }
+                                else if (Random.Shared.NextDouble() < 0.30)
 
                                 {
 
