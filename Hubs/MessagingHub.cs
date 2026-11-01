@@ -6778,54 +6778,60 @@ namespace PericonAPI.Hubs
                 return (false, true);
             }
 
-            // 2. ALTERNANCIA ORGÁNICA TRAS 1 VICTORIA DEL USUARIO:
+            // 2. ALTERNANCIA ORGANICA TRAS 1 VICTORIA DEL USUARIO:
             if (consecutiveUserWins == 1)
             {
                 double botCutProbability = mode switch
                 {
                     "favor_jugador" or "favorecido" or "favor_40_60" => 0.30, // 60-40 Che: solo 30% de corte (70% busca la 2da)
                     "facil" => 0.50,                                          // 50-50: corte 50%
-                    "medio" => 0.70,                                          // 60-40 Casa: corte 70%
-                    _ => 0.80
+                    "medio" => 0.75,                                          // 60-40 Casa: corte 75% inmediato (frena al usuario)
+                    _ => 0.85
                 };
 
                 if (Random.Shared.NextDouble() < botCutProbability)
                 {
-                    return (false, true); // Corta en 1 victoria -> patrón 1-1
+                    return (false, true); // Corta en 1 victoria -> patron 1-1
                 }
 
                 return (false, false); // Permite disputar por la 2da
             }
 
             // 2.b ALTERNANCIA TRAS 2 VICTORIAS DEL USUARIO:
-            if (consecutiveUserWins == 2)
+            if (consecutiveUserWins >= 2)
             {
                 if (isPlayerFavored)
                 {
                     // En 60-40 Che: un 40% de las veces Che busca una 3ra victoria consecutiva (3 a 1 o 3 a 2)
-                    // El 60% restante la banca corta para mantener el equilibrio y no regalar de más
-                    if (Random.Shared.NextDouble() < 0.40)
+                    // El 60% restante la banca corta para mantener el equilibrio y no regalar de mas
+                    if (Random.Shared.NextDouble() < 0.40 && consecutiveUserWins == 2)
                     {
                         return (true, false); // Che busca la 3ra
                     }
                     return (false, true); // Banca corta tras 2 victorias
                 }
+                else
+                {
+                    // EN MODO MEDIO (60% CASA / 40% CHE) Y DIFICIL:
+                    // El usuario NUNCA puede ganar 3 consecutivas. La banca CORTA OBLIGATORIAMENTE (100%).
+                    return (false, true);
+                }
             }
 
-            // 3. ALTERNANCIA ORGÁNICA TRAS 1 DERROTA DEL USUARIO (1 victoria del bot):
+            // 3. ALTERNANCIA ORGANICA TRAS 1 DERROTA DEL USUARIO (1 victoria del bot):
             if (consecutiveBotWins == 1)
             {
                 double userReliefProbability = mode switch
                 {
                     "favor_jugador" or "favorecido" or "favor_40_60" => 0.70, // 60-40 Che: 70% de alivio inmediato a Che
                     "facil" => 0.50,                                          // 50-50: alivio 50%
-                    "medio" => 0.30,                                          // 60-40 Casa: solo 30% de alivio
+                    "medio" => 0.35,                                          // 60-40 Casa: solo 35% de alivio (65% busca la 2da victoria la casa)
                     _ => 0.20
                 };
 
                 if (Random.Shared.NextDouble() < userReliefProbability)
                 {
-                    return (true, false); // Alivio inmediato tras 1 derrota -> patrón 1-1
+                    return (true, false); // Alivio inmediato tras 1 derrota -> patron 1-1
                 }
 
                 return (false, false); // Permite al bot buscar la 2da
@@ -6836,8 +6842,8 @@ namespace PericonAPI.Hubs
             {
                 if (mode == "medio")
                 {
-                    // En 60-40 Casa: un 40% de las veces el bot busca una 3ra victoria consecutiva
-                    if (Random.Shared.NextDouble() < 0.40)
+                    // En 60-40 Casa: un 60% de las veces el bot busca una 3ra victoria consecutiva (patron 3-1 a favor de la casa)
+                    if (Random.Shared.NextDouble() < 0.60)
                     {
                         return (false, true); // Bot busca la 3ra
                     }
@@ -6852,11 +6858,11 @@ namespace PericonAPI.Hubs
             }
             else if (mode == "medio")
             {
-                if (Random.Shared.NextDouble() < 0.60) return (false, true); // 60% Casa
+                if (Random.Shared.NextDouble() < 0.65) return (false, true); // 65% Casa (60-40 Casa)
             }
             else if (mode == "dificil")
             {
-                if (Random.Shared.NextDouble() < 0.75) return (false, true);
+                if (Random.Shared.NextDouble() < 0.85) return (false, true);
             }
 
             return (false, false);

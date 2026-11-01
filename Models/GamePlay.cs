@@ -2516,7 +2516,7 @@ namespace PericonAPI.Models
 
                     string diffMode = (!string.IsNullOrEmpty(BotDifficulty) ? BotDifficulty : BotDifficultyMode).Trim().ToLowerInvariant();
 
-                    bool isTargetedUser = (diffMode != "facil") && (IsTargetedForStabilization || UserBalanceMode == UserBotBalanceMode.DefendHouse || IsUserTargetedForStabilization(effectiveUserId, NamePOne, UserIdPOne, EmailPOne));
+                    bool isTargetedUser = (diffMode != "facil") && (IsTargetedForStabilization || UserBalanceMode == UserBotBalanceMode.DefendHouse || UserBalanceMode == UserBotBalanceMode.BalancedGradualEdge || IsUserTargetedForStabilization(effectiveUserId, NamePOne, UserIdPOne, EmailPOne));
 
                     if (isTargetedUser)
 
@@ -3174,7 +3174,23 @@ namespace PericonAPI.Models
 
                                 {
 
-                                    ApplyRealisticBotDistribution("facil");
+                                    if (diff == "medio" || diff == "dificil")
+
+                                    {
+
+                                        if (Random.Shared.NextDouble() < 0.75) ApplyDiscreetHouseDefense(Life.Id);
+
+                                        else ApplyRealisticBotDistribution("medio");
+
+                                    }
+
+                                    else
+
+                                    {
+
+                                        ApplyRealisticBotDistribution("facil");
+
+                                    }
 
                                 }
 

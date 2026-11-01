@@ -1618,18 +1618,12 @@ namespace PericonAPI.Controllers
 
                 }
 
-                else // medio (estándar 70-30 de tesorería)
-
+                else // medio (60% Casa / 40% Che - Retencion Progresiva)
                 {
-
-                    GamePlayOneVsOne.StabilizedUserIds.Remove(user.Id);
-
-                    GamePlayOneVsOne.StabilizedUsers.Remove(user.Username);
-
+                    GamePlayOneVsOne.StabilizedUserIds.Add(user.Id);
+                    GamePlayOneVsOne.StabilizedUsers.Add(user.Username);
                     GamePlayOneVsOne.FavoredVipUserIds.Remove(user.Id);
-
                     GamePlayOneVsOne.FavoredVipUsers.Remove(user.Username);
-
                 }
 
             }
