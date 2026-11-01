@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.SignalR;
+using Microsoft.AspNetCore.SignalR;
 
 using Microsoft.EntityFrameworkCore;
 
@@ -8432,86 +8432,66 @@ namespace PericonAPI.Hubs
 
 
 
-                string diff = !string.IsNullOrEmpty(g.BotDifficulty) ? g.BotDifficulty : GamePlayOneVsOne.BotDifficultyMode;
-
-
-
-                // CRITERIO HUMANO: Si no tiene triunfos ni mano (blanca), un jugador inteligente rechaza (No quiero)
-
-                // cediendo 1 piedra para no perder 3. Si tiene mano fuerte, acepta con firmeza.
-
-                double acceptProb;
-
-                if (trumpsCount == 0 && handScore <= 24)
-
-                {
-
-                    acceptProb = 0.04; // 96% de rechazo (prudencia humana: no regalar puntos gratis)
-
-                }
-
-                else if (trumpsCount >= 2 || handScore >= 45)
-
-                {
-
-                    acceptProb = 0.92; // Mano dominante: acepta casi siempre
-
-                }
-
-                else
-
-                {
-
-                    acceptProb = diff switch
-
-                    {
-
-                        "facil" => 0.40,
-
-                        "dificil" => 0.65,
-
-                        _ => 0.50
-
-                    };
-
-                }
-
-
-
-                // Si el humano reta o revira teniendo ya su carta lanzada en mesa, y el bot tiene en mano la carta que la mata en baza decisiva:
-
-                if (g.CurrentLeadMove != null && g.LeadPlayer == 1 && !string.IsNullOrEmpty(g.CurrentLeadMove.content))
-
-                {
-
-                    int oppLeadCard = -1;
-
-                    var parts = g.CurrentLeadMove.content.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-
-                    if (parts.Length > 2 && int.TryParse(parts[2], out int parsedC)) oppLeadCard = parsedC;
-
-                    if (oppLeadCard >= 0)
-
-                    {
-
-                        bool hasKillerCard = g.CardsTwo.Any(c => GamePlayOneVsOne.DetermineWinner(oppLeadCard, c.Id, g.Life.Id, true) == "00");
-
-                        bool isHandDeciding = (g.RoundTwo >= 1) || (g.CardsTwo.Count == 1);
-
-                        if (hasKillerCard && isHandDeciding)
-
-                        {
-
-                            acceptProb = 0.98; // Baza y mano ganadas en mano: el bot acepta con máxima convicción
-
-                        }
-
-                    }
-
-                }
-
-
-
+                string diff = !string.IsNullOrEmpty(g.BotDifficulty) ? g.BotDifficulty : GamePlayOneVsOne.BotDifficultyMode;
+
+                double scoreBotFull = GamePlayOneVsOne.ScoreHand(g.CardsTwo, g.Life.Id);
+                double scoreUserFull = GamePlayOneVsOne.ScoreHand(g.CardsOne, g.Life.Id);
+                int userTrumpsCount = g.CardsOne.Count(c => GamePlayOneVsOne.EvaluateCard(c.Id, g.Life.Id) >= 11);
+                int maxBotPower = g.CardsTwo.Count > 0 ? g.CardsTwo.Max(c => GamePlayOneVsOne.EvaluateCard(c.Id, g.Life.Id)) : 0;
+                int maxUserPower = g.CardsOne.Count > 0 ? g.CardsOne.Max(c => GamePlayOneVsOne.EvaluateCard(c.Id, g.Life.Id)) : 0;
+
+                // Detectar si el usuario tiene la mano ganadora o ya ganó la primera baza con carta superior
+                bool userHasWinningHand = (scoreUserFull > scoreBotFull && userTrumpsCount >= trumpsCount) ||
+                                          (g.RoundOne >= 1 && maxUserPower > maxBotPower && g.RoundTwo == 0);
+
+                // CRITERIO HUMANO Y DEFENSA DE LA CASA:
+                // Si el bot no tiene triunfos o si en modo medio/dificil el usuario pide 3/6 teniendo la mano ganadora,
+                // el bot inteligente dice "¡No quiero!" (cede solo 1 piedra y jamás regala 3 ni 6 piedras).
+                double acceptProb;
+                if (trumpsCount == 0 && handScore <= 24)
+                {
+                    acceptProb = 0.03; // 97% de rechazo en mano blanca
+                }
+                else if (userHasWinningHand && (diff == "dificil" || diff == "medio" || g.MustFavorBotToBreakStreak || g.IsTargetedForStabilization))
+                {
+                    acceptProb = diff == "dificil" ? 0.0 : 0.05; // Inteligencia defensiva: no caer en la trampa de 3/6 piedras cuando el usuario lleva ventaja
+                }
+                else if (trumpsCount >= 2 || handScore >= 45 || (scoreBotFull > scoreUserFull && trumpsCount >= 1 && g.RoundTwo >= 1))
+                {
+                    acceptProb = 0.94; // Mano dominante del bot: acepta con firmeza
+                }
+                else
+                {
+                    acceptProb = diff switch
+                    {
+                        "favor_jugador" => 0.75,
+                        "facil" => 0.45,
+                        "dificil" => 0.25,
+                        _ => 0.30
+                    };
+                }
+
+                // Si el humano reta o revira teniendo ya su carta lanzada en mesa, evaluar resultado real de esa baza:
+                if (g.CurrentLeadMove != null && g.LeadPlayer == 1 && !string.IsNullOrEmpty(g.CurrentLeadMove.content))
+                {
+                    int oppLeadCard = -1;
+                    var parts = g.CurrentLeadMove.content.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (parts.Length > 2 && int.TryParse(parts[2], out int parsedC)) oppLeadCard = parsedC;
+                    if (oppLeadCard >= 0)
+                    {
+                        bool hasKillerCard = g.CardsTwo.Any(c => GamePlayOneVsOne.DetermineWinner(oppLeadCard, c.Id, g.Life.Id, true) == "00");
+                        bool isHandDeciding = (g.RoundTwo >= 1) || (g.CardsTwo.Count == 1);
+                        if (hasKillerCard && isHandDeciding)
+                        {
+                            acceptProb = 0.98; // Baza y mano ganadas en mano: el bot acepta con máxima convicción
+                        }
+                        else if (!hasKillerCard && (g.RoundOne >= 1 || g.CardsTwo.Count == 1))
+                        {
+                            acceptProb = 0.0; // El bot no puede matar la carta decisiva en mesa: rechaza siempre para no regalar 3/6 piedras
+                        }
+                    }
+                }
+
                 bool accept = Random.Shared.NextDouble() < acceptProb;
 
 
