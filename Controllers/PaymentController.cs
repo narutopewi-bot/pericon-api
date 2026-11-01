@@ -637,6 +637,66 @@ namespace PericonAPI.Controllers
                 });
             }
 
+            // REGLA FINANCIERA 3.5: INMUTABILIDAD ABSOLUTA DE PAGO MÓVIL (Candado de Retiro Único Permanente)
+            // Si el usuario ya tiene un Pago Móvil registrado en su perfil o en su primer retiro histórico legítimo, NUNCA se permite modificarlo.
+            string? registeredBank = !string.IsNullOrWhiteSpace(user.BankName) ? user.BankName.Trim() : null;
+            string? registeredPhone = !string.IsNullOrWhiteSpace(user.PhoneNumber) ? user.PhoneNumber.Trim() : null;
+            string? registeredId = !string.IsNullOrWhiteSpace(user.Cedula) ? user.Cedula.Trim() : null;
+
+            // Si faltaba algún dato en User, recuperarlo del primer retiro histórico legítimo
+            if (string.IsNullOrWhiteSpace(registeredBank) || string.IsNullOrWhiteSpace(registeredPhone) || string.IsNullOrWhiteSpace(registeredId))
+            {
+                var firstLegitWithdrawal = await _context.PaymentWithdrawals
+                    .Where(w => w.UserId == user.Id && w.Status != "RECHAZADO")
+                    .OrderBy(w => w.CreatedAt)
+                    .FirstOrDefaultAsync();
+
+                if (firstLegitWithdrawal != null)
+                {
+                    registeredBank ??= firstLegitWithdrawal.BankName.Trim();
+                    registeredPhone ??= firstLegitWithdrawal.PhoneNumber.Trim();
+                    registeredId ??= firstLegitWithdrawal.IdCard.Trim();
+
+                    user.BankName = registeredBank;
+                    user.PhoneNumber = registeredPhone;
+                    user.Cedula = registeredId;
+                    await _context.SaveChangesAsync();
+                }
+            }
+
+            bool hasSavedPagoMovil = !string.IsNullOrWhiteSpace(registeredBank) && 
+                                     !string.IsNullOrWhiteSpace(registeredPhone) && 
+                                     !string.IsNullOrWhiteSpace(registeredId);
+
+            if (hasSavedPagoMovil && !user.IsAdmin && user.Username.ToLower() != "guardian")
+            {
+                var cleanDbPhone = System.Text.RegularExpressions.Regex.Replace(registeredPhone ?? "", @"[^\d]", "");
+                var cleanDtoPhone = System.Text.RegularExpressions.Regex.Replace(dto.PhoneNumber ?? "", @"[^\d]", "");
+                var cleanDbId = System.Text.RegularExpressions.Regex.Replace(registeredId ?? "", @"[^\d]", "");
+                var cleanDtoId = System.Text.RegularExpressions.Regex.Replace(dto.IdCard ?? "", @"[^\d]", "");
+
+                bool phoneMatches = cleanDbPhone == cleanDtoPhone || 
+                    (cleanDbPhone.Length >= 10 && cleanDtoPhone.Length >= 10 && cleanDbPhone.EndsWith(cleanDtoPhone.Substring(cleanDtoPhone.Length - 10)));
+                bool idMatches = cleanDbId == cleanDtoId;
+                bool bankMatches = string.Equals(registeredBank?.Trim(), dto.BankName?.Trim(), StringComparison.OrdinalIgnoreCase);
+
+                if (!phoneMatches || !idMatches || !bankMatches)
+                {
+                    return BadRequest(new
+                    {
+                        message = $"🔒 SEGURIDAD FINANCIERA: Tu cuenta tiene vinculado de forma PERMANENTE e INMUTABLE el Pago Móvil ({registeredBank}, Teléfono: {registeredPhone}, Cédula: {registeredId}). Por políticas antifraude de El Pericón, no se permite cambiar la cuenta bancaria de retiros bajo ninguna circunstancia."
+                    });
+                }
+            }
+            else
+            {
+                // Si es su primer retiro histórico, vincular de forma permanente e irreversible
+                user.BankName = dto.BankName.Trim();
+                user.PhoneNumber = dto.PhoneNumber.Trim();
+                user.Cedula = dto.IdCard.Trim();
+                await _context.SaveChangesAsync();
+            }
+
             // REGLA FINANCIERA 4: Límite estricto de un (1) retiro diario por usuario
             // Solo se permite realizar una (1) solicitud de retiro por día calendario (hora de Venezuela).
             var todayVzlaStart = VenezuelaTime.Now.Date;
@@ -726,9 +786,9 @@ namespace PericonAPI.Controllers
                 UserId = dto.UserId,
                 CoinsAmount = dto.CoinsAmount,
                 AmountBs = (decimal)dto.CoinsAmount, // 1 Moneda = 1 Bs
-                BankName = dto.BankName.Trim(),
-                PhoneNumber = dto.PhoneNumber.Trim(),
-                IdCard = dto.IdCard.Trim(),
+                BankName = user.BankName?.Trim() ?? dto.BankName.Trim(),
+                PhoneNumber = user.PhoneNumber?.Trim() ?? dto.PhoneNumber.Trim(),
+                IdCard = user.Cedula?.Trim() ?? dto.IdCard.Trim(),
                 Status = "PENDIENTE",
                 CreatedAt = VenezuelaTime.Now
             };
@@ -805,6 +865,52 @@ namespace PericonAPI.Controllers
                 .ToListAsync();
 
             return Ok(list);
+        }
+
+        [HttpGet("user/{userId}/bound-pago-movil")]
+        public async Task<IActionResult> GetBoundPagoMovil(int userId)
+        {
+            var user = await _context.Users.FindAsync(userId);
+            if (user == null)
+            {
+                return NotFound(new { message = "Usuario no encontrado." });
+            }
+
+            string? registeredBank = !string.IsNullOrWhiteSpace(user.BankName) ? user.BankName.Trim() : null;
+            string? registeredPhone = !string.IsNullOrWhiteSpace(user.PhoneNumber) ? user.PhoneNumber.Trim() : null;
+            string? registeredId = !string.IsNullOrWhiteSpace(user.Cedula) ? user.Cedula.Trim() : null;
+
+            if (string.IsNullOrWhiteSpace(registeredBank) || string.IsNullOrWhiteSpace(registeredPhone) || string.IsNullOrWhiteSpace(registeredId))
+            {
+                var firstLegitWithdrawal = await _context.PaymentWithdrawals
+                    .Where(w => w.UserId == user.Id && w.Status != "RECHAZADO")
+                    .OrderBy(w => w.CreatedAt)
+                    .FirstOrDefaultAsync();
+
+                if (firstLegitWithdrawal != null)
+                {
+                    registeredBank ??= firstLegitWithdrawal.BankName.Trim();
+                    registeredPhone ??= firstLegitWithdrawal.PhoneNumber.Trim();
+                    registeredId ??= firstLegitWithdrawal.IdCard.Trim();
+
+                    user.BankName = registeredBank;
+                    user.PhoneNumber = registeredPhone;
+                    user.Cedula = registeredId;
+                    await _context.SaveChangesAsync();
+                }
+            }
+
+            bool hasBoundPagoMovil = !string.IsNullOrWhiteSpace(registeredBank) && 
+                                     !string.IsNullOrWhiteSpace(registeredPhone) && 
+                                     !string.IsNullOrWhiteSpace(registeredId);
+
+            return Ok(new
+            {
+                hasBoundPagoMovil,
+                bankName = registeredBank ?? "",
+                phoneNumber = registeredPhone ?? "",
+                cedula = registeredId ?? ""
+            });
         }
 
         [HttpGet("withdrawal-eligibility/{userId}")]
