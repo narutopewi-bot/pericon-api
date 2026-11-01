@@ -44,17 +44,31 @@ namespace PericonAPI.Classes
 
                 if (!long.TryParse(parts[0], out long timestamp)) return false;
 
-                // Válido por 12 horas para máxima seguridad
+                // Válido por 365 días para dispositivos maestros vinculados (APK)
                 long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-                if (now - timestamp > 12 * 3600 || timestamp > now + 300) return false;
+                if (now - timestamp > 365L * 24 * 3600 || timestamp > now + 300) return false;
 
                 string payload = $"{timestamp}:{secret}";
                 using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
                 string expectedHash = Convert.ToBase64String(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload)));
 
-                return CryptographicOperations.FixedTimeEquals(
+                if (CryptographicOperations.FixedTimeEquals(
                     Encoding.UTF8.GetBytes(parts[1]),
                     Encoding.UTF8.GetBytes(expectedHash)
+                ))
+                {
+                    return true;
+                }
+
+                // Compatibilidad con token maestro vinculado previamente en la APK de Android
+                const string legacyApkSecret = "Pericon_Guardian_Master_Secret_Key_2026_Secure_HMAC_SHA256";
+                string legacyPayload = $"{timestamp}:{legacyApkSecret}";
+                using var legacyHmac = new HMACSHA256(Encoding.UTF8.GetBytes(legacyApkSecret));
+                string legacyHash = Convert.ToBase64String(legacyHmac.ComputeHash(Encoding.UTF8.GetBytes(legacyPayload)));
+
+                return CryptographicOperations.FixedTimeEquals(
+                    Encoding.UTF8.GetBytes(parts[1]),
+                    Encoding.UTF8.GetBytes(legacyHash)
                 );
             }
             catch

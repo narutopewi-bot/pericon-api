@@ -190,8 +190,10 @@ namespace PericonAPI.Controllers
                 bankMsg
             );
 
+            var rechargeAlertTs = DateTime.UtcNow.ToString("o");
             _ = _hubContext.Clients.Group("Admins").SendAsync("ReceiveAdminAlert", new
             {
+                id = recharge.Id,
                 type = "RECHARGE",
                 username = user.Username,
                 amountBs = recharge.AmountBs,
@@ -199,7 +201,18 @@ namespace PericonAPI.Controllers
                 reference = recharge.Reference,
                 status = recharge.Status,
                 isAutoApproved = isAutoApproved,
-                timestamp = DateTime.UtcNow.ToString("o")
+                timestamp = rechargeAlertTs
+            });
+            _ = _hubContext.Clients.All.SendAsync("AdminSentinelPing", new
+            {
+                id = recharge.Id,
+                type = "RECHARGE",
+                username = user.Username,
+                amountBs = recharge.AmountBs,
+                coins = recharge.CoinsAmount,
+                status = recharge.Status,
+                isAutoApproved = isAutoApproved,
+                timestamp = rechargeAlertTs
             });
 
             if (isAutoApproved)
@@ -382,8 +395,10 @@ namespace PericonAPI.Controllers
                 bankMsg
             );
 
+            var rechargeAlertTs = DateTime.UtcNow.ToString("o");
             _ = _hubContext.Clients.Group("Admins").SendAsync("ReceiveAdminAlert", new
             {
+                id = recharge.Id,
                 type = "RECHARGE",
                 username = user.Username,
                 amountBs = recharge.AmountBs,
@@ -391,7 +406,18 @@ namespace PericonAPI.Controllers
                 reference = recharge.Reference,
                 status = recharge.Status,
                 isAutoApproved = isAutoApproved,
-                timestamp = DateTime.UtcNow.ToString("o")
+                timestamp = rechargeAlertTs
+            });
+            _ = _hubContext.Clients.All.SendAsync("AdminSentinelPing", new
+            {
+                id = recharge.Id,
+                type = "RECHARGE",
+                username = user.Username,
+                amountBs = recharge.AmountBs,
+                coins = recharge.CoinsAmount,
+                status = recharge.Status,
+                isAutoApproved = isAutoApproved,
+                timestamp = rechargeAlertTs
             });
 
             if (isAutoApproved)
@@ -719,15 +745,26 @@ namespace PericonAPI.Controllers
                 withdrawal.IdCard
             );
 
+            var withdrawalAlertTs = DateTime.UtcNow.ToString("o");
             _ = _hubContext.Clients.Group("Admins").SendAsync("ReceiveAdminAlert", new
             {
+                id = withdrawal.Id,
                 type = "WITHDRAWAL",
                 username = user.Username,
                 amountBs = withdrawal.AmountBs,
                 coins = withdrawal.CoinsAmount,
                 bankName = withdrawal.BankName,
                 phoneNumber = withdrawal.PhoneNumber,
-                timestamp = DateTime.UtcNow.ToString("o")
+                timestamp = withdrawalAlertTs
+            });
+            _ = _hubContext.Clients.All.SendAsync("AdminSentinelPing", new
+            {
+                id = withdrawal.Id,
+                type = "WITHDRAWAL",
+                username = user.Username,
+                amountBs = withdrawal.AmountBs,
+                coins = withdrawal.CoinsAmount,
+                timestamp = withdrawalAlertTs
             });
 
             return Ok(new
