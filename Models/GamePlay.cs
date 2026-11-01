@@ -86,6 +86,8 @@ namespace PericonAPI.Models
 
         public int RematchRequestedBy { get; set; } = 0;
 
+        public int BotRematchCount { get; set; } = 0;
+
         public DateTime? RematchRequestedAt { get; set; } = null;
 
 

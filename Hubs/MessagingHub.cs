@@ -2562,25 +2562,62 @@ namespace PericonAPI.Hubs
 
 
 
-            // 1. CASO CONTRA BOT VIRTUAL:
+            // 1. CASO CONTRA BOT VIRTUAL (COMPORTAMIENTO HUMANO REALISTA: A VECES ACEPTA, A VECES RECHAZA):
 
             if (g.IsBotMatch)
 
             {
-
-                GameLogger.Log(gameId, "RequestRevancha1vs1", "Revancha contra bot detectada. El bot acepta automáticamente.");
-
+                string botName = !string.IsNullOrWhiteSpace(g.NamePTwo) ? g.NamePTwo : "Tu contrincante";
                 await Clients.Caller.SendAsync("RevanchaRequestedPending1vs1", new { requesterName = reqName });
 
-                _ = Task.Run(async () =>
+                // Tiempo de respuesta humano variable (1.7s a 3.6s) pensando si acepta o se retira de la mesa
+                int humanThinkDelayMs = Random.Shared.Next(1700, 3601);
+                await Task.Delay(humanThinkDelayMs);
 
+                // Verificar si el jugador aún tiene monedas suficientes para cubrir la apuesta de la revancha
+                bool hasEnoughCoinsForRematch = true;
+                try
                 {
+                    using var scope = _scopeFactory.CreateScope();
+                    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                    int uId = g.PlayerOne;
+                    if (uId <= 0 && !string.IsNullOrEmpty(g.UserIdPOne)) int.TryParse(g.UserIdPOne, out uId);
+                    string cleanName = (g.NamePOne ?? "").Trim().ToLowerInvariant();
+                    var dbUser = await db.Users.FirstOrDefaultAsync(u => (uId > 0 && u.Id == uId) || (!string.IsNullOrEmpty(cleanName) && u.Username.ToLower() == cleanName));
+                    if (dbUser != null && dbUser.Coins < g.Coins)
+                    {
+                        hasEnoughCoinsForRematch = false;
+                    }
+                }
+                catch { }
 
-                    await Task.Delay(1200);
+                // Probabilidad realista de aceptación según cuántas revanchas llevan en la misma sala:
+                // - 1ra revancha (BotRematchCount == 0): 55% acepta / 45% rechaza
+                // - 2da revancha seguida (BotRematchCount == 1): 30% acepta / 70% rechaza
+                // - 3ra revancha seguida (BotRematchCount >= 2): 0% acepta (100% rechaza y sale al lobby)
+                double acceptProbability = g.BotRematchCount switch
+                {
+                    0 => 0.55,
+                    1 => 0.30,
+                    _ => 0.0
+                };
 
-                    await ExecuteAcceptRevancha1vs1(gameId, g.NamePTwo ?? "Bot");
+                bool botAcceptsRematch = hasEnoughCoinsForRematch && (Random.Shared.NextDouble() < acceptProbability);
 
-                });
+                if (botAcceptsRematch)
+                {
+                    g.BotRematchCount++;
+                    GameLogger.Log(gameId, "RequestRevancha1vs1", $"Bot '{botName}' ACEPTÓ la revancha #{g.BotRematchCount} tras {humanThinkDelayMs}ms.");
+                    await ExecuteAcceptRevancha1vs1(gameId, botName);
+                }
+                else
+                {
+                    g.RematchRequestedBy = 0;
+                    g.RematchRequestedAt = null;
+                    GameLogger.Log(gameId, "RequestRevancha1vs1", $"Bot '{botName}' RECHAZÓ la revancha (RevanchasPrevias={g.BotRematchCount}, SaldoSuficiente={hasEnoughCoinsForRematch}) tras {humanThinkDelayMs}ms.");
+                    await Clients.Group($"game1vs1_{gameId}").SendAsync("RevanchaRejected1vs1", new { responderName = botName });
+                    await Clients.Caller.SendAsync("RevanchaRejected1vs1", new { responderName = botName });
+                }
 
                 return;
 
