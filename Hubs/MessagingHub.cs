@@ -317,6 +317,7 @@ namespace PericonAPI.Hubs
             public bool IsConnected { get; set; } = true;
 
             public DateTime? DisconnectedAt { get; set; }
+            public bool HasRecordedMatch { get; set; } = false;
 
         }
 
@@ -538,6 +539,79 @@ namespace PericonAPI.Hubs
 
             return Task.FromResult("pong");
 
+        }
+
+        public async Task RegisterAdminAlertChannel(string? adminToken)
+        {
+            if (PericonAPI.Classes.AdminSecurity.ValidateToken(adminToken))
+            {
+                await Groups.AddToGroupAsync(Context.ConnectionId, "Admins");
+            }
+        }
+
+        public static bool TryConsumeAuthorizedMatchRecord(
+            int userId,
+            string? username,
+            ref bool won,
+            ref int verifiedBet,
+            out bool is2v2Match)
+        {
+            is2v2Match = false;
+            string cleanUser = (username ?? "").Trim();
+
+            lock (rooms2v2Lock)
+            {
+                foreach (var kvp in rooms2v2)
+                {
+                    var s = kvp.Value;
+                    if (!s.GameStarted && !s.IsGameOver && s.PointsTeam1 < 10 && s.PointsTeam2 < 10)
+                        continue;
+
+                    var seat = s.Seats.FirstOrDefault(st =>
+                        !st.HasRecordedMatch &&
+                        ((userId > 0 && st.UserId == userId.ToString()) ||
+                         (!string.IsNullOrEmpty(cleanUser) && string.Equals(st.Name, cleanUser, StringComparison.OrdinalIgnoreCase))));
+
+                    if (seat != null && (s.IsGameOver || s.PointsTeam1 >= 10 || s.PointsTeam2 >= 10))
+                    {
+                        seat.HasRecordedMatch = true;
+                        bool teamWon = (seat.Team == 1 && s.PointsTeam1 >= 10)
+                                    || (seat.Team == 2 && s.PointsTeam2 >= 10)
+                                    || (s.WinningTeam > 0 && s.WinningTeam == seat.Team);
+                        won = teamWon;
+                        verifiedBet = s.IsFriendlyRoom ? 10 : Math.Clamp(s.Bet > 0 ? s.Bet : verifiedBet, 10, 5000);
+                        is2v2Match = true;
+                        return true;
+                    }
+                }
+            }
+
+            lock (games)
+            {
+                for (int i = games.Count - 1; i >= 0; i--)
+                {
+                    var g = games[i];
+                    if (g == null || g.HasPaidOut) continue;
+
+                    bool matchesUser = (userId > 0 && g.UserIdPOne == userId.ToString())
+                                    || (!string.IsNullOrEmpty(cleanUser) && string.Equals(g.NamePOne, cleanUser, StringComparison.OrdinalIgnoreCase));
+
+                    if (matchesUser && (g.PointsOne >= 9 || g.PointsTwo >= 9 || g.IsFinished))
+                    {
+                        g.HasPaidOut = true;
+                        g.IsFinished = true;
+                        if (g.PointsOne >= 9 || g.PointsTwo >= 9)
+                        {
+                            won = g.PointsOne >= 9 && g.PointsOne > g.PointsTwo;
+                        }
+                        verifiedBet = Math.Clamp(g.Coins > 0 ? g.Coins : verifiedBet, 10, 500);
+                        is2v2Match = false;
+                        return true;
+                    }
+                }
+            }
+
+            return false;
         }
 
 
@@ -3085,11 +3159,17 @@ namespace PericonAPI.Hubs
 
 
             if (targetGame.IsBotMatch)
-
             {
-
                 isPlayerOne = true;
-
+            }
+            else
+            {
+                if (Context.ConnectionId == targetGame.IdPOne) isPlayerOne = true;
+                else if (Context.ConnectionId == targetGame.IdPTwo) isPlayerOne = false;
+                else if (isPlayerOne && !string.IsNullOrEmpty(targetGame.IdPOne) && targetGame.P1DisconnectedAt == null && !string.IsNullOrEmpty(targetGame.IdPTwo) && targetGame.P2DisconnectedAt != null)
+                    isPlayerOne = false;
+                else if (!isPlayerOne && !string.IsNullOrEmpty(targetGame.IdPTwo) && targetGame.P2DisconnectedAt == null && !string.IsNullOrEmpty(targetGame.IdPOne) && targetGame.P1DisconnectedAt != null)
+                    isPlayerOne = true;
             }
 
 
@@ -3758,7 +3838,7 @@ namespace PericonAPI.Hubs
 
             sentence.order = PFlag ? 93 : 94;
 
-            sentence.content = games[Place].InitHand;
+            sentence.content = MaskInitHand1vs1(games[Place].InitHand, PFlag);
 
             await Clients.Client(Context.ConnectionId).SendAsync("DealGame1vs1", sentence);
 
@@ -3863,11 +3943,13 @@ namespace PericonAPI.Hubs
             // Actualizar ConnectionId activo del cliente en la partida y reiniciar contadores de desconexión
 
             if (games[numg].IsBotMatch)
-
             {
-
                 flag = true;
-
+            }
+            else
+            {
+                if (Context.ConnectionId == games[numg].IdPOne) flag = true;
+                else if (Context.ConnectionId == games[numg].IdPTwo) flag = false;
             }
 
 
@@ -4416,7 +4498,13 @@ namespace PericonAPI.Hubs
 
                 if (leadCardId < 0) leadCardId = 0;
 
-
+                // Blindaje de posesión de carta: verificar que la carta jugada exista realmente en la mano del jugador
+                var activeLeadHand = isPlayerOne ? games[numg].CardsOne : games[numg].CardsTwo;
+                if (activeLeadHand != null && activeLeadHand.Count > 0 && !activeLeadHand.Any(c => c.Id == leadCardId))
+                {
+                    Console.WriteLine($"[SECURITY] Jugador {(isPlayerOne ? 1 : 2)} intentó jugar carta {leadCardId} que NO posee en su mano. Forzando carta legítima {activeLeadHand[0].Id}.");
+                    leadCardId = activeLeadHand[0].Id;
+                }
 
                 sentence.game = move.game;
 
@@ -4557,13 +4645,9 @@ namespace PericonAPI.Hubs
 
 
                 int cardzero = games[numg].Life?.Id ?? 0;
-
-                if (daticos.Length > 4 && int.TryParse(daticos[4], out int parsedLife))
-
+                if (cardzero <= 0 && daticos.Length > 4 && int.TryParse(daticos[4], out int parsedLife))
                 {
-
                     cardzero = parsedLife;
-
                 }
 
 
@@ -4587,6 +4671,15 @@ namespace PericonAPI.Hubs
 
 
                 bool leadIsPlayerOne = (games[numg].LeadPlayer == 1);
+
+                // Blindaje de posesión de carta del jugador que responde (Pie)
+                var activeRespHand = leadIsPlayerOne ? games[numg].CardsTwo : games[numg].CardsOne;
+                if (activeRespHand != null && activeRespHand.Count > 0 && !activeRespHand.Any(c => c.Id == respCard))
+                {
+                    Console.WriteLine($"[SECURITY] Jugador respondedor intentó jugar carta {respCard} que NO posee en su mano. Forzando carta legítima {activeRespHand[0].Id}.");
+                    respCard = activeRespHand[0].Id;
+                    cardtwo = respCard;
+                }
 
                 if (leadIsPlayerOne) games[numg].CardsTwo.RemoveAll(c => c.Id == respCard);
 
@@ -8432,66 +8525,126 @@ namespace PericonAPI.Hubs
 
 
 
-                string diff = !string.IsNullOrEmpty(g.BotDifficulty) ? g.BotDifficulty : GamePlayOneVsOne.BotDifficultyMode;
-
-                double scoreBotFull = GamePlayOneVsOne.ScoreHand(g.CardsTwo, g.Life.Id);
-                double scoreUserFull = GamePlayOneVsOne.ScoreHand(g.CardsOne, g.Life.Id);
-                int userTrumpsCount = g.CardsOne.Count(c => GamePlayOneVsOne.EvaluateCard(c.Id, g.Life.Id) >= 11);
-                int maxBotPower = g.CardsTwo.Count > 0 ? g.CardsTwo.Max(c => GamePlayOneVsOne.EvaluateCard(c.Id, g.Life.Id)) : 0;
-                int maxUserPower = g.CardsOne.Count > 0 ? g.CardsOne.Max(c => GamePlayOneVsOne.EvaluateCard(c.Id, g.Life.Id)) : 0;
-
-                // Detectar si el usuario tiene la mano ganadora o ya ganó la primera baza con carta superior
-                bool userHasWinningHand = (scoreUserFull > scoreBotFull && userTrumpsCount >= trumpsCount) ||
-                                          (g.RoundOne >= 1 && maxUserPower > maxBotPower && g.RoundTwo == 0);
-
-                // CRITERIO HUMANO Y DEFENSA DE LA CASA:
-                // Si el bot no tiene triunfos o si en modo medio/dificil el usuario pide 3/6 teniendo la mano ganadora,
-                // el bot inteligente dice "¡No quiero!" (cede solo 1 piedra y jamás regala 3 ni 6 piedras).
-                double acceptProb;
-                if (trumpsCount == 0 && handScore <= 24)
-                {
-                    acceptProb = 0.03; // 97% de rechazo en mano blanca
-                }
-                else if (userHasWinningHand && (diff == "dificil" || diff == "medio" || g.MustFavorBotToBreakStreak || g.IsTargetedForStabilization))
-                {
-                    acceptProb = diff == "dificil" ? 0.0 : 0.05; // Inteligencia defensiva: no caer en la trampa de 3/6 piedras cuando el usuario lleva ventaja
-                }
-                else if (trumpsCount >= 2 || handScore >= 45 || (scoreBotFull > scoreUserFull && trumpsCount >= 1 && g.RoundTwo >= 1))
-                {
-                    acceptProb = 0.94; // Mano dominante del bot: acepta con firmeza
-                }
-                else
-                {
-                    acceptProb = diff switch
-                    {
-                        "favor_jugador" => 0.75,
-                        "facil" => 0.45,
-                        "dificil" => 0.25,
-                        _ => 0.30
-                    };
-                }
-
-                // Si el humano reta o revira teniendo ya su carta lanzada en mesa, evaluar resultado real de esa baza:
-                if (g.CurrentLeadMove != null && g.LeadPlayer == 1 && !string.IsNullOrEmpty(g.CurrentLeadMove.content))
-                {
-                    int oppLeadCard = -1;
-                    var parts = g.CurrentLeadMove.content.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-                    if (parts.Length > 2 && int.TryParse(parts[2], out int parsedC)) oppLeadCard = parsedC;
-                    if (oppLeadCard >= 0)
-                    {
-                        bool hasKillerCard = g.CardsTwo.Any(c => GamePlayOneVsOne.DetermineWinner(oppLeadCard, c.Id, g.Life.Id, true) == "00");
-                        bool isHandDeciding = (g.RoundTwo >= 1) || (g.CardsTwo.Count == 1);
-                        if (hasKillerCard && isHandDeciding)
-                        {
-                            acceptProb = 0.98; // Baza y mano ganadas en mano: el bot acepta con máxima convicción
-                        }
-                        else if (!hasKillerCard && (g.RoundOne >= 1 || g.CardsTwo.Count == 1))
-                        {
-                            acceptProb = 0.0; // El bot no puede matar la carta decisiva en mesa: rechaza siempre para no regalar 3/6 piedras
-                        }
-                    }
-                }
-
+                string diff = !string.IsNullOrEmpty(g.BotDifficulty) ? g.BotDifficulty : GamePlayOneVsOne.BotDifficultyMode;
+
+
+
+                double scoreBotFull = GamePlayOneVsOne.ScoreHand(g.CardsTwo, g.Life.Id);
+
+                double scoreUserFull = GamePlayOneVsOne.ScoreHand(g.CardsOne, g.Life.Id);
+
+                int userTrumpsCount = g.CardsOne.Count(c => GamePlayOneVsOne.EvaluateCard(c.Id, g.Life.Id) >= 11);
+
+                int maxBotPower = g.CardsTwo.Count > 0 ? g.CardsTwo.Max(c => GamePlayOneVsOne.EvaluateCard(c.Id, g.Life.Id)) : 0;
+
+                int maxUserPower = g.CardsOne.Count > 0 ? g.CardsOne.Max(c => GamePlayOneVsOne.EvaluateCard(c.Id, g.Life.Id)) : 0;
+
+
+
+                // Detectar si el usuario tiene la mano ganadora o ya ganó la primera baza con carta superior
+
+                bool userHasWinningHand = (scoreUserFull > scoreBotFull && userTrumpsCount >= trumpsCount) ||
+
+                                          (g.RoundOne >= 1 && maxUserPower > maxBotPower && g.RoundTwo == 0);
+
+
+
+                // CRITERIO HUMANO Y DEFENSA DE LA CASA:
+
+                // Si el bot no tiene triunfos o si en modo medio/dificil el usuario pide 3/6 teniendo la mano ganadora,
+
+                // el bot inteligente dice "¡No quiero!" (cede solo 1 piedra y jamás regala 3 ni 6 piedras).
+
+                double acceptProb;
+
+                if (trumpsCount == 0 && handScore <= 24)
+
+                {
+
+                    acceptProb = 0.03; // 97% de rechazo en mano blanca
+
+                }
+
+                else if (userHasWinningHand && (diff == "dificil" || diff == "medio" || g.MustFavorBotToBreakStreak || g.IsTargetedForStabilization))
+
+                {
+
+                    acceptProb = diff == "dificil" ? 0.0 : 0.05; // Inteligencia defensiva: no caer en la trampa de 3/6 piedras cuando el usuario lleva ventaja
+
+                }
+
+                else if (trumpsCount >= 2 || handScore >= 45 || (scoreBotFull > scoreUserFull && trumpsCount >= 1 && g.RoundTwo >= 1))
+
+                {
+
+                    acceptProb = 0.94; // Mano dominante del bot: acepta con firmeza
+
+                }
+
+                else
+
+                {
+
+                    acceptProb = diff switch
+
+                    {
+
+                        "favor_jugador" => 0.75,
+
+                        "facil" => 0.45,
+
+                        "dificil" => 0.25,
+
+                        _ => 0.30
+
+                    };
+
+                }
+
+
+
+                // Si el humano reta o revira teniendo ya su carta lanzada en mesa, evaluar resultado real de esa baza:
+
+                if (g.CurrentLeadMove != null && g.LeadPlayer == 1 && !string.IsNullOrEmpty(g.CurrentLeadMove.content))
+
+                {
+
+                    int oppLeadCard = -1;
+
+                    var parts = g.CurrentLeadMove.content.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+
+                    if (parts.Length > 2 && int.TryParse(parts[2], out int parsedC)) oppLeadCard = parsedC;
+
+                    if (oppLeadCard >= 0)
+
+                    {
+
+                        bool hasKillerCard = g.CardsTwo.Any(c => GamePlayOneVsOne.DetermineWinner(oppLeadCard, c.Id, g.Life.Id, true) == "00");
+
+                        bool isHandDeciding = (g.RoundTwo >= 1) || (g.CardsTwo.Count == 1);
+
+                        if (hasKillerCard && isHandDeciding)
+
+                        {
+
+                            acceptProb = 0.98; // Baza y mano ganadas en mano: el bot acepta con máxima convicción
+
+                        }
+
+                        else if (!hasKillerCard && (g.RoundOne >= 1 || g.CardsTwo.Count == 1))
+
+                        {
+
+                            acceptProb = 0.0; // El bot no puede matar la carta decisiva en mesa: rechaza siempre para no regalar 3/6 piedras
+
+                        }
+
+                    }
+
+                }
+
+
+
                 bool accept = Random.Shared.NextDouble() < acceptProb;
 
 
@@ -10842,7 +10995,7 @@ namespace PericonAPI.Hubs
 
                     g.IsActive && !g.IsFinished && !g.HasPaidOut &&
 
-                    ((!string.IsNullOrEmpty(userId) && (g.UserIdPOne == userId || g.UserIdPTwo == userId)) ||
+                    ((!string.IsNullOrEmpty(userId) && (g.UserIdPOne == userId.ToString() || g.UserIdPTwo == userId)) ||
 
                      (!string.IsNullOrEmpty(playerName) && (g.NamePOne.Equals(playerName, StringComparison.OrdinalIgnoreCase) || g.NamePTwo.Equals(playerName, StringComparison.OrdinalIgnoreCase))))
 
@@ -11234,7 +11387,7 @@ namespace PericonAPI.Hubs
 
                     g.IsActive && !g.IsFinished && !g.HasPaidOut &&
 
-                    ((!string.IsNullOrEmpty(userId) && (g.UserIdPOne == userId || g.UserIdPTwo == userId)) ||
+                    ((!string.IsNullOrEmpty(userId) && (g.UserIdPOne == userId.ToString() || g.UserIdPTwo == userId)) ||
 
                      (!string.IsNullOrEmpty(playerName) && (g.NamePOne.Equals(playerName, StringComparison.OrdinalIgnoreCase) || g.NamePTwo.Equals(playerName, StringComparison.OrdinalIgnoreCase))))
 
@@ -14251,13 +14404,18 @@ namespace PericonAPI.Hubs
             {
 
                 if (rooms2v2.TryGetValue(roomKey, out var session))
-
                 {
-
-                    session.PointsTeam1 = pointsT1;
-
-                    session.PointsTeam2 = pointsT2;
-
+                    bool isSeatedPlayer = session.Seats.Any(s => s.ConnectionId == Context.ConnectionId);
+                    if (isSeatedPlayer)
+                    {
+                        int clampedT1 = Math.Clamp(pointsT1, 0, 12);
+                        int clampedT2 = Math.Clamp(pointsT2, 0, 12);
+                        if (clampedT1 - session.PointsTeam1 <= 6 && clampedT2 - session.PointsTeam2 <= 6)
+                        {
+                            session.PointsTeam1 = clampedT1;
+                            session.PointsTeam2 = clampedT2;
+                        }
+                    }
                 }
 
             }

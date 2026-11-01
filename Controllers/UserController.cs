@@ -91,31 +91,55 @@ namespace PericonAPI.Controllers
         [HttpPost("record-match")]
         public async Task<IActionResult> RecordMatch([FromBody] RecordMatchDto dto)
         {
+            using var _lock = await PericonAPI.Classes.UserConcurrencyLock.AcquireAsync(dto?.UserId ?? 0);
+
             User? user = null;
-            if (dto.UserId > 0)
+            if (dto != null && dto.UserId > 0)
             {
                 user = await _context.Users.FindAsync(dto.UserId);
             }
 
-            if (user == null && !string.IsNullOrWhiteSpace(dto.Email))
+            if (user == null && !string.IsNullOrWhiteSpace(dto?.Email))
             {
                 var cleanEmail = dto.Email.Trim().ToLowerInvariant();
                 user = await _context.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == cleanEmail);
             }
 
-            if (user == null && !string.IsNullOrWhiteSpace(dto.Username))
+            if (user == null && !string.IsNullOrWhiteSpace(dto?.Username))
             {
                 var cleanUsername = dto.Username.Trim().ToLowerInvariant();
                 user = await _context.Users.FirstOrDefaultAsync(u => u.Username.ToLower() == cleanUsername);
             }
 
-            if (user == null)
+            if (user == null || dto == null)
             {
                 return NotFound(new { message = "Usuario no encontrado." });
             }
 
             int bet = dto.BetAmount > 0 ? dto.BetAmount : Math.Abs(dto.CoinsChange);
             if (bet <= 0) bet = 100;
+            bool wonVerified = dto.Won;
+
+            // Blindaje contra fabricación de monedas: verificar que exista una partida real concluida en MessagingHub (Solitario o 2v2)
+            bool authorizedByHub = PericonAPI.Hubs.MessagingHub.TryConsumeAuthorizedMatchRecord(
+                user.Id,
+                user.Username,
+                ref wonVerified,
+                ref bet,
+                out bool is2v2Match);
+
+            if (!authorizedByHub)
+            {
+                if (dto.Won || dto.CoinsChange > 0)
+                {
+                    Console.WriteLine($"[SECURITY] Bloqueado intento no autorizado de acreditar monedas en record-match para User {user.Id} ({user.Username}).");
+                    return BadRequest(new { message = "No existe una partida activa verificada en el servidor para acreditar ganancias." });
+                }
+                // Si es solo descuento de tarifa de sala amistosa (<= 10 monedas)
+                bet = Math.Min(bet, 10);
+                wonVerified = false;
+                is2v2Match = true;
+            }
 
             int coinsBefore = user.Coins;
             int coinsWon = 0;
@@ -123,7 +147,7 @@ namespace PericonAPI.Controllers
             int houseCommission = 0;
             int houseProfit = 0;
 
-            if (dto.Won)
+            if (wonVerified)
             {
                 user.Wins += 1;
                 if (!user.IsVirtualBot)
@@ -169,24 +193,27 @@ namespace PericonAPI.Controllers
 
             user.Level = user.GetCalculatedLevel();
 
-            var botRecord = new BotMatchRecord
+            if (!is2v2Match)
             {
-                UserId = user.Id,
-                Username = user.Username,
-                BotName = !string.IsNullOrWhiteSpace(dto.BotName) ? dto.BotName : "Pericón (Bot IA)",
-                BetAmount = bet,
-                UserWon = dto.Won,
-                CoinsWon = coinsWon,
-                CoinsLost = coinsLost,
-                HouseCommission = houseCommission,
-                HouseProfit = houseProfit,
-                UserCoinsBefore = coinsBefore,
-                UserCoinsAfter = user.Coins,
-                EndReason = !string.IsNullOrWhiteSpace(dto.EndReason) ? dto.EndReason : (dto.Won ? "Victoria del Jugador (Comisión 10%)" : "Victoria de la Máquina"),
-                CreatedAt = DateTime.UtcNow
-            };
+                var botRecord = new BotMatchRecord
+                {
+                    UserId = user.Id,
+                    Username = user.Username,
+                    BotName = !string.IsNullOrWhiteSpace(dto.BotName) ? dto.BotName : "Pericón (Bot IA)",
+                    BetAmount = bet,
+                    UserWon = wonVerified,
+                    CoinsWon = coinsWon,
+                    CoinsLost = coinsLost,
+                    HouseCommission = houseCommission,
+                    HouseProfit = houseProfit,
+                    UserCoinsBefore = coinsBefore,
+                    UserCoinsAfter = user.Coins,
+                    EndReason = !string.IsNullOrWhiteSpace(dto.EndReason) ? dto.EndReason : (wonVerified ? "Victoria del Jugador (Comisión 10%)" : "Victoria de la Máquina"),
+                    CreatedAt = DateTime.UtcNow
+                };
 
-            _context.BotMatchRecords.Add(botRecord);
+                _context.BotMatchRecords.Add(botRecord);
+            }
             await _context.SaveChangesAsync();
 
             // La calibración del Bot ahora es controlada manualmente por el Administrador desde el Panel (Modo Fácil 50-50, Medio 60-40, Difícil 65-35)
@@ -206,14 +233,16 @@ namespace PericonAPI.Controllers
                 totalMatches,
                 winRate,
                 level = user.Level,
-                message = dto.Won ? "¡Victoria registrada con éxito!" : "Partida registrada."
+                message = wonVerified ? "¡Victoria registrada con éxito!" : "Partida registrada."
             });
         }
 
         [HttpPost("claim-daily")]
         public async Task<IActionResult> ClaimDaily([FromBody] ClaimDailyDto dto)
         {
-            var user = await _context.Users.FindAsync(dto.UserId);
+            using var _lock = await PericonAPI.Classes.UserConcurrencyLock.AcquireAsync(dto?.UserId ?? 0);
+
+            var user = await _context.Users.FindAsync(dto?.UserId ?? 0);
             if (user == null)
             {
                 return NotFound(new { message = "Usuario no encontrado." });
@@ -256,6 +285,7 @@ namespace PericonAPI.Controllers
             };
 
             user.Coins += streakBonus;
+            user.BonusCoins += streakBonus;
             user.LastDailyClaim = DateTime.UtcNow;
             await _context.SaveChangesAsync();
 
@@ -279,6 +309,8 @@ namespace PericonAPI.Controllers
             {
                 return BadRequest(new { message = "Código de referido inválido." });
             }
+
+            using var _lock = await PericonAPI.Classes.UserConcurrencyLock.AcquireAsync(dto.UserId);
 
             var user = await _context.Users.FindAsync(dto.UserId);
             if (user == null)
@@ -371,6 +403,9 @@ namespace PericonAPI.Controllers
                 return BadRequest(new { message = "Datos de cupón inválidos." });
             }
 
+            using var _lock = await PericonAPI.Classes.UserConcurrencyLock.AcquireAsync(dto.UserId);
+            using var _codeLock = await PericonAPI.Classes.UserConcurrencyLock.AcquireKeyAsync($"promo_{dto.Code}");
+
             var cleanCode = dto.Code.Trim().ToUpperInvariant();
             var promo = await _context.PromoCodes.FirstOrDefaultAsync(p => p.Code == cleanCode);
 
@@ -409,8 +444,9 @@ namespace PericonAPI.Controllers
                 return BadRequest(new { message = $"Ya has canjeado el código '{promo.Code}' anteriormente." });
             }
 
-            // Otorgar monedas
+            // Otorgar monedas (cortesía para jugar)
             user.Coins += promo.CoinsReward;
+            user.BonusCoins += promo.CoinsReward;
             promo.TimesUsed += 1;
 
             var redemption = new PromoCodeRedemption
@@ -644,6 +680,8 @@ namespace PericonAPI.Controllers
                 return BadRequest(new { message = "Datos de usuario inválidos." });
             }
 
+            using var _lock = await PericonAPI.Classes.UserConcurrencyLock.AcquireAsync(dto.UserId);
+
             var user = await _context.Users.FindAsync(dto.UserId);
             if (user == null)
             {
@@ -657,6 +695,7 @@ namespace PericonAPI.Controllers
 
             const int instagramReward = 300;
             user.Coins += instagramReward;
+            user.BonusCoins += instagramReward;
             user.HasClaimedInstagramReward = true;
             if (!string.IsNullOrWhiteSpace(dto.InstagramHandle))
             {

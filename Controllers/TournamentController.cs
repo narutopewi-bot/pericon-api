@@ -318,6 +318,10 @@ namespace PericonAPI.Controllers
         [HttpPost("start")]
         public async Task<IActionResult> StartTournament([FromBody] StartTournamentDto dto)
         {
+            if (!PericonAPI.Classes.AdminSecurity.IsAuthorizedAdmin(Request))
+            {
+                return Unauthorized(new { message = "Solo el administrador autorizado puede iniciar el torneo." });
+            }
             var tournament = await _context.Tournaments.FindAsync(dto.TournamentId);
             if (tournament == null)
             {
@@ -423,9 +427,9 @@ namespace PericonAPI.Controllers
         [HttpPost("reset-pilot")]
         public async Task<IActionResult> ResetPilotTournament([FromQuery] string? key)
         {
-            if (key != "PERICON2026")
+            if (!PericonAPI.Classes.AdminSecurity.IsAuthorizedAdmin(Request))
             {
-                return Unauthorized(new { message = "Clave de reinicio inválida." });
+                return Unauthorized(new { message = "Solo el administrador autorizado puede reiniciar torneos." });
             }
 
             var oldTournaments = await _context.Tournaments.ToListAsync();

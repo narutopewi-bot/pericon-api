@@ -49,6 +49,9 @@ namespace PericonAPI.Controllers
                 return BadRequest(new { message = "Debes ingresar el número de referencia del pago (al menos 4 dígitos)." });
             }
 
+            using var _userLock = await UserConcurrencyLock.AcquireAsync(dto.UserId);
+            using var _refLock = await UserConcurrencyLock.AcquireKeyAsync($"ref_{cleanRef}");
+
             var duplicateRef = await _context.PaymentRecharges
                 .FirstOrDefaultAsync(r => r.Reference == cleanRef && r.Status != "RECHAZADO");
 
@@ -106,8 +109,16 @@ namespace PericonAPI.Controllers
                         Directory.CreateDirectory(uploadsFolder);
                     }
 
-                    var ext = Path.GetExtension(dto.ReceiptImage.FileName);
-                    if (string.IsNullOrEmpty(ext)) ext = ".jpg";
+                    if (dto.ReceiptImage.Length > 10 * 1024 * 1024)
+                    {
+                        return BadRequest(new { message = "La imagen del comprobante no puede superar los 10 MB." });
+                    }
+                    var ext = Path.GetExtension(dto.ReceiptImage.FileName)?.ToLowerInvariant() ?? ".jpg";
+                    var allowedExts = new[] { ".jpg", ".jpeg", ".png", ".webp", ".gif" };
+                    if (!allowedExts.Contains(ext))
+                    {
+                        return BadRequest(new { message = "Formato de archivo no permitido. Sube únicamente una imagen (.jpg, .png o .webp)." });
+                    }
                     var uniqueFileName = $"{Guid.NewGuid():N}{ext}";
                     var filePath = Path.Combine(uploadsFolder, uniqueFileName);
 
@@ -179,7 +190,7 @@ namespace PericonAPI.Controllers
                 bankMsg
             );
 
-            _ = _hubContext.Clients.All.SendAsync("ReceiveAdminAlert", new
+            _ = _hubContext.Clients.Group("Admins").SendAsync("ReceiveAdminAlert", new
             {
                 type = "RECHARGE",
                 username = user.Username,
@@ -240,6 +251,9 @@ namespace PericonAPI.Controllers
             {
                 return BadRequest(new { message = "Debes ingresar el número de referencia del pago (al menos 4 dígitos)." });
             }
+
+            using var _userLock = await UserConcurrencyLock.AcquireAsync(dto.UserId);
+            using var _refLock = await UserConcurrencyLock.AcquireKeyAsync($"ref_{cleanRef}");
 
             var duplicateRef = await _context.PaymentRecharges
                 .FirstOrDefaultAsync(r => r.Reference == cleanRef && r.Status != "RECHAZADO");
@@ -368,7 +382,7 @@ namespace PericonAPI.Controllers
                 bankMsg
             );
 
-            _ = _hubContext.Clients.All.SendAsync("ReceiveAdminAlert", new
+            _ = _hubContext.Clients.Group("Admins").SendAsync("ReceiveAdminAlert", new
             {
                 type = "RECHARGE",
                 username = user.Username,
@@ -519,6 +533,8 @@ namespace PericonAPI.Controllers
             {
                 return BadRequest(new { message = $"El monto mínimo de retiro es de {MIN_WITHDRAWAL_COINS:N0} monedas." });
             }
+
+            using var _withdrawLock = await UserConcurrencyLock.AcquireAsync(dto.UserId);
 
             var user = await _context.Users.FindAsync(dto.UserId);
             if (user == null)
@@ -703,7 +719,7 @@ namespace PericonAPI.Controllers
                 withdrawal.IdCard
             );
 
-            _ = _hubContext.Clients.All.SendAsync("ReceiveAdminAlert", new
+            _ = _hubContext.Clients.Group("Admins").SendAsync("ReceiveAdminAlert", new
             {
                 type = "WITHDRAWAL",
                 username = user.Username,

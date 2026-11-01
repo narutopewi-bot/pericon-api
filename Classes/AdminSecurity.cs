@@ -62,6 +62,16 @@ namespace PericonAPI.Classes
                 return false;
             }
         }
+
+        public static bool ValidateToken(string? token) => ValidateAdminToken(token);
+
+        public static bool IsAuthorizedAdmin(Microsoft.AspNetCore.Http.HttpRequest request)
+        {
+            if (request == null) return false;
+            string? token = request.Headers["X-Admin-Token"].FirstOrDefault()
+                ?? request.Headers["Authorization"].FirstOrDefault()?.Replace("Bearer ", "").Trim();
+            return ValidateAdminToken(token);
+        }
     }
 
     [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method)]

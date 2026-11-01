@@ -98,13 +98,11 @@ namespace PericonAPI.Controllers
                 {
                 }
 
-                // Fallback automático por bloqueo de puerto SMTP en Railway: devolver el código para permitir el registro inmediato
                 return Ok(new
                 {
                     success = true,
-                    fallback = true,
-                    code = otpCode,
-                    message = "El servidor detectó bloqueo en el puerto SMTP saliente. Se generó tu código de verificación y fue cargado automáticamente para completar tu registro."
+                    fallback = false,
+                    message = "Solicitud de verificación procesada. Si tu correo es válido, recibirás el código en breve."
                 });
             }
 
@@ -440,6 +438,15 @@ namespace PericonAPI.Controllers
             });
         }
 
+        [HttpGet("google-config")]
+        public IActionResult GetGoogleConfig()
+        {
+            var clientId = Environment.GetEnvironmentVariable("GOOGLE_CLIENT_ID")
+                        ?? Environment.GetEnvironmentVariable("NEXT_PUBLIC_GOOGLE_CLIENT_ID")
+                        ?? "";
+            return Ok(new { clientId = clientId.Trim() });
+        }
+
         [HttpPost("google")]
         public async Task<IActionResult> GoogleLogin([FromBody] GoogleAuthDto dto)
         {
@@ -447,6 +454,7 @@ namespace PericonAPI.Controllers
             string name = string.Empty;
             string? picture = dto.Picture;
             string? googleId = null;
+            bool isVerifiedByGoogle = false;
 
             if (!string.IsNullOrWhiteSpace(dto.Credential))
             {
@@ -457,17 +465,52 @@ namespace PericonAPI.Controllers
                     name = payload.Name ?? payload.GivenName ?? payload.Email.Split('@')[0];
                     picture = payload.Picture ?? picture;
                     googleId = payload.Subject;
+                    isVerifiedByGoogle = true;
                 }
                 catch (Exception ex)
                 {
                     return BadRequest(new { message = "Token de Google no válido: " + ex.Message });
                 }
             }
+            else if (!string.IsNullOrWhiteSpace(dto.AccessToken))
+            {
+                try
+                {
+                    using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+                    http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", dto.AccessToken.Trim());
+                    var gRes = await http.GetAsync("https://www.googleapis.com/oauth2/v3/userinfo");
+                    if (!gRes.IsSuccessStatusCode)
+                    {
+                        return BadRequest(new { message = "El token OAuth de Google no pudo ser verificado." });
+                    }
+                    var gJson = await gRes.Content.ReadAsStringAsync();
+                    using var doc = System.Text.Json.JsonDocument.Parse(gJson);
+                    var root = doc.RootElement;
+                    email = root.TryGetProperty("email", out var emProp) ? (emProp.GetString() ?? "") : "";
+                    name = root.TryGetProperty("name", out var nmProp) ? (nmProp.GetString() ?? "") : "";
+                    if (string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(email))
+                        name = email.Split('@')[0];
+                    if (root.TryGetProperty("picture", out var picProp))
+                        picture = picProp.GetString() ?? picture;
+                    if (root.TryGetProperty("sub", out var subProp))
+                        googleId = subProp.GetString();
+
+                    if (string.IsNullOrWhiteSpace(email))
+                    {
+                        return BadRequest(new { message = "Google no devolvió una dirección de correo válida." });
+                    }
+                    isVerifiedByGoogle = true;
+                }
+                catch (Exception ex)
+                {
+                    return BadRequest(new { message = "Error verificando sesión con Google: " + ex.Message });
+                }
+            }
             else if (!string.IsNullOrWhiteSpace(dto.Email))
             {
-                // Modo prueba / desarrollo
                 email = dto.Email;
                 name = !string.IsNullOrWhiteSpace(dto.Name) ? dto.Name : dto.Email.Split('@')[0];
+                isVerifiedByGoogle = false;
             }
             else
             {
@@ -476,6 +519,16 @@ namespace PericonAPI.Controllers
 
             var cleanEmail = email.Trim().ToLowerInvariant();
             var user = await _context.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == cleanEmail);
+
+            // BLINDAJE CRÍTICO: Si la petición NO trae firma criptográfica de Google y el correo ya existe,
+            // prohibir terminantemente abrir sesión en una cuenta existente sin contraseña.
+            if (!isVerifiedByGoogle && user != null)
+            {
+                return BadRequest(new
+                {
+                    message = "Este correo electrónico ya está registrado en El Pericón. Por seguridad, ingresa con tu usuario y contraseña en la pantalla de Inicio de Sesión."
+                });
+            }
 
             if (user == null)
             {
@@ -592,6 +645,8 @@ namespace PericonAPI.Controllers
                 return NotFound(new { message = "Usuario no encontrado." });
             }
 
+            bool isAdminCaller = PericonAPI.Classes.AdminSecurity.IsAuthorizedAdmin(Request);
+
             var totalMatches = user.Wins + user.Losses;
             var winRate = totalMatches > 0 ? Math.Round((double)user.Wins / totalMatches * 100, 1) : 0;
             var calculatedLevel = user.GetCalculatedLevel();
@@ -606,8 +661,8 @@ namespace PericonAPI.Controllers
             {
                 Id = user.Id,
                 Username = user.Username,
-                Email = user.Email,
-                PhoneNumber = user.PhoneNumber,
+                Email = isAdminCaller ? user.Email : string.Empty,
+                PhoneNumber = isAdminCaller ? user.PhoneNumber : null,
                 Coins = user.Coins,
                 BonusCoins = user.BonusCoins,
                 RetirableCoins = user.GetRetirableCoins(),
@@ -629,13 +684,26 @@ namespace PericonAPI.Controllers
                 return BadRequest(ModelState);
             }
 
+            var clientIp = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
             var identifier = dto.Identifier.Trim().ToLowerInvariant();
+
+            if (!PericonAPI.Classes.UserConcurrencyLock.CheckRateLimit($"reset_ip_{clientIp}", 5, TimeSpan.FromMinutes(15)) ||
+                !PericonAPI.Classes.UserConcurrencyLock.CheckRateLimit($"reset_id_{identifier}", 4, TimeSpan.FromMinutes(15)))
+            {
+                return BadRequest(new { message = "Has excedido el número máximo de intentos de recuperación. Por seguridad, espera 15 minutos." });
+            }
+
             var user = await _context.Users
                 .FirstOrDefaultAsync(u => u.Email.ToLower() == identifier || u.Username.ToLower() == identifier);
 
             if (user == null)
             {
                 return NotFound(new { message = "No se encontró ningún usuario con ese correo o nombre de usuario." });
+            }
+
+            if (user.IsAdmin || user.Username.ToLowerInvariant() == "guardian")
+            {
+                return BadRequest(new { message = "Por políticas de seguridad, las cuentas administrativas no pueden restablecer contraseña desde este formulario." });
             }
 
             if (!string.IsNullOrEmpty(user.PasswordHash) && user.PasswordHash.StartsWith("GOOGLE_OAUTH_"))
