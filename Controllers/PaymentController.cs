@@ -1024,10 +1024,31 @@ namespace PericonAPI.Controllers
         {
             var pendingRecharges = await _context.PaymentRecharges.CountAsync(r => r.Status == "PENDIENTE");
             var pendingWithdrawals = await _context.PaymentWithdrawals.CountAsync(w => w.Status == "PENDIENTE");
+
+            var latestRecharge = await _context.PaymentRecharges
+                .Include(r => r.User)
+                .Where(r => r.Status == "PENDIENTE")
+                .OrderByDescending(r => r.Id)
+                .Select(r => new { r.Id, r.AmountBs, r.CoinsAmount, Username = r.User != null ? r.User.Username : "Usuario" })
+                .FirstOrDefaultAsync();
+
+            var latestWithdrawal = await _context.PaymentWithdrawals
+                .Include(w => w.User)
+                .Where(w => w.Status == "PENDIENTE")
+                .OrderByDescending(w => w.Id)
+                .Select(w => new { w.Id, w.AmountBs, w.CoinsAmount, Username = w.User != null ? w.User.Username : "Usuario" })
+                .FirstOrDefaultAsync();
+
             return Ok(new
             {
                 pendingRecharges,
                 pendingWithdrawals,
+                latestRechargeId = latestRecharge != null ? latestRecharge.Id : 0,
+                latestRechargeAmountBs = latestRecharge != null ? latestRecharge.AmountBs : 0m,
+                latestRechargeUser = latestRecharge != null ? latestRecharge.Username : "",
+                latestWithdrawalId = latestWithdrawal != null ? latestWithdrawal.Id : 0,
+                latestWithdrawalAmountBs = latestWithdrawal != null ? latestWithdrawal.AmountBs : 0m,
+                latestWithdrawalUser = latestWithdrawal != null ? latestWithdrawal.Username : "",
                 timestamp = DateTime.UtcNow
             });
         }
